@@ -1,0 +1,109 @@
+/**
+ * YamX - Configuration Manager
+ * Manages API keys, model preferences, and session settings.
+ */
+
+import fs from 'fs-extra';
+import path from 'path';
+import os from 'os';
+
+export interface YamConfig {
+  defaultProvider: string;
+  defaultModel: string;
+  providers: {
+    openai?: { apiKey: string; model?: string };
+    anthropic?: { apiKey: string; model?: string };
+    gemini?: { apiKey: string; model?: string };
+    openrouter?: { apiKey: string; model?: string };
+    ollama?: { baseUrl?: string; model?: string };
+  };
+  settings: {
+    autoApprove: boolean;
+    streamOutput: boolean;
+    maxTokens: number;
+    temperature: number;
+    autoCommit: boolean;
+  };
+}
+
+const DEFAULT_CONFIG: YamConfig = {
+  defaultProvider: 'openai',
+  defaultModel: 'gpt-4o',
+  providers: {},
+  settings: {
+    autoApprove: false,
+    streamOutput: true,
+    maxTokens: 16384,
+    temperature: 0.1,
+    autoCommit: false,
+  },
+};
+
+export class Config {
+  private configDir: string;
+  private configPath: string;
+  private config: YamConfig;
+
+  constructor() {
+    this.configDir = path.join(os.homedir(), '.yamx');
+    this.configPath = path.join(this.configDir, 'config.json');
+    this.config = DEFAULT_CONFIG;
+  }
+
+  async load(): Promise<YamConfig> {
+    try {
+      if (await fs.pathExists(this.configPath)) {
+        const data = await fs.readJSON(this.configPath);
+        this.config = { ...DEFAULT_CONFIG, ...data, settings: { ...DEFAULT_CONFIG.settings, ...data.settings } };
+      }
+    } catch {
+      // Use defaults
+    }
+
+    // Override with env vars
+    if (process.env.OPENAI_API_KEY) {
+      this.config.providers.openai = {
+        ...this.config.providers.openai,
+        apiKey: process.env.OPENAI_API_KEY,
+      };
+    }
+    if (process.env.ANTHROPIC_API_KEY) {
+      this.config.providers.anthropic = {
+        ...this.config.providers.anthropic,
+        apiKey: process.env.ANTHROPIC_API_KEY,
+      };
+    }
+    if (process.env.GEMINI_API_KEY) {
+      this.config.providers.gemini = {
+        ...this.config.providers.gemini,
+        apiKey: process.env.GEMINI_API_KEY,
+      };
+    }
+    if (process.env.OPENROUTER_API_KEY) {
+      this.config.providers.openrouter = {
+        ...this.config.providers.openrouter,
+        apiKey: process.env.OPENROUTER_API_KEY,
+      };
+    }
+
+    return this.config;
+  }
+
+  async save(): Promise<void> {
+    await fs.ensureDir(this.configDir);
+    await fs.writeJSON(this.configPath, this.config, { spaces: 2 });
+  }
+
+  get(): YamConfig {
+    return this.config;
+  }
+
+  set(key: string, value: any) {
+    const keys = key.split('.');
+    let obj: any = this.config;
+    for (let i = 0; i < keys.length - 1; i++) {
+      obj = obj[keys[i]];
+    }
+    obj[keys[keys.length - 1]] = value;
+  }
+}

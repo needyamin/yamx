@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
-    "yamx": "./dist/index.js"
+    "yamx": "dist/index.js"
   },
   "files": [
     "dist/**/*.js",

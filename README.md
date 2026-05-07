@@ -41,6 +41,16 @@ After `npm link`, `yamx` is on your PATH like a global install.
 - Run `npm bin -g` (older npm) or check where global binaries go: `npm prefix -g` → add `\bin` (Windows) or `/bin` (Unix) to your **PATH**.
 - On Windows, reopen CMD/PowerShell after installing Node/npm.
 
+### Publishing (`npm publish` returns 403)
+
+npm requires **two-factor authentication** (or a **granular access token** that can publish) for package uploads.
+
+1. Enable **2FA** on your account: [npm → Profile → Two-Factor Authentication](https://www.npmjs.com/settings/~YOUR_USERNAME/profile) (mode that allows **publishing**).
+2. Run `npm login` again.
+3. Run `npm publish --access public` and enter the **OTP** when npm asks.
+
+Or create a [**Granular Access Token**](https://www.npmjs.com/settings/~YOUR_USERNAME/tokens) with **Publish packages** for `yamx` and authenticate with that token.
+
 ---
 
 ## Quick start

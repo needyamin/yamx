@@ -1,7 +1,7 @@
 /**
  * YamX - Core Agent Loop
  * Production-grade ReAct agent with streaming, tool calling, approval flow,
- * and multi-turn reasoning.
+ * markdown rendering, auto-retry, and multi-turn reasoning.
  */
 
 import { Provider, Message, ToolCall, CompletionResult } from './providers/base.js';
@@ -33,6 +33,7 @@ export class Agent {
   private totalInputTokens = 0;
   private totalOutputTokens = 0;
   private fileChanges: Array<{ path: string; oldContent: string; action: string }> = [];
+  private turnStartTime = 0;
 
   /** Retry wrapper for API calls */
   private async withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
@@ -46,11 +47,15 @@ export class Agent {
           error.status === 502 ||
           error.status === 503 ||
           error.code === 'ECONNRESET' ||
-          error.code === 'ETIMEDOUT';
+          error.code === 'ETIMEDOUT' ||
+          error.code === 'ECONNREFUSED' ||
+          error.code === 'UND_ERR_CONNECT_TIMEOUT' ||
+          error.message?.includes('timeout') ||
+          error.message?.includes('ECONNRESET');
 
         if (isRetryable && attempt < MAX_RETRIES - 1) {
           const delay = RETRY_DELAYS[attempt];
-          this.ui.warn(`${label} failed (${error.message}). Retrying in ${delay / 1000}s...`);
+          this.ui.warn(`${label} failed (${error.message}). Retrying in ${delay / 1000}s… (${attempt + 1}/${MAX_RETRIES})`);
           await new Promise(r => setTimeout(r, delay));
           continue;
         }
@@ -168,6 +173,7 @@ export class Agent {
     await this.ensureContextBudget();
     this.history.push({ role: 'user', content: userInput });
     this.fileChanges = []; // Reset undo buffer per turn
+    this.turnStartTime = Date.now();
 
     let iterations = 0;
 
@@ -197,6 +203,10 @@ export class Agent {
     if (iterations >= MAX_TOOL_ITERATIONS) {
       this.ui.warn(`Reached maximum tool iterations (${MAX_TOOL_ITERATIONS}). Stopping.`);
     }
+
+    // Show turn timing
+    const elapsed = ((Date.now() - this.turnStartTime) / 1000).toFixed(1);
+    this.ui.info(`Turn completed in ${elapsed}s · ${iterations} iteration${iterations > 1 ? 's' : ''}`);
 
     await Promise.resolve(this.options.onPersist?.());
   }
@@ -229,7 +239,9 @@ export class Agent {
       this.history.push(assistantMsg);
 
       if (result.content) {
-        console.log('\n' + result.content);
+        // Render markdown
+        const rendered = this.ui.renderMarkdown(result.content);
+        console.log('\n' + rendered);
       }
 
       return result;
@@ -240,7 +252,7 @@ export class Agent {
     }
   }
 
-  /** Streaming completion */
+  /** Streaming completion with accumulated markdown rendering */
   private async streamResponse(): Promise<CompletionResult> {
     this.ui.startThinking();
 
@@ -345,7 +357,7 @@ export class Agent {
           role: 'tool',
           tool_call_id: tc.id,
           name: tc.function.name,
-          content: `Error: Unknown tool "${tc.function.name}"`,
+          content: `Error: Unknown tool "${tc.function.name}". Available tools: ${Object.keys(allTools).join(', ')}`,
         });
         continue;
       }
@@ -354,7 +366,17 @@ export class Agent {
       try {
         args = JSON.parse(tc.function.arguments || '{}');
       } catch {
-        args = {};
+        this.ui.warn(`Malformed tool arguments for ${tc.function.name}, attempting repair…`);
+        try {
+          // Try to fix common JSON issues: trailing commas, single quotes
+          const fixed = (tc.function.arguments || '{}')
+            .replace(/,\s*}/g, '}')
+            .replace(/,\s*]/g, ']')
+            .replace(/'/g, '"');
+          args = JSON.parse(fixed);
+        } catch {
+          args = {};
+        }
       }
 
       // Check if approval is needed
@@ -391,8 +413,8 @@ export class Agent {
 
       try {
         // Track file changes for undo
-        if (['write_file', 'edit_file', 'delete_file'].includes(tc.function.name) && args.path) {
-          await this.trackFileChange(args.path);
+        if (['write_file', 'edit_file', 'delete_file', 'multi_edit', 'patch_file', 'move_file'].includes(tc.function.name) && (args.path || args.source)) {
+          await this.trackFileChange(args.path || args.source);
         }
 
         const result = await tool.execute(args);
@@ -485,6 +507,7 @@ export class Agent {
       totalInputTokens: this.totalInputTokens,
       totalOutputTokens: this.totalOutputTokens,
       historyLength: this.history.length,
+      historyChars: this.estimateHistoryChars(),
     };
   }
 

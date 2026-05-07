@@ -1,10 +1,19 @@
 /**
- * YamX — terminal UI
+ * YamX — terminal UI with rich markdown rendering
  */
 
 import chalk from 'chalk';
 import ora, { Ora } from 'ora';
 import boxen from 'boxen';
+import { marked } from 'marked';
+import { markedTerminal } from 'marked-terminal';
+
+// Configure marked with terminal renderer for rich markdown output
+marked.use(markedTerminal({
+  reflowText: true,
+  width: Math.min(process.stdout.columns || 100, 120),
+  tab: 2,
+}) as any);
 
 const GOLD = chalk.hex('#E8C547');
 const DIM = chalk.dim;
@@ -20,6 +29,8 @@ const MX = chalk.hex('#00FF41');
 const MX_DIM = chalk.hex('#008F11');
 const MX_CORE = chalk.hex('#41FF70');
 
+const VERSION = '1.0.0';
+
 export class UI {
   private spinner: Ora | null = null;
   private streamBuffer = '';
@@ -32,8 +43,8 @@ export class UI {
 
     const inner = [
       ` ${MX_CORE('+')}${MX('==============[')} ${MX.bold('NEURAL LINK')} ${MX(']==============')}${MX_CORE('+')}`,
-      ` ${MX_CORE('|')}  ${MX.bold('Y A M X')}   ${MX_DIM('terminal coding agent')}                   ${MX_CORE('|')}`,
-      ` ${MX_CORE('|')}  ${MX_DIM('encrypted session')} ${MX_DIM('|')} ${MX_DIM('local-first tools')}             ${MX_CORE('|')}`,
+      ` ${MX_CORE('|')}  ${MX.bold('Y A M X')}  ${chalk.hex('#00FF41').dim(`v${VERSION}`)}  ${MX_DIM('coding agent')}               ${MX_CORE('|')}`,
+      ` ${MX_CORE('|')}  ${MX_DIM('encrypted session')} ${MX_DIM('|')} ${MX_DIM('22 tools')} ${MX_DIM('|')} ${MX_DIM('local-first')}    ${MX_CORE('|')}`,
       ` ${MX_CORE('+')}${MX('--------------')} ${MX_DIM('------------')} ${MX('--------------')}${MX_CORE('+')}`,
       '',
       `   ${MX_DIM('provider')} ${MX(provider)} ${MX_DIM('|')} ${MX_DIM('model')} ${MX(model)}`,
@@ -53,21 +64,31 @@ export class UI {
   }
 
   help() {
-    const commands: [string, string][] = [
-      ['/help', 'This list'],
-      ['/clear', 'Clear history'],
-      ['/model', 'Provider & model'],
-      ['/compact', 'Summarize old context'],
-      ['/cost', 'Token usage'],
-      ['/undo', 'Revert last file edits'],
-      ['/diff', 'git diff'],
-      ['/exit', 'Quit'],
+    const sections: [string, [string, string][]][] = [
+      ['Session', [
+        ['/clear', 'Clear chat history'],
+        ['/compact', 'Compress old context'],
+        ['/exit', 'Save and quit'],
+      ]],
+      ['Inspect', [
+        ['/model', 'Provider & model'],
+        ['/cost', 'Token usage & history'],
+        ['/diff', 'Git diff'],
+        ['/tools', 'List all tools'],
+      ]],
+      ['Edit', [
+        ['/undo', 'Revert last file edits'],
+      ]],
     ];
-    console.log(chalk.bold('\n  Commands\n'));
-    for (const [cmd, desc] of commands) {
-      console.log(`  ${GOLD(cmd.padEnd(12))} ${DIM(desc)}`);
+
+    console.log(chalk.bold('\n  ⌘ Commands\n'));
+    for (const [category, commands] of sections) {
+      console.log(`  ${ACCENT(category)}`);
+      for (const [cmd, desc] of commands) {
+        console.log(`    ${GOLD(cmd.padEnd(14))} ${DIM(desc)}`);
+      }
+      console.log();
     }
-    console.log();
   }
 
   startThinking(text = 'Thinking…') {
@@ -99,6 +120,16 @@ export class UI {
     if (this.streamBuffer) {
       console.log();
       this.streamBuffer = '';
+    }
+  }
+
+  /** Render markdown content to the terminal with rich formatting */
+  renderMarkdown(text: string): string {
+    try {
+      const rendered = marked.parse(text);
+      return typeof rendered === 'string' ? rendered.trimEnd() : text;
+    } catch {
+      return text;
     }
   }
 
@@ -163,5 +194,17 @@ export class UI {
 
   separator() {
     console.log(DIM('  ─'.repeat(28)));
+  }
+
+  /** Print a tools list grouped by category */
+  toolsList(categories: Record<string, string[]>) {
+    console.log(chalk.bold('\n  ⚡ Available Tools\n'));
+    for (const [cat, tools] of Object.entries(categories)) {
+      console.log(`  ${ACCENT(cat)}`);
+      for (const t of tools) {
+        console.log(`    ${GOLD(t)}`);
+      }
+      console.log();
+    }
   }
 }

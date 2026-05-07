@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * YamX CLI — coding agent with persistent sessions
+ * YamX CLI v1.0.0 — coding agent with persistent sessions
  */
 
 import { Command } from 'commander';
@@ -20,15 +20,17 @@ import { OpenRouterProvider } from './providers/openrouter.js';
 import { Provider, Message } from './providers/base.js';
 import { execSync } from 'child_process';
 import { SessionStore, type ChatSession } from './session-store.js';
+import { getToolCount, getToolsByCategory } from './tools/registry.js';
 
 dotenv.config();
 
+const VERSION = '1.0.0';
 const program = new Command();
 
 program
   .name('yamx')
   .description('YamX — agent CLI with persistent chat sessions')
-  .version('2.0.0')
+  .version(VERSION)
   .option('-p, --provider <provider>', 'LLM provider (openai, anthropic, gemini, openrouter, ollama)', '')
   .option('-m, --model <model>', 'Model name')
   .option('--auto-approve', 'Auto-approve all tool actions (dangerous!)', false)
@@ -41,7 +43,8 @@ program
   .option('--resume <id>', 'Resume a session (full UUID or unique prefix)')
   .option('--delete-chat <id>', 'Delete a session by id or prefix, then exit', '')
   .option('--onboard', 'First-time setup (keys, provider, model)', false)
-  .option('--reset-config', 'Reset ~/.yamx/config.json to defaults, then exit', false);
+  .option('--reset-config', 'Reset ~/.yamx/config.json to defaults, then exit', false)
+  .option('--diagnose', 'Check configuration, API keys, and connectivity', false);
 
 program
   .command('config')
@@ -52,7 +55,7 @@ program
 
     const { action } = await inquirer.prompt([
       {
-        type: 'list',
+        type: 'rawlist',
         name: 'action',
         message: 'What would you like to configure?',
         choices: [
@@ -69,7 +72,7 @@ program
     if (action === 'apikey') {
       const { provider } = await inquirer.prompt([
         {
-          type: 'list',
+          type: 'rawlist',
           name: 'provider',
           message: 'Select provider:',
           choices: ['openai', 'anthropic', 'gemini', 'openrouter'],
@@ -84,7 +87,7 @@ program
     } else if (action === 'provider') {
       const { provider } = await inquirer.prompt([
         {
-          type: 'list',
+          type: 'rawlist',
           name: 'provider',
           message: 'Select default provider:',
           choices: ['openai', 'anthropic', 'gemini', 'openrouter', 'ollama'],
@@ -126,7 +129,16 @@ program
       await config.save();
       console.log(chalk.green(`✓ Auto-approve set to ${approve}.`));
     } else if (action === 'view') {
-      console.log(JSON.stringify(config.get(), null, 2));
+      const cfg = config.get();
+      const safe = JSON.parse(JSON.stringify(cfg));
+      // Mask API keys for display
+      for (const p of Object.values(safe.providers || {})) {
+        if (p && typeof p === 'object' && 'apiKey' in p) {
+          const k = (p as any).apiKey as string;
+          (p as any).apiKey = k ? `${k.slice(0, 8)}…${k.slice(-4)}` : '(not set)';
+        }
+      }
+      console.log(JSON.stringify(safe, null, 2));
     }
   });
 
@@ -148,6 +160,28 @@ program.action(async (options) => {
     process.exit(0);
   }
 
+  if (options.diagnose) {
+    await runDiagnose(config, cfg);
+    process.exit(0);
+  }
+
+  const delArg = options.deleteChat != null ? String(options.deleteChat).trim() : '';
+
+  // Auto-onboard for first-time users
+  const fs = await import('fs-extra');
+  const path = await import('path');
+  const os = await import('os');
+  const configPath = path.default.join(os.default.homedir(), '.yamx', 'config.json');
+  const configExists = await fs.default.pathExists(configPath);
+  
+  const isCommandRun = options.onboard || options.diagnose || options.history || options.clearChat || options.resetConfig || delArg;
+
+  if (!configExists && !isCommandRun) {
+    console.log(chalk.yellow('\nWelcome to YamX! Let\'s do a quick first-time setup.'));
+    await runOnboard(config);
+    Object.assign(cfg, config.get());
+  }
+
   if (options.history) {
     const sessions = await store.listSessions();
     if (sessions.length === 0) {
@@ -157,15 +191,15 @@ program.action(async (options) => {
     console.log(chalk.bold('\nSaved conversations\n'));
     for (const s of sessions) {
       const active = (await store.getActiveSessionId()) === s.id ? chalk.green('* ') : '  ';
+      const msgCount = s.messages.length;
       console.log(
-        `${active}${chalk.cyan(s.id)}  ${chalk.dim(s.updatedAt)}  ${s.title}`
+        `${active}${chalk.cyan(s.id.slice(0, 8))}  ${chalk.dim(s.updatedAt.slice(0, 16))}  ${chalk.dim(`${msgCount}msg`)}  ${s.title}`
       );
     }
     console.log(chalk.dim('\nResume: yamx --resume <id>\n'));
     process.exit(0);
   }
 
-  const delArg = options.deleteChat != null ? String(options.deleteChat).trim() : '';
   if (delArg) {
     const r = await resolveSessionRef(store, delArg);
     if (r === 'ambiguous') {
@@ -203,21 +237,73 @@ program.action(async (options) => {
     process.exit(0);
   }
 
-  const providerName = options.provider || cfg.defaultProvider || 'openai';
-  const modelName = options.model || cfg.defaultModel;
+  let providerName = options.provider || cfg.defaultProvider || 'openai';
+  let modelName = options.model || cfg.defaultModel;
   let provider: Provider;
   try {
     provider = createProvider(providerName, modelName, cfg);
   } catch (error: any) {
-    ui.error(error.message);
-    process.exit(1);
+    if (error.message.includes('API key not found')) {
+      console.log(chalk.hex('#FF4136').bold(`\n  ⚠ ${error.message.split('.')[0]}`)); // Just the first sentence
+      
+      const { choice } = await inquirer.prompt([
+        {
+          type: 'rawlist',
+          name: 'choice',
+          message: 'How would you like to configure your API key?',
+          choices: [
+            { name: '1) Run interactive global setup (Recommended)', value: 'global' },
+            { name: '2) Create a .env file in this directory', value: 'env' },
+            { name: '3) Exit', value: 'exit' },
+          ]
+        }
+      ]);
+
+      if (choice === 'global') {
+        await runOnboard(config);
+        Object.assign(cfg, config.get());
+        providerName = options.provider || cfg.defaultProvider || 'openai';
+        modelName = options.model || cfg.defaultModel;
+        provider = createProvider(providerName, modelName, cfg);
+      } else if (choice === 'env') {
+        const pName = providerName.toUpperCase();
+        const { key } = await inquirer.prompt([
+          { 
+            type: 'password', 
+            name: 'key', 
+            message: `Enter your ${providerName} API key (pasting is hidden):`,
+            mask: '*'
+          }
+        ]);
+        const fs = await import('fs-extra');
+        const envPath = path.resolve(process.cwd(), '.env');
+        let envContent = '';
+        if (await fs.pathExists(envPath)) {
+          envContent = await fs.readFile(envPath, 'utf-8');
+          if (!envContent.endsWith('\n')) envContent += '\n';
+        }
+        envContent += `${pName}_API_KEY=${key}\n`;
+        await fs.writeFile(envPath, envContent, 'utf-8');
+        console.log(chalk.green(`\n  ✓ Saved to ${envPath}`));
+        
+        // Inject into process.env so it works immediately
+        process.env[`${pName}_API_KEY`] = key;
+        provider = createProvider(providerName, modelName, cfg);
+      } else {
+        console.log(chalk.dim('\nGoodbye.'));
+        process.exit(0);
+      }
+    } else {
+      ui.error(error.message);
+      process.exit(1);
+    }
   }
 
   const contextEngine = new ContextEngine();
   ui.startThinking('Scanning project…');
   const systemPrompt = await contextEngine.buildSystemPrompt();
   ui.stopSpinner();
-  ui.info(`Project scanned. Session storage: ~/.yamx/sessions/\n`);
+  ui.info(`Project scanned · ${getToolCount()} tools loaded · ~/.yamx/sessions/\n`);
 
   let currentSession: ChatSession;
 
@@ -233,7 +319,7 @@ program.action(async (options) => {
       process.exit(1);
     }
     if (!r) {
-      ui.error(`No session matching “${options.resume}”. Use: yamx --history`);
+      ui.error(`No session matching "${options.resume}". Use: yamx --history`);
       process.exit(1);
     }
     const loaded = await store.loadSession(r);
@@ -299,7 +385,14 @@ program.action(async (options) => {
     id: currentSession.id,
   });
 
-  const persistCtx = { store, session: currentSession, agent };
+  if (currentSession.messages.length === 1) {
+    console.log(chalk.dim('\n  💡 Need ideas? Try:'));
+    console.log(chalk.dim('  - "Create a new react app" or "Find all console.logs"'));
+    console.log(chalk.dim('  - Type /tools to see what actions I can perform'));
+    console.log(chalk.dim('  - Type /help for a list of all commands\n'));
+  } else {
+    console.log(); // Just a spacer if resuming chat
+  }
 
   process.on('SIGINT', async () => {
     try {
@@ -318,7 +411,7 @@ program.action(async (options) => {
         {
           type: 'input',
           name: 'prompt',
-          message: `${chalk.hex('#41FF70').bold('yamx')} ${chalk.hex('#00FF41')('›')}`,
+          message: `${chalk.hex('#41FF70').bold('⚡ YamX')} ${chalk.hex('#00FF41')('›')}`,
           validate: (i: string) => i.trim().length > 0 || 'Type a task or /help',
         },
       ]);
@@ -330,7 +423,7 @@ program.action(async (options) => {
     }
 
     if (input.startsWith('/')) {
-      await handleCommand(input, agent, provider, persistCtx);
+      await handleCommand(input, agent, provider, { store, session: currentSession, agent });
       continue;
     }
 
@@ -357,22 +450,56 @@ async function resolveSessionRef(
   return null;
 }
 
+// ─── Onboard ────────────────────────────────────────────────────────
+
 async function runOnboard(config: Config) {
   await config.load();
+
+  console.log(chalk.hex('#00FF41').bold('\n  ╔══════════════════════════════════════╗'));
+  console.log(chalk.hex('#00FF41').bold('  ║       YamX · First-Time Setup        ║'));
+  console.log(chalk.hex('#00FF41').bold('  ╚══════════════════════════════════════╝\n'));
+
   const { provider } = await inquirer.prompt<{ provider: string }>([
     {
-      type: 'list',
+      type: 'rawlist',
       name: 'provider',
       message: 'Default LLM provider:',
-      choices: ['openai', 'anthropic', 'gemini', 'openrouter', 'ollama'],
+      default: config.get().defaultProvider || 'openai',
+      choices: [
+        { name: 'OpenRouter  (100+ models: DeepSeek, Llama, Claude, GPT, Gemini)', value: 'openrouter' },
+        { name: 'OpenAI     (GPT-4o, o3, GPT-4.1)', value: 'openai' },
+        { name: 'Anthropic  (Claude Sonnet 4, Claude Opus 4)', value: 'anthropic' },
+        { name: 'Gemini     (Gemini 2.5 Flash/Pro)', value: 'gemini' },
+        { name: 'Ollama     (local: Qwen, DeepSeek, Llama)', value: 'ollama' },
+      ],
     },
   ]);
 
   if (provider !== 'ollama') {
+    const keyHints: Record<string, string> = {
+      openai: 'https://platform.openai.com/api-keys',
+      anthropic: 'https://console.anthropic.com/settings/keys',
+      gemini: 'https://aistudio.google.com/apikey',
+      openrouter: 'https://openrouter.ai/keys',
+    };
+    console.log(chalk.dim(`  Get your key: ${keyHints[provider]}`));
+
+    const existingKey = (config.get().providers as any)?.[provider]?.apiKey || process.env[`${provider.toUpperCase()}_API_KEY`] || '';
     const { key } = await inquirer.prompt<{ key: string }>([
-      { type: 'password', name: 'key', message: `API key for ${provider}:` },
+      {
+        type: 'password',
+        name: 'key',
+        message: `API key for ${provider} (pasting is hidden):`,
+        mask: '*',
+        default: existingKey,
+        validate: (k: string) => {
+          const val = k || existingKey;
+          return val.trim().length > 8 || 'Key looks too short';
+        },
+      },
     ]);
-    config.set(`providers.${provider}.apiKey`, key);
+    const finalKey = key || existingKey;
+    config.set(`providers.${provider}.apiKey`, finalKey.trim());
   } else {
     const { url } = await inquirer.prompt<{ url: string }>([
       {
@@ -385,21 +512,53 @@ async function runOnboard(config: Config) {
     config.set('providers.ollama.baseUrl', url);
   }
 
-  const modelDefaults: Record<string, string> = {
-    openai: 'gpt-4o',
-    anthropic: 'claude-sonnet-4-20250514',
-    gemini: 'gemini-2.5-flash',
-    openrouter: 'deepseek-chat',
-    ollama: 'qwen2.5-coder',
+  const providerModels: Record<string, {name: string, value: string}[]> = {
+    openai: [
+      { name: 'GPT-4o', value: 'gpt-4o' },
+      { name: 'o3-mini', value: 'o3-mini' },
+      { name: 'GPT-4.5 Preview', value: 'gpt-4.5-preview' }
+    ],
+    anthropic: [
+      { name: 'Claude 3.7 Sonnet', value: 'claude-3-7-sonnet-20250219' },
+      { name: 'Claude 3.5 Sonnet', value: 'claude-3-5-sonnet-latest' },
+      { name: 'Claude 3 Opus', value: 'claude-3-opus-latest' }
+    ],
+    gemini: [
+      { name: 'Gemini 2.5 Flash', value: 'gemini-2.5-flash' },
+      { name: 'Gemini 2.5 Pro', value: 'gemini-2.5-pro' }
+    ],
+    openrouter: [
+      { name: 'DeepSeek Chat V3', value: 'deepseek/deepseek-chat' },
+      { name: 'DeepSeek R1', value: 'deepseek/deepseek-r1' },
+      { name: 'Claude 3.7 Sonnet', value: 'anthropic/claude-3.7-sonnet' },
+      { name: 'GPT-4o', value: 'openai/gpt-4o' },
+      { name: 'Llama 3 (70B)', value: 'meta-llama/llama-3-70b-instruct' }
+    ],
+    ollama: [
+      { name: 'Qwen 2.5 Coder', value: 'qwen2.5-coder' },
+      { name: 'DeepSeek R1', value: 'deepseek-r1' },
+      { name: 'Llama 3', value: 'llama3' }
+    ]
   };
-  const { model } = await inquirer.prompt<{ model: string }>([
+
+  const choices = [...providerModels[provider], { name: 'Other (type manually)', value: 'other' }];
+
+  const { selectedModel } = await inquirer.prompt<{ selectedModel: string }>([
     {
-      type: 'input',
-      name: 'model',
+      type: 'rawlist',
+      name: 'selectedModel',
       message: 'Default model:',
-      default: modelDefaults[provider],
+      choices,
     },
   ]);
+
+  let model = selectedModel;
+  if (selectedModel === 'other') {
+    const { customModel } = await inquirer.prompt<{ customModel: string }>([
+      { type: 'input', name: 'customModel', message: 'Enter custom model name:' }
+    ]);
+    model = customModel.trim();
+  }
 
   const { autoApprove } = await inquirer.prompt<{ autoApprove: boolean }>([
     {
@@ -424,8 +583,77 @@ async function runOnboard(config: Config) {
   config.set('settings.autoApprove', autoApprove);
   config.set('settings.streamOutput', streamOut);
   await config.save();
-  console.log(chalk.green('\nSaved. Run `yamx` to start.\n'));
+
+  console.log(chalk.green('\n  ✓ Configuration saved to ~/.yamx/config.json'));
+  console.log(chalk.dim(`  Provider: ${provider} · Model: ${model}`));
+  console.log(chalk.dim(`  Tools: ${getToolCount()} · Streaming: ${streamOut}`));
+  console.log(chalk.hex('#00FF41')('\n  Run `yamx` to start coding.\n'));
 }
+
+// ─── Diagnose ───────────────────────────────────────────────────────
+
+async function runDiagnose(config: Config, cfg: any) {
+  console.log(chalk.bold('\n  YamX Diagnostic Report\n'));
+
+  // Node version
+  console.log(`  ${chalk.cyan('Node.js')}    ${process.version}`);
+  console.log(`  ${chalk.cyan('Platform')}   ${process.platform} ${process.arch}`);
+  console.log(`  ${chalk.cyan('YamX')}       v${VERSION}`);
+  console.log(`  ${chalk.cyan('Tools')}      ${getToolCount()}`);
+  console.log();
+
+  // Config file
+  const fs = await import('fs-extra');
+  const path = await import('path');
+  const os = await import('os');
+  const configPath = path.default.join(os.default.homedir(), '.yamx', 'config.json');
+  const configExists = await fs.default.pathExists(configPath);
+  console.log(`  ${configExists ? chalk.green('✓') : chalk.red('✗')} Config file ${configExists ? 'exists' : 'missing'}: ${configPath}`);
+
+  // Provider keys
+  const providers = ['openai', 'anthropic', 'gemini', 'openrouter'] as const;
+  for (const p of providers) {
+    const key = (cfg.providers as any)?.[p]?.apiKey || process.env[`${p.toUpperCase()}_API_KEY`];
+    const has = !!key;
+    const mark = has ? chalk.green('✓') : chalk.dim('○');
+    console.log(`  ${mark} ${p.padEnd(12)} ${has ? `key: ${key.slice(0, 6)}…` : chalk.dim('not configured')}`);
+  }
+
+  // Ollama
+  const ollamaUrl = cfg.providers?.ollama?.baseUrl || 'http://localhost:11434';
+  try {
+    const http = await import('http');
+    await new Promise<void>((resolve, reject) => {
+      const req = http.default.get(`${ollamaUrl}/api/tags`, { timeout: 3000 }, (res) => {
+        res.resume();
+        resolve();
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    });
+    console.log(`  ${chalk.green('✓')} ollama       reachable at ${ollamaUrl}`);
+  } catch {
+    console.log(`  ${chalk.dim('○')} ollama       ${chalk.dim(`not reachable at ${ollamaUrl}`)}`);
+  }
+
+  // Git
+  try {
+    const gitVer = execSync('git --version', { encoding: 'utf-8' }).trim();
+    console.log(`  ${chalk.green('✓')} git          ${gitVer}`);
+  } catch {
+    console.log(`  ${chalk.red('✗')} git          not found`);
+  }
+
+  // Sessions
+  const sessDir = path.default.join(os.default.homedir(), '.yamx', 'sessions');
+  const sessionFiles = await fs.default.readdir(sessDir).catch(() => []);
+  console.log(`  ${chalk.cyan('Sessions')}   ${sessionFiles.length} saved`);
+
+  console.log(chalk.dim('\n  Default: ') + chalk.white(`${cfg.defaultProvider || 'openai'} / ${cfg.defaultModel || 'gpt-4o'}`));
+  console.log();
+}
+
+// ─── Commands ───────────────────────────────────────────────────────
 
 type PersistCtx = { store: SessionStore; session: ChatSession; agent: Agent };
 
@@ -468,8 +696,8 @@ async function handleCommand(
       break;
     case '/cost': {
       const stats = agent.getUsageStats();
-      ui.info(`Session tokens: ↑${stats.totalInputTokens} ↓${stats.totalOutputTokens}`);
-      ui.info(`History length: ${stats.historyLength} messages`);
+      ui.info(`Session tokens: ↑${stats.totalInputTokens.toLocaleString()} ↓${stats.totalOutputTokens.toLocaleString()}`);
+      ui.info(`History: ${stats.historyLength} messages · ${(stats.historyChars / 1000).toFixed(0)}k chars`);
       break;
     }
     case '/diff':
@@ -480,10 +708,15 @@ async function handleCommand(
         ui.warn('Not a git repository or git not available.');
       }
       break;
+    case '/tools':
+      ui.toolsList(getToolsByCategory());
+      break;
     default:
       ui.warn(`Unknown command: ${cmd}. Type /help for available commands.`);
   }
 }
+
+// ─── Provider factory ───────────────────────────────────────────────
 
 function createProvider(name: string, model: string | undefined, cfg: any): Provider {
   switch (name) {
@@ -512,7 +745,7 @@ function createProvider(name: string, model: string | undefined, cfg: any): Prov
       return new OpenRouterProvider(key, model || cfg.providers?.openrouter?.model || 'deepseek-chat');
     }
     default:
-      throw new Error(`Unknown provider: ${name}`);
+      throw new Error(`Unknown provider: ${name}. Use: openai, anthropic, gemini, openrouter, ollama`);
   }
 }
 

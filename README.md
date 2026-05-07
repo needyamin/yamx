@@ -1,8 +1,8 @@
 # YamX
 
-A terminal coding agent with **persistent chat sessions**, tool use, and multi-provider LLM support. It reads and edits your project, runs shell commands (with your approval), and uses Git and the web when needed.
+A terminal coding agent with **22 tools**, **persistent chat sessions**, **markdown rendering**, and multi-provider LLM support. It reads and edits your project, runs shell commands (with your approval), uses Git and the web, and renders rich output with syntax-highlighted code blocks.
 
-Providers: **OpenAI**, **Anthropic**, **Google Gemini**, **OpenRouter**, **Ollama** (local).
+Providers: **OpenAI**, **Anthropic**, **Google Gemini**, **OpenRouter** (100+ models), **Ollama** (local).
 
 ---
 
@@ -11,7 +11,7 @@ Providers: **OpenAI**, **Anthropic**, **Google Gemini**, **OpenRouter**, **Ollam
 Install once (needs **[Node.js 18+](https://nodejs.org/)** and npm):
 
 ```bash
-npm install -g yamx
+npm install -g @needyamin/yamx
 ```
 
 Then from **any folder**, in **Terminal** (macOS/Linux), **CMD**, or **PowerShell** (Windows):
@@ -20,12 +20,26 @@ Then from **any folder**, in **Terminal** (macOS/Linux), **CMD**, or **PowerShel
 yamx
 ```
 
+### Uninstallation (Remove Everything)
+To completely remove YamX and all its data from your system:
+
+1. **Remove the global package**:
+   ```bash
+   npm uninstall -g @needyamin/yamx
+   ```
+
+2. **Delete the configuration and sessions folder**:
+   YamX stores your API keys and chat history in your home directory.
+   - **Windows (PowerShell)**: `Remove-Item -Recurse -Force ~/.yamx`
+   - **Windows (CMD)**: `rmdir /s /q %USERPROFILE%\.yamx`
+   - **macOS/Linux**: `rm -rf ~/.yamx`
+
 npm registers the CLI via the package [`bin`](https://docs.npmjs.com/cli/v10/configuring-npm/package-json#bin) field.
 
 **Without installing globally**, you can still run (after the package is on the npm registry):
 
 ```bash
-npx yamx
+npx @needyamin/yamx
 ```
 
 **From a git clone** (developers):
@@ -58,7 +72,7 @@ Or create a [**Granular Access Token**](https://www.npmjs.com/settings/~YOUR_USE
 ### Install from npm
 
 ```bash
-npm install -g yamx
+npm install -g @needyamin/yamx
 ```
 
 ### Install from source
@@ -80,6 +94,14 @@ yamx --onboard
 ```
 
 Or set keys in `.env` / environment and use `yamx config`.
+
+### Check your setup
+
+```bash
+yamx --diagnose
+```
+
+Shows Node version, API key status, Git availability, Ollama connectivity, and session count.
 
 ### Run
 
@@ -126,32 +148,39 @@ State files:
 
 | Command | Description |
 |---------|-------------|
-| `/help` | Help |
+| `/help` | Categorized help |
 | `/clear` | Clear this chat in memory and on disk (system prompt kept) |
 | `/compact` | Summarize older messages to save context |
 | `/model` | Show provider and model |
-| `/cost` | Token usage and history length |
+| `/cost` | Token usage, history length, and context size |
 | `/undo` | Revert last file edits from the current turn |
 | `/diff` | `git diff` in cwd |
+| `/tools` | List all 22 tools by category |
 | `/exit` | Save and quit |
 
 ---
 
 ## Features
 
-- **Project context**: Scans the repo for structure and stack hints in the system prompt
-- **Tools**: Filesystem, shell (`run_command`, background jobs), Git, `fetch_url`
+- **22 Built-in Tools**: Files, shell, Git, web — see table below
+- **Markdown rendering**: AI responses are rendered with syntax highlighting in the terminal
+- **Project context**: Scans the repo for structure, languages, and framework hints
 - **Safety**: Destructive or privileged commands ask for confirmation unless `--auto-approve`
+- **Auto-retry**: Transient API failures (429, 5xx, timeouts) retry with exponential backoff
+- **JSON repair**: Malformed tool call arguments are auto-repaired before execution
+- **Turn timing**: Each turn shows elapsed time and iteration count
+- **Diagnostics**: `yamx --diagnose` checks keys, connectivity, and environment
 
 ---
 
-## Built-in tools (overview)
+## Built-in tools (22)
 
-| Area | Examples |
-|------|----------|
-| Files | `read_file`, `write_file`, `edit_file`, `multi_edit`, `search_files`, … |
-| Shell | `run_command`, `run_command_background` (cross-platform shell) |
-| Git | `git_status`, `git_diff`, `git_commit`, … |
+| Area | Tools |
+|------|-------|
+| Files (core) | `read_file`, `write_file`, `edit_file`, `list_files`, `search_files`, `delete_file` |
+| Files (advanced) | `multi_edit`, `copy_file`, `move_file`, `file_info`, `grep_search`, `directory_tree`, `patch_file` |
+| Shell | `run_command` (cross-platform), `run_command_background` |
+| Git | `git_status`, `git_diff`, `git_commit`, `git_log`, `git_branch`, `git_stash` |
 | Web | `fetch_url` |
 
 ---
@@ -176,6 +205,7 @@ Options:
   --delete-chat <id>       Delete a session, exit
   --onboard                First-time setup wizard
   --reset-config           Reset ~/.yamx/config.json defaults, exit
+  --diagnose               Check config, keys, connectivity
 
 Commands:
   yamx config              Interactive settings (incl. context budget)

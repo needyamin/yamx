@@ -29,8 +29,8 @@ export interface YamConfig {
 }
 
 const DEFAULT_CONFIG: YamConfig = {
-  defaultProvider: 'openai',
-  defaultModel: 'gpt-4o',
+  defaultProvider: 'openrouter',
+  defaultModel: 'deepseek-chat',
   providers: {},
   settings: {
     autoApprove: false,
@@ -113,6 +113,9 @@ export class Config {
     const keys = key.split('.');
     let obj: any = this.config;
     for (let i = 0; i < keys.length - 1; i++) {
+      if (obj[keys[i]] === undefined) {
+        obj[keys[i]] = {};
+      }
       obj = obj[keys[i]];
     }
     obj[keys[keys.length - 1]] = value;

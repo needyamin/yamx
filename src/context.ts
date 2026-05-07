@@ -29,6 +29,8 @@ const LANGUAGE_MAP: Record<string, string> = {
   '.md': 'Markdown', '.sql': 'SQL',
   '.sh': 'Shell', '.bash': 'Bash', '.ps1': 'PowerShell',
   '.dockerfile': 'Docker', '.toml': 'TOML',
+  '.vue': 'Vue', '.svelte': 'Svelte',
+  '.zig': 'Zig', '.lua': 'Lua', '.dart': 'Dart',
 };
 
 export class ContextEngine {
@@ -127,6 +129,7 @@ export class ContextEngine {
       { file: 'Gemfile', type: 'Ruby' },
       { file: 'composer.json', type: 'PHP' },
       { file: 'Makefile', type: 'Make' },
+      { file: 'CMakeLists.txt', type: 'CMake' },
     ];
 
     for (const { file, type } of checks) {
@@ -150,6 +153,8 @@ export class ContextEngine {
         if (deps['express']) return 'Express';
         if (deps['fastify']) return 'Fastify';
         if (deps['nestjs'] || deps['@nestjs/core']) return 'NestJS';
+        if (deps['hono']) return 'Hono';
+        if (deps['astro']) return 'Astro';
       }
     } catch {}
     return undefined;
@@ -167,20 +172,37 @@ export class ContextEngine {
   /** Generate the system prompt with project context */
   async buildSystemPrompt(): Promise<string> {
     const ctx = await this.scan();
+    const os = process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux';
 
-    return `You are YamX: a capable coding agent with terminal and filesystem access. Be concise; plan briefly then act. Run commands via tools after the user approves.
+    return `You are YamX — a senior-level coding agent with full filesystem and shell access. You solve real engineering problems end-to-end.
 
-## Tools
-Files (read/write/edit/search), git, shell commands (Windows cmd & Unix), background processes, fetch URL.
+## Behavior
+- Plan briefly, then act. Don't over-explain — show results.
+- Read files before editing. Use edit_file (or multi_edit/patch_file) instead of write_file when possible.
+- Run commands via tools. The user will see and approve them.
+- When you encounter errors, diagnose root causes — don't guess.
+- Ask only when genuinely ambiguous. Otherwise make a reasonable default choice and proceed.
+- Use markdown in your responses for readability (code blocks, headers, lists).
+
+## Tools (22)
+**Files**: read_file, write_file, edit_file, multi_edit, patch_file, list_files, search_files, grep_search, delete_file, copy_file, move_file, file_info, directory_tree
+**Shell**: run_command (cross-platform: ${os}), run_command_background
+**Git**: git_status, git_diff, git_commit, git_log, git_branch, git_stash
+**Web**: fetch_url
 
 ## Project
-- ${ctx.projectName} · ${ctx.projectType}${ctx.framework ? ` (${ctx.framework})` : ''}
-- Langs: ${ctx.languages.join(', ') || '?'} · PM: ${ctx.packageManager || '?'} · ~${ctx.totalFiles} files · cwd: ${this.cwd}
+- **${ctx.projectName}** · ${ctx.projectType}${ctx.framework ? ` (${ctx.framework})` : ''}
+- Languages: ${ctx.languages.join(', ') || '?'} · Package manager: ${ctx.packageManager || '?'}
+- ~${ctx.totalFiles} files · OS: ${os} · cwd: ${this.cwd}
 
 ## Layout
 ${ctx.fileTree}
 
 ## Rules
-Read before edit; prefer edit_file over write_file; verify (tests/logs). On failure, diagnose. Ask only if ambiguous.`;
+1. Read before edit — always understand current code first
+2. Prefer surgical edits (edit_file, multi_edit) over full file writes
+3. After changes, verify via tests, build, or reading the result
+4. On failure, diagnose — don't repeat the same failing action
+5. Respect project conventions (formatting, naming, structure)`;
   }
 }

@@ -7,6 +7,7 @@ import { SessionStore, type ChatSession } from '../session-store.js';
 import { SkillManager } from '../skills.js';
 import { BuiltinSubagent, SubagentRunner } from '../subagents.js';
 import { getToolsByCategory } from '../tools/registry.js';
+import { logInspect } from '../tools/logs.js';
 import { UI } from '../ui.js';
 
 export type PersistCtx = { store: SessionStore; session: ChatSession; agent: Agent };
@@ -98,6 +99,13 @@ export async function handleCommand(
         ui.warn('Not a git repository or git not available.');
       }
       break;
+    case '/status':
+      await showStatus(agent, provider, persistCtx, ui);
+      break;
+    case '/logs':
+    case '/log':
+      await inspectLogCommand(input, cmd, ui);
+      break;
     case '/tools':
       ui.toolsList(getToolsByCategory());
       break;
@@ -118,6 +126,51 @@ export async function handleCommand(
     default:
       ui.warn(`Unknown command: ${cmd}. Type /help for available commands.`);
   }
+}
+
+async function showStatus(agent: Agent, provider: Provider, persistCtx: PersistCtx | undefined, ui: UI): Promise<void> {
+  const stats = agent.getUsageStats();
+  const session = persistCtx?.session;
+  ui.neuralStatus('status', 'runtime snapshot');
+  console.log([
+    `Provider: ${provider.name}`,
+    `Model: ${provider.modelId}`,
+    `Session: ${session ? `${session.title} (${session.id.slice(0, 8)}...)` : 'not persisted'}`,
+    `Messages: ${stats.historyLength}`,
+    `History: ${(stats.historyChars / 1000).toFixed(0)}k chars`,
+    `Tokens: ↑${stats.totalInputTokens.toLocaleString()} ↓${stats.totalOutputTokens.toLocaleString()}`,
+  ].map((line) => `  ${chalk.dim(line)}`).join('\n'));
+}
+
+async function inspectLogCommand(input: string, cmd: string, ui: UI): Promise<void> {
+  const rest = input.slice(cmd.length).trim();
+  const { path, mode, lines, pattern } = parseLogArgs(rest);
+  ui.neuralStatus('logs', path ? `inspecting ${path}` : 'discovering log files');
+  const result = await logInspect.execute({ path, mode, lines, pattern });
+  console.log('\n' + ui.renderMarkdown(`\`\`\`text\n${result}\n\`\`\``));
+}
+
+function parseLogArgs(input: string): {
+  path?: string;
+  mode?: 'tail' | 'head' | 'full' | 'errors' | 'summary' | 'latest-error';
+  lines?: number;
+  pattern?: string;
+} {
+  const tokens = input.match(/"[^"]+"|'[^']+'|\S+/g)?.map((token) => token.replace(/^["']|["']$/g, '')) || [];
+  const out: ReturnType<typeof parseLogArgs> = {};
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token === '--mode' || token === '-m') {
+      out.mode = tokens[++i] as any;
+    } else if (token === '--lines' || token === '-n') {
+      out.lines = Number(tokens[++i]);
+    } else if (token === '--pattern' || token === '-p') {
+      out.pattern = tokens[++i];
+    } else if (!out.path) {
+      out.path = token;
+    }
+  }
+  return out;
 }
 
 async function runNamedSubagent(input: string, provider: Provider, ui: UI, cfg: any): Promise<void> {

@@ -76,6 +76,15 @@ export function evaluateToolCall(name: string, args: any, options: PolicyOptions
     return { risk: classified.risk, needsApproval: false, blocked: false, reason: classified.reason };
   }
 
+  if (classified.risk === 'shell-safe') {
+    return {
+      risk: classified.risk,
+      needsApproval: false,
+      blocked: false,
+      reason: classified.reason,
+    };
+  }
+
   return {
     risk: classified.risk,
     needsApproval: !options.autoApprove && classified.risk !== 'read-only',

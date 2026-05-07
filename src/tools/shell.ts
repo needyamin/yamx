@@ -5,31 +5,7 @@
 import { Tool } from './registry.js';
 import { ensureInsideProject, getShellDiagnostics, getSmartShell, runProcess } from './utils.js';
 import { TaskManager } from '../tasks.js';
-
-const DANGEROUS_PATTERNS = [
-  /rm\s+(-rf?|--recursive)/i,
-  /rmdir\s+(\/s|\/q|\s+\/s)/i,
-  /\bdel(\s+\/f|\s+\/s|\s+\\\\)/i,
-  /format\s+/i,
-  /mkfs/i,
-  /dd\s+/i,
-  />\s*\/dev\//i,
-  /chmod\s+777/i,
-  /curl.*\|\s*(ba)?sh/i,
-  /wget.*\|\s*(ba)?sh/i,
-  /npm\s+publish/i,
-  /git\s+push\s+.*--force/i,
-  /git\s+reset\s+--hard/i,
-  /drop\s+database/i,
-  /drop\s+table/i,
-  /truncate\s+table/i,
-  /sudo\s+/i,
-  /systemctl\s+/i,
-  /apt(-get)?\s+/i,
-  /dnf\s+/i,
-  /yum\s+/i,
-  /pacman\s+/i,
-];
+import { isDangerousShellCommand } from '../tool-risk.js';
 
 const DEFAULT_MAX_CHARS = 100_000;
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -59,7 +35,7 @@ export const runCommand: Tool = {
   },
   needsApproval: true,
   isDangerous(args) {
-    return typeof args.command === 'string' && DANGEROUS_PATTERNS.some((p) => p.test(args.command));
+    return typeof args.command === 'string' && isDangerousShellCommand(args.command);
   },
   async execute(args: { command: string; cwd?: string; shell?: string; timeout_ms?: number; max_chars?: number }) {
     if (!args.command?.trim()) return 'Error: command is required.';
@@ -103,7 +79,7 @@ export const runCommandBackground: Tool = {
   },
   needsApproval: true,
   isDangerous(args) {
-    return typeof args.command === 'string' && DANGEROUS_PATTERNS.some((p) => p.test(args.command));
+    return typeof args.command === 'string' && isDangerousShellCommand(args.command);
   },
   async execute(args: { command: string; cwd?: string; shell?: string }) {
     if (!args.command?.trim()) return 'Error: command is required.';

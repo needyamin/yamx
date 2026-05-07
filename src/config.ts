@@ -29,6 +29,11 @@ export interface YamConfig {
     allowedShellCommands: string[];
     deniedShellPatterns: string[];
     hooksEnabled: boolean;
+    modelCouncil: {
+      enabled: boolean;
+      mode?: 'adaptive' | 'always' | 'off';
+    };
+    maxToolResultChars: number;
     subagents: {
       enabled: boolean;
       defaultModel?: string;
@@ -51,6 +56,11 @@ const DEFAULT_CONFIG: YamConfig = {
     allowedShellCommands: [],
     deniedShellPatterns: [],
     hooksEnabled: true,
+    modelCouncil: {
+      enabled: true,
+      mode: 'adaptive',
+    },
+    maxToolResultChars: 24_000,
     subagents: {
       enabled: true,
     },

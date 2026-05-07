@@ -30,6 +30,12 @@ export interface AgentOptions {
   allowedShellCommands?: string[];
   deniedShellPatterns?: string[];
   hooksEnabled?: boolean;
+  /** Run a hidden expert discussion before the main tool-capable response */
+  modelCouncilEnabled?: boolean;
+  /** Council mode: adaptive saves tokens, always maximizes planning, off disables it */
+  modelCouncilMode?: 'adaptive' | 'always' | 'off';
+  /** Maximum tool-result characters kept in model history */
+  maxToolResultChars?: number;
 }
 
 export class Agent {
@@ -82,6 +88,9 @@ export class Agent {
       stream: true,
       maxTokens: 16384,
       temperature: 0.1,
+      modelCouncilEnabled: true,
+      modelCouncilMode: 'adaptive',
+      maxToolResultChars: 24_000,
       ...options,
     };
     if (this.options.initialHistory && this.options.initialHistory.length > 0) {
@@ -185,6 +194,9 @@ export class Agent {
     this.toolCallCounts.clear();
     this.turnStartTime = Date.now();
 
+    this.ui.neuralStatus('input', 'request received; preparing model context');
+    await this.runModelCouncil(userInput);
+
     let iterations = 0;
 
     while (iterations < MAX_TOOL_ITERATIONS) {
@@ -221,9 +233,88 @@ export class Agent {
     await Promise.resolve(this.options.onPersist?.());
   }
 
+  private async runModelCouncil(userInput: string): Promise<void> {
+    if (this.options.modelCouncilEnabled === false || this.options.modelCouncilMode === 'off') return;
+    if (this.options.modelCouncilMode !== 'always' && !this.shouldRunModelCouncil(userInput)) {
+      this.ui.neuralStatus('council', 'adaptive token saver skipped council for this simple turn');
+      return;
+    }
+
+    this.ui.neuralStatus('council', 'Analyst · Planner · Critic · Synthesizer discussing request');
+    this.ui.startThinking('Consulting model council...');
+    try {
+      const recentContext = this.history
+        .slice(-8)
+        .map((message) => {
+          const label = message.role.toUpperCase();
+          const content = message.content || (message.tool_calls ? '[tool calls]' : '');
+          return `${label}: ${content.slice(0, 3000)}`;
+        })
+        .join('\n\n');
+
+      const result = await this.withRetry(
+        () =>
+          this.provider.complete({
+            messages: [
+              {
+                role: 'system',
+                content: [
+                  'You are the hidden YamX model council. Discuss the user request before the main coding agent acts.',
+                  'Use four concise expert perspectives:',
+                  'Analyst: clarify intent and required outcome.',
+                  'Planner: identify the smallest practical execution path.',
+                  'Critic: identify risks, missing evidence, safety concerns, and likely failure modes.',
+                  'Synthesizer: give final private guidance the main agent should follow.',
+                  'Keep the whole council response under 900 tokens.',
+                  'Do not ask the user questions unless the task is genuinely blocked.',
+                  'Do not claim work is done. Do not include public-facing filler.',
+                ].join('\n'),
+              },
+              {
+                role: 'user',
+                content: [
+                  'Recent conversation and auto context:',
+                  recentContext.slice(0, 30_000),
+                  '',
+                  'Current user request:',
+                  userInput,
+                ].join('\n'),
+              },
+            ],
+            maxTokens: Math.min(1400, this.options.maxTokens || 1400),
+            temperature: Math.max(0.1, Math.min(0.3, this.options.temperature ?? 0.1)),
+          }),
+        'Model council'
+      );
+
+      this.ui.stopSpinner();
+      if (result.usage) {
+        this.totalInputTokens += result.usage.inputTokens;
+        this.totalOutputTokens += result.usage.outputTokens;
+      }
+
+      const notes = result.content?.trim();
+      if (!notes) return;
+      this.history.push({
+        role: 'user',
+        content: `<yamx_internal_model_council private="true">\n${notes.slice(0, 6_000)}\n</yamx_internal_model_council>\n\nUse these private notes to answer the original user request exactly. Do not mention the council unless the user asks how you reasoned.`,
+      });
+    } catch (error: any) {
+      this.ui.stopSpinner();
+      this.ui.warn(`Model council skipped: ${error.message}`);
+    }
+  }
+
+  private shouldRunModelCouncil(userInput: string): boolean {
+    const text = userInput.toLowerCase();
+    if (text.length > 500) return true;
+    return /\b(fix|bug|error|broken|fail|crash|implement|add|create|refactor|review|analy[sz]e|architecture|security|performance|optimi[sz]e|test|build|deploy|database|migration|agent|powerful|advanced|pro|logs?)\b/.test(text);
+  }
+
   /** Non-streaming completion */
   private async completeResponse(): Promise<CompletionResult> {
-    this.ui.startThinking();
+    this.ui.neuralStatus('model', 'sending context and tools to provider');
+    this.ui.startThinking('Waiting for model response...');
 
     try {
       const result = await this.withRetry(() => this.provider.complete({
@@ -264,7 +355,8 @@ export class Agent {
 
   /** Streaming completion with accumulated markdown rendering */
   private async streamResponse(): Promise<CompletionResult> {
-    this.ui.startThinking();
+    this.ui.neuralStatus('model', 'streaming provider response');
+    this.ui.startThinking('Waiting for model stream...');
 
     try {
       let fullContent = '';
@@ -471,6 +563,7 @@ export class Agent {
       }
 
       // Execute the tool
+      this.ui.neuralStatus('action', `executing ${tc.function.name}`);
       this.ui.toolCall(tc.function.name, args);
       const startTime = Date.now();
 
@@ -500,7 +593,7 @@ export class Agent {
           role: 'tool',
           tool_call_id: tc.id,
           name: tc.function.name,
-          content: result,
+          content: this.compactToolResultForHistory(tc.function.name, result),
         });
       } catch (error: any) {
         const duration = Date.now() - startTime;
@@ -557,6 +650,26 @@ export class Agent {
     if (Array.isArray(value)) return `[${value.map((v) => this.stableStringify(v)).join(',')}]`;
     const obj = value as Record<string, unknown>;
     return `{${Object.keys(obj).sort().map((k) => `${JSON.stringify(k)}:${this.stableStringify(obj[k])}`).join(',')}}`;
+  }
+
+  private compactToolResultForHistory(toolName: string, result: string): string {
+    const maxChars = this.options.maxToolResultChars ?? 24_000;
+    if (result.length <= maxChars) return result;
+
+    const lines = result.split(/\r?\n/);
+    const signalLines = lines.filter((line) => /(error|exception|fatal|failed|failure|warning|warn|traceback|stack|timeout|enoent|eacces|eperm|typeerror|syntaxerror|referenceerror)/i.test(line));
+    const head = lines.slice(0, 80).join('\n');
+    const tail = lines.slice(-160).join('\n');
+    const signals = signalLines.slice(-80).join('\n');
+
+    return [
+      `[Tool result compacted for token economy: ${toolName}]`,
+      `Original size: ${result.length.toLocaleString()} chars, ${lines.length.toLocaleString()} lines.`,
+      signals ? '\nImportant error/warning lines:\n' + signals : '',
+      '\nHead:\n' + head,
+      '\nTail:\n' + tail,
+      '\nUse narrower tool arguments (line ranges, max_results, log_inspect mode=latest-error/summary) if more detail is needed.',
+    ].filter(Boolean).join('\n').slice(0, maxChars);
   }
 
   /** Track file changes for undo */

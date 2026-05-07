@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -79,6 +80,10 @@ export function getShell(shellName?: string): ShellSpec {
       return { command: 'bash', args: ['-lc'], label: 'bash' };
     case 'sh':
       return { command: 'sh', args: ['-lc'], label: 'sh' };
+    case 'zsh':
+      return { command: 'zsh', args: ['-lc'], label: 'zsh' };
+    case 'fish':
+      return { command: 'fish', args: ['-lc'], label: 'fish' };
     default:
       return getDefaultShell();
   }
@@ -121,6 +126,7 @@ export function getSmartShell(command: string, shellName?: string): SmartShellCo
 }
 
 export function getShellDiagnostics(): string {
+  const localPaths = getLocalFirstPathEntries(PROJECT_ROOT);
   const rows = [
     ['platform', `${process.platform} ${process.arch}`],
     ['default', getDefaultShell().label],
@@ -128,9 +134,53 @@ export function getShellDiagnostics(): string {
     ['powershell', process.platform === 'win32' ? String(shellAvailable('powershell')) : 'n/a'],
     ['pwsh', String(shellAvailable('pwsh'))],
     ['bash', String(shellAvailable('bash'))],
-    ['sh', process.platform === 'win32' ? String(shellAvailable('sh')) : String(shellAvailable('sh'))],
+    ['sh', String(shellAvailable('sh'))],
+    ['zsh', String(shellAvailable('zsh'))],
+    ['fish', String(shellAvailable('fish'))],
+    ['local bins', localPaths.length ? localPaths.map((p) => path.relative(PROJECT_ROOT, p) || '.').join(', ') : '(none found)'],
   ];
   return rows.map(([k, v]) => `${k.padEnd(12)} ${v}`).join('\n');
+}
+
+export function getLocalFirstPathEntries(cwd = PROJECT_ROOT): string[] {
+  const candidates = [
+    path.join(cwd, 'node_modules', '.bin'),
+    path.join(cwd, 'vendor', 'bin'),
+    path.join(cwd, '.venv', process.platform === 'win32' ? 'Scripts' : 'bin'),
+    path.join(cwd, 'venv', process.platform === 'win32' ? 'Scripts' : 'bin'),
+    path.join(cwd, 'env', process.platform === 'win32' ? 'Scripts' : 'bin'),
+    path.join(cwd, 'bin'),
+    path.join(cwd, 'scripts'),
+    path.join(cwd, '.bin'),
+  ];
+
+  const seen = new Set<string>();
+  return candidates.filter((entry) => {
+    const resolved = path.resolve(entry);
+    if (seen.has(resolved)) return false;
+    seen.add(resolved);
+    try {
+      return fs.existsSync(resolved) && fs.statSync(resolved).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function buildLocalFirstEnv(cwd = PROJECT_ROOT, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...base };
+  const key = getPathEnvKey(env);
+  const currentPath = env[key] || '';
+  const localEntries = getLocalFirstPathEntries(cwd);
+  if (localEntries.length > 0) {
+    env[key] = [...localEntries, currentPath].filter(Boolean).join(path.delimiter);
+  }
+  return env;
+}
+
+function getPathEnvKey(env: NodeJS.ProcessEnv): string {
+  if (process.platform !== 'win32') return 'PATH';
+  return Object.keys(env).find((key) => key.toLowerCase() === 'path') || 'Path';
 }
 
 function normalizeCommandForShell(command: string, shellLabel: string): string {
@@ -164,16 +214,19 @@ function translateSimpleUnixInspectionForCmd(command: string): string {
 }
 
 function looksLikePowerShell(command: string): boolean {
-  return /\b(Get-ChildItem|Select-String|Set-Location|Test-Path|New-Item|Remove-Item|Copy-Item|Move-Item|Rename-Item|Get-Content|Set-Content|Start-Process|Stop-Process|Get-Process|Get-Service|Set-ExecutionPolicy|Invoke-WebRequest|Invoke-RestMethod)\b/i.test(command)
+  return /\b(Get|Set|New|Remove|Copy|Move|Rename|Test|Start|Stop|Restart|Invoke|Select|Where|ForEach|Out|Write|Read|Clear|Import|Export|ConvertTo|ConvertFrom|Push|Pop|Join|Split|Resolve)-[A-Za-z]+\b/i.test(command)
     || /\$env:/i.test(command)
+    || /\b(gci|gc|sc|ni|ri|sl|irm|iwr)\b/i.test(command)
     || /\b-(Recursive|Recurse|LiteralPath|ExecutionPolicy|NoProfile|NoLogo|Command)\b/i.test(command);
 }
 
 function looksLikeUnixShell(command: string): boolean {
-  return /^\s*(export|source|sudo|chmod|chown|grep|sed|awk|cat|ls|ll|la|pwd|touch|mkdir\s+-p|rm\s+-|cp\s+-|mv\s+-|find\s+.*\s-name|brew|apt|apt-get|dnf|yum|pacman|zypper|systemctl|journalctl|open)\b/i.test(command)
-    || /^\s*(\.\/|~\/|bash\s+|sh\s+|zsh\s+|fish\s+)/i.test(command)
-    || /\$\(|`[^`]+`|\${[^}]+}/.test(command)
+  return /^\s*(export|source|sudo|chmod|chown|grep|egrep|fgrep|sed|awk|cat|ls|ll|la|pwd|touch|mkdir\s+-p|rm\s+-|cp\s+-|mv\s+-|find\s+.*\s-name|brew|apt|apt-get|dnf|yum|pacman|zypper|apk|systemctl|journalctl|open|launchctl|defaults|sw_vers|wsl)\b/i.test(command)
+    || /^\s*(\.\/|~\/|bash\s+|sh\s+|zsh\s+|fish\s+|wsl\s+)/i.test(command)
+    || /^\s*(env\s+)?[A-Za-z_][A-Za-z0-9_]*=.*\s+\S+/.test(command)
+    || /\$\(|`[^`]+`|\${[^}]+}|\$[A-Za-z_][A-Za-z0-9_]*/.test(command)
     || /\|\s*(grep|sed|awk|xargs|tee|head|tail|sort|uniq|wc|cut|tr)\b/i.test(command)
+    || /\s(&&|\|\||;)\s/.test(command)
     || /\s(2>|1>|>>|<)\s*\S+/.test(command);
 }
 
@@ -206,9 +259,10 @@ export function runProcess(
     const maxChars = options.maxChars ?? 100_000;
     let child;
     try {
+      const cwd = options.cwd ?? PROJECT_ROOT;
       child = spawn(file, args, {
-        cwd: options.cwd ?? PROJECT_ROOT,
-        env: { ...process.env, ...options.env },
+        cwd,
+        env: buildLocalFirstEnv(cwd, { ...process.env, ...options.env }),
         windowsHide: true,
       });
     } catch (err: any) {

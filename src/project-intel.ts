@@ -8,6 +8,10 @@ interface IntelOptions {
   maxFiles?: number;
 }
 
+interface CodebaseAnalysisOptions extends IntelOptions {
+  depth?: 'quick' | 'standard' | 'deep';
+}
+
 const IMPORTANT_FILES = [
   'package.json',
   'tsconfig.json',
@@ -26,6 +30,32 @@ const IMPORTANT_FILES = [
   'Makefile',
   'Dockerfile',
   'docker-compose.yml',
+];
+
+const SOURCE_GLOBS = [
+  'src/**/*.{ts,tsx,js,jsx,py,go,rs,java,cs,php,rb,swift,kt,vue,svelte}',
+  'app/**/*.{ts,tsx,js,jsx,py}',
+  'lib/**/*.{ts,tsx,js,jsx,py,go,rs}',
+  'packages/**/*.{ts,tsx,js,jsx,py,go,rs}',
+  'tests/**/*.{ts,tsx,js,jsx,py,go,rs}',
+  'test/**/*.{ts,tsx,js,jsx,py,go,rs}',
+  '*.{ts,tsx,js,jsx,py,go,rs}',
+];
+
+const DEFAULT_IGNORE = [
+  'node_modules/**',
+  '.git/**',
+  'dist/**',
+  'build/**',
+  '.next/**',
+  '.nuxt/**',
+  'coverage/**',
+  '.venv/**',
+  'venv/**',
+  '*.lock',
+  '*.map',
+  '*.min.js',
+  '*.min.css',
 ];
 
 export async function buildProjectIntel(options: IntelOptions = {}): Promise<string> {
@@ -62,6 +92,56 @@ export async function buildProjectIntel(options: IntelOptions = {}): Promise<str
     '',
     'Dependency signals:',
     ...formatDeps(packageInfo),
+  ].join('\n');
+}
+
+export async function buildCodebaseAnalysis(options: CodebaseAnalysisOptions = {}): Promise<string> {
+  const cwd = options.cwd || process.cwd();
+  const goal = options.goal?.trim() || 'understand and improve this codebase';
+  const depth = options.depth || 'standard';
+  const maxFiles = Math.max(20, Math.min(options.maxFiles || depthDefaultMaxFiles(depth), 180));
+  const packageInfo = await readPackageInfo(cwd);
+  const files = await listSourceFiles(cwd, maxFiles);
+  const importantFiles = await listImportantFiles(cwd, Math.min(50, maxFiles));
+  const directories = summarizeDirectories(files);
+  const languages = summarizeLanguages(files);
+  const entryPoints = selectEntryPoints(files, importantFiles);
+  const tests = files.filter((file) => /(^|\/)(tests?|__tests__|spec)\//i.test(file) || /\.(test|spec)\./i.test(file));
+  const workflows = recommendAgentWorkflow(goal, packageInfo, tests);
+  const risks = inferProjectRisks(files, packageInfo);
+
+  return [
+    `Codebase Analysis (${path.basename(cwd)})`,
+    `Goal: ${goal}`,
+    `Depth: ${depth}`,
+    '',
+    'Executive summary:',
+    `- Project type: ${inferProjectType(packageInfo, importantFiles)}`,
+    `- Package manager: ${packageInfo.manager}`,
+    `- Source files sampled: ${files.length}`,
+    `- Main languages: ${languages.length ? languages.join(', ') : 'unknown'}`,
+    `- Test coverage signal: ${tests.length ? `${tests.length} test/spec file${tests.length === 1 ? '' : 's'} found` : 'no obvious test files found'}`,
+    '',
+    'Agentic operating plan:',
+    ...workflows.map((item, index) => `${index + 1}. ${item}`),
+    '',
+    'Primary entry points:',
+    ...formatList(entryPoints, '- none detected from common patterns'),
+    '',
+    'Important files:',
+    ...formatList(importantFiles.slice(0, 35), '- none detected'),
+    '',
+    'Directory focus:',
+    ...formatList(directories.map(([dir, count]) => `${dir} (${count} files)`), '- no source directories detected'),
+    '',
+    'Package scripts:',
+    ...formatScripts(packageInfo.scripts),
+    '',
+    'Dependency signals:',
+    ...formatDeps(packageInfo),
+    '',
+    'Risk and verification notes:',
+    ...risks.map((risk) => `- ${risk}`),
   ].join('\n');
 }
 
@@ -148,6 +228,19 @@ async function listImportantFiles(cwd: string, maxFiles: number): Promise<string
   return [...seen].slice(0, maxFiles);
 }
 
+async function listSourceFiles(cwd: string, maxFiles: number): Promise<string[]> {
+  const files = await fg(SOURCE_GLOBS, {
+    cwd,
+    onlyFiles: true,
+    suppressErrors: true,
+    ignore: DEFAULT_IGNORE,
+  });
+
+  return files
+    .sort((a, b) => scoreFile(b) - scoreFile(a) || a.localeCompare(b))
+    .slice(0, maxFiles);
+}
+
 function scoreFile(file: string): number {
   let score = 0;
   if (/(index|main|app|server|cli|config|route|controller|service|agent|context|registry|tool)/i.test(file)) score += 4;
@@ -171,6 +264,138 @@ function recommendCommands(pkg: Awaited<ReturnType<typeof readPackageInfo>>): st
   if (!scripts.test) out.push('No test script detected; use the narrowest available build/typecheck/readback verification.');
   if (!scripts.build) out.push('No build script detected; verify with targeted command or code inspection.');
   return [...new Set(out)];
+}
+
+function depthDefaultMaxFiles(depth: CodebaseAnalysisOptions['depth']): number {
+  if (depth === 'quick') return 50;
+  if (depth === 'deep') return 140;
+  return 90;
+}
+
+function summarizeLanguages(files: string[]): string[] {
+  const labels: Record<string, string> = {
+    '.ts': 'TypeScript',
+    '.tsx': 'TypeScript React',
+    '.js': 'JavaScript',
+    '.jsx': 'JavaScript React',
+    '.py': 'Python',
+    '.go': 'Go',
+    '.rs': 'Rust',
+    '.java': 'Java',
+    '.cs': 'C#',
+    '.php': 'PHP',
+    '.rb': 'Ruby',
+    '.vue': 'Vue',
+    '.svelte': 'Svelte',
+  };
+  const counts = new Map<string, number>();
+  for (const file of files) {
+    const ext = path.extname(file).toLowerCase();
+    const label = labels[ext] || ext || 'unknown';
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([label, count]) => `${label} (${count})`);
+}
+
+function summarizeDirectories(files: string[]): Array<[string, number]> {
+  const counts = new Map<string, number>();
+  for (const file of files) {
+    const parts = file.split(/[\\/]/);
+    const dir = parts.length > 1 ? parts.slice(0, Math.min(2, parts.length - 1)).join('/') : '.';
+    counts.set(dir, (counts.get(dir) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 12);
+}
+
+function selectEntryPoints(files: string[], importantFiles: string[]): string[] {
+  const candidates = [...importantFiles, ...files];
+  const seen = new Set<string>();
+  return candidates
+    .filter((file) => {
+      if (seen.has(file)) return false;
+      seen.add(file);
+      return /(^|\/)(index|main|app|server|cli|agent|context|registry|routes?|controller|service)\.(ts|tsx|js|jsx|py|go|rs)$/i.test(file)
+        || /^(package\.json|README\.md|Cargo\.toml|pyproject\.toml|go\.mod)$/i.test(file);
+    })
+    .slice(0, 20);
+}
+
+function recommendAgentWorkflow(
+  goal: string,
+  pkg: Awaited<ReturnType<typeof readPackageInfo>>,
+  tests: string[]
+): string[] {
+  const lower = goal.toLowerCase();
+  const steps = [
+    'Map the nearest owning files first: entry points, registry/config, and tests before editing.',
+    'Use grep_search for exact symbols, errors, and command names; read only the focused ranges that explain behavior.',
+  ];
+
+  if (/analy[sz]e|summari[sz]e|understand|codebase|architecture|review/.test(lower)) {
+    steps.push('Produce an architecture summary from observed files, scripts, dependencies, and test signals; separate facts from recommendations.');
+  }
+  if (/fix|bug|error|fail|crash|broken/.test(lower)) {
+    steps.push('Reproduce or inspect the failure, patch the root cause, then rerun the narrow failing check.');
+  }
+  if (/add|implement|feature|make|create|improve|power|smart|agent/.test(lower)) {
+    steps.push('Follow existing local patterns, add the smallest useful capability, and avoid broad rewrites unless tests force it.');
+  }
+
+  const commandNames = Object.keys(pkg.scripts);
+  const verification = ['typecheck', 'check', 'lint', 'test', 'build'].filter((name) => commandNames.includes(name));
+  if (verification.length > 0) {
+    steps.push(`Verify from cheapest to strongest with existing scripts: ${verification.map((name) => `${pkg.manager === 'npm' ? 'npm.cmd run' : 'npm run'} ${name}`).join(' -> ')}.`);
+  } else if (tests.length > 0) {
+    steps.push('No obvious package verification script was found; inspect test runner setup before claiming runtime confidence.');
+  } else {
+    steps.push('No obvious tests were found; use build/typecheck/readback inspection and report the verification gap clearly.');
+  }
+
+  return [...new Set(steps)].slice(0, 7);
+}
+
+function inferProjectType(pkg: Awaited<ReturnType<typeof readPackageInfo>>, importantFiles: string[]): string {
+  const deps = new Set([...pkg.dependencies, ...pkg.devDependencies]);
+  if (deps.has('next')) return 'Next.js app';
+  if (deps.has('react')) return 'React app/library';
+  if (deps.has('vue')) return 'Vue app';
+  if (deps.has('express') || deps.has('fastify') || deps.has('@nestjs/core')) return 'Node.js backend';
+  if (importantFiles.includes('package.json')) return 'Node.js/TypeScript project';
+  if (importantFiles.includes('pyproject.toml') || importantFiles.includes('requirements.txt')) return 'Python project';
+  if (importantFiles.includes('Cargo.toml')) return 'Rust project';
+  if (importantFiles.includes('go.mod')) return 'Go project';
+  return 'unknown';
+}
+
+function inferProjectRisks(files: string[], pkg: Awaited<ReturnType<typeof readPackageInfo>>): string[] {
+  const risks: string[] = [];
+  const scripts = Object.keys(pkg.scripts);
+  if (!scripts.some((name) => /^(test|lint|typecheck|check|build)$/.test(name))) {
+    risks.push('No standard verification script detected; confidence should come from targeted commands and code inspection.');
+  }
+  if (files.some((file) => /\.(test|spec)\./i.test(file)) && !scripts.includes('test')) {
+    risks.push('Test files exist but no test script is exposed in package.json; verify runner wiring before relying on tests.');
+  }
+  if (pkg.dependencies.length + pkg.devDependencies.length > 35) {
+    risks.push('Large dependency surface; prefer existing libraries and avoid adding new packages unless they remove real risk.');
+  }
+  if (files.some((file) => /(^|\/)(agent|tools?|registry|policy|shell)\./i.test(file))) {
+    risks.push('Agent/tooling code can affect filesystem, shell, or git behavior; verify safety policy and happy-path execution after changes.');
+  }
+  if (risks.length === 0) {
+    risks.push('No major structural risks detected from static project metadata; still verify edited behavior before declaring success.');
+  }
+  return risks;
+}
+
+function formatList(items: string[], empty: string): string[] {
+  if (items.length === 0) return [empty];
+  return items.map((item) => `- ${item}`);
 }
 
 function inferFocus(goal: string): string[] {

@@ -36,6 +36,56 @@ dotenv.config();
 const VERSION = '1.0.6';
 const program = new Command();
 
+type ProviderName = 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'ollama';
+
+const PROVIDER_CHOICES: Array<{ name: string; value: ProviderName }> = [
+  { name: 'OpenRouter  (100+ models: DeepSeek, Llama, Claude, GPT, Gemini)', value: 'openrouter' },
+  { name: 'OpenAI      (GPT-4o, GPT-4.1, o-series)', value: 'openai' },
+  { name: 'Anthropic   (Claude Sonnet/Opus)', value: 'anthropic' },
+  { name: 'Gemini      (Gemini Flash/Pro)', value: 'gemini' },
+  { name: 'Ollama      (local models: Qwen, DeepSeek, Llama)', value: 'ollama' },
+];
+
+const KEY_HINTS: Record<Exclude<ProviderName, 'ollama'>, string> = {
+  openai: 'https://platform.openai.com/api-keys',
+  anthropic: 'https://console.anthropic.com/settings/keys',
+  gemini: 'https://aistudio.google.com/apikey',
+  openrouter: 'https://openrouter.ai/keys',
+};
+
+const PROVIDER_MODELS: Record<ProviderName, { name: string; value: string }[]> = {
+  openai: [
+    { name: 'GPT-4o', value: 'gpt-4o' },
+    { name: 'GPT-4.1', value: 'gpt-4.1' },
+    { name: 'o3', value: 'o3' },
+    { name: 'o4-mini', value: 'o4-mini' },
+  ],
+  anthropic: [
+    { name: 'Claude Sonnet 4', value: 'claude-sonnet-4-20250514' },
+    { name: 'Claude Opus 4', value: 'claude-opus-4-20250514' },
+    { name: 'Claude 3.7 Sonnet', value: 'claude-3-7-sonnet-20250219' },
+  ],
+  gemini: [
+    { name: 'Gemini 2.5 Flash', value: 'gemini-2.5-flash' },
+    { name: 'Gemini 2.5 Pro', value: 'gemini-2.5-pro' },
+    { name: 'Gemini 1.5 Pro', value: 'gemini-1.5-pro' },
+  ],
+  openrouter: [
+    { name: 'DeepSeek Chat V3', value: 'deepseek/deepseek-chat' },
+    { name: 'DeepSeek R1', value: 'deepseek/deepseek-r1' },
+    { name: 'Claude Sonnet 4', value: 'anthropic/claude-sonnet-4' },
+    { name: 'GPT-4o', value: 'openai/gpt-4o' },
+    { name: 'Gemini 2.5 Pro', value: 'google/gemini-2.5-pro' },
+    { name: 'Llama 3.1 70B', value: 'meta-llama/llama-3.1-70b-instruct' },
+  ],
+  ollama: [
+    { name: 'Qwen 2.5 Coder', value: 'qwen2.5-coder' },
+    { name: 'DeepSeek R1', value: 'deepseek-r1' },
+    { name: 'Llama 3.1', value: 'llama3.1' },
+    { name: 'CodeLlama', value: 'codellama' },
+  ],
+};
+
 program
   .name('yamx')
   .description('YamX â€” agent CLI with persistent chat sessions')
@@ -51,7 +101,7 @@ program
   .option('--history', 'List saved conversations, then exit', false)
   .option('--resume <id>', 'Resume a session (full UUID or unique prefix)')
   .option('--delete-chat <id>', 'Delete a session by id or prefix, then exit', '')
-  .option('--onboard', 'First-time setup (keys, provider, model)', false)
+  .option('--onboard', 'Setup or switch provider, API key, model, and core settings', false)
   .option('--reset-config', 'Reset ~/.yamx/config.json to defaults, then exit', false)
   .option('--diagnose', 'Check configuration, API keys, and connectivity', false);
 
@@ -68,50 +118,53 @@ program
         name: 'action',
         message: 'What would you like to configure?',
         choices: [
+          { name: 'Setup / Switch Provider + Model + API Key', value: 'wizard' },
           { name: 'Set API Key', value: 'apikey' },
           { name: 'Set Default Provider', value: 'provider' },
           { name: 'Set Default Model', value: 'model' },
           { name: 'Set context budget (chars for auto-summarize)', value: 'budget' },
+          { name: 'Set max tool-result history size', value: 'toolresults' },
           { name: 'Toggle Auto-Approve', value: 'autoapprove' },
+          { name: 'Toggle Model Council', value: 'council' },
           { name: 'View Current Config', value: 'view' },
         ],
       },
     ]);
 
-    if (action === 'apikey') {
+    if (action === 'wizard') {
+      await runOnboard(config, { title: 'YamX · Setup / Switch Provider' });
+    } else if (action === 'apikey') {
       const { provider } = await inquirer.prompt([
         {
           type: 'rawlist',
           name: 'provider',
           message: 'Select provider:',
-          choices: ['openai', 'anthropic', 'gemini', 'openrouter'],
+          choices: PROVIDER_CHOICES.filter((choice) => choice.value !== 'ollama'),
         },
       ]);
-      const { key } = await inquirer.prompt([
-        { type: 'password', name: 'key', message: `Enter ${provider} API key:` },
-      ]);
-      config.set(`providers.${provider}.apiKey`, key);
+      await configureProviderAccess(config, provider);
       await config.save();
-      console.log(chalk.green(`âœ“ ${provider} API key saved.`));
+      console.log(chalk.green(`✓ ${provider} API key saved.`));
     } else if (action === 'provider') {
       const { provider } = await inquirer.prompt([
         {
           type: 'rawlist',
           name: 'provider',
           message: 'Select default provider:',
-          choices: ['openai', 'anthropic', 'gemini', 'openrouter', 'ollama'],
+          default: config.get().defaultProvider || 'openrouter',
+          choices: PROVIDER_CHOICES,
         },
       ]);
       config.set('defaultProvider', provider);
       await config.save();
-      console.log(chalk.green(`âœ“ Default provider set to ${provider}.`));
+      console.log(chalk.green(`✓ Default provider set to ${provider}.`));
     } else if (action === 'model') {
-      const { model } = await inquirer.prompt([
-        { type: 'input', name: 'model', message: 'Enter default model name:' },
-      ]);
+      const provider = (config.get().defaultProvider || 'openrouter') as ProviderName;
+      const model = await chooseModel(provider, config.get().defaultModel);
       config.set('defaultModel', model);
+      config.set(`providers.${provider}.model`, model);
       await config.save();
-      console.log(chalk.green(`âœ“ Default model set to ${model}.`));
+      console.log(chalk.green(`✓ Default model set to ${model}.`));
     } else if (action === 'budget') {
       const { n } = await inquirer.prompt([
         {
@@ -129,6 +182,23 @@ program
       } else {
         console.log(chalk.yellow('Value too small; unchanged.'));
       }
+    } else if (action === 'toolresults') {
+      const { n } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'n',
+          message: 'Max tool-result chars kept in model history:',
+          default: String(config.get().settings.maxToolResultChars || 24_000),
+        },
+      ]);
+      const v = parseInt(n, 10);
+      if (v >= 4000 && v <= 100_000) {
+        config.set('settings.maxToolResultChars', v);
+        await config.save();
+        console.log(chalk.green(`✓ maxToolResultChars = ${v}`));
+      } else {
+        console.log(chalk.yellow('Use a value between 4000 and 100000; unchanged.'));
+      }
     } else if (action === 'autoapprove') {
       const current = config.get().settings.autoApprove;
       const { approve } = await inquirer.prompt([
@@ -137,6 +207,26 @@ program
       config.set('settings.autoApprove', approve);
       await config.save();
       console.log(chalk.green(`âœ“ Auto-approve set to ${approve}.`));
+    } else if (action === 'council') {
+      const current = config.get().settings.modelCouncil?.enabled !== false;
+      const { enabled, mode } = await inquirer.prompt([
+        { type: 'confirm', name: 'enabled', message: `Enable hidden model council before agent replies? (Currently: ${current})`, default: current },
+        {
+          type: 'rawlist',
+          name: 'mode',
+          message: 'Model council token mode:',
+          default: config.get().settings.modelCouncil?.mode || 'adaptive',
+          choices: [
+            { name: 'adaptive (recommended)', value: 'adaptive' },
+            { name: 'always (higher token cost)', value: 'always' },
+            { name: 'off (lowest cost)', value: 'off' },
+          ],
+        },
+      ]);
+      config.set('settings.modelCouncil.enabled', enabled);
+      config.set('settings.modelCouncil.mode', enabled ? mode : 'off');
+      await config.save();
+      console.log(chalk.green(`✓ Model council set to ${enabled ? mode : 'off'}.`));
     } else if (action === 'view') {
       const cfg = config.get();
       const safe = JSON.parse(JSON.stringify(cfg));
@@ -165,7 +255,7 @@ program.action(async (options) => {
   }
 
   if (options.onboard) {
-    await runOnboard(config);
+    await runOnboard(config, { title: 'YamX · Setup / Switch Provider' });
     process.exit(0);
   }
 
@@ -187,7 +277,7 @@ program.action(async (options) => {
 
   if (!configExists && !isCommandRun) {
     console.log(chalk.yellow('\nWelcome to YamX! Let\'s do a quick first-time setup.'));
-    await runOnboard(config);
+    await runOnboard(config, { title: 'YamX · First-Time Setup', firstRun: true });
     Object.assign(cfg, config.get());
   }
 
@@ -269,7 +359,7 @@ program.action(async (options) => {
       ]);
 
       if (choice === 'global') {
-        await runOnboard(config);
+        await runOnboard(config, { title: 'YamX · Setup / Switch Provider' });
         Object.assign(cfg, config.get());
         providerName = options.provider || cfg.defaultProvider || 'openai';
         modelName = options.model || cfg.defaultModel;
@@ -391,12 +481,15 @@ program.action(async (options) => {
     allowedShellCommands: cfg.settings?.allowedShellCommands ?? [],
     deniedShellPatterns: cfg.settings?.deniedShellPatterns ?? [],
     hooksEnabled: cfg.settings?.hooksEnabled !== false,
+    modelCouncilEnabled: cfg.settings?.modelCouncil?.enabled !== false,
+    modelCouncilMode: cfg.settings?.modelCouncil?.mode ?? 'adaptive',
+    maxToolResultChars: cfg.settings?.maxToolResultChars ?? 24_000,
   });
 
   ui.banner(provider.name, provider.modelId, {
     title: currentSession.title,
     id: currentSession.id,
-  }, getToolCount());
+  }, getToolCount(), VERSION);
 
   if (currentSession.messages.length === 1) {
     console.log(chalk.dim('\n  ðŸ’¡ Need ideas? Try:'));
@@ -535,141 +628,168 @@ async function resolveSessionRef(
 
 // â”€â”€â”€ Onboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-async function runOnboard(config: Config) {
-  await config.load();
-
-  console.log(chalk.hex('#00FF41').bold('\n  â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—'));
-  console.log(chalk.hex('#00FF41').bold('  â•‘       YamX Â· First-Time Setup        â•‘'));
-  console.log(chalk.hex('#00FF41').bold('  â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•\n'));
-
-  const { provider } = await inquirer.prompt<{ provider: string }>([
-    {
-      type: 'rawlist',
-      name: 'provider',
-      message: 'Default LLM provider:',
-      default: config.get().defaultProvider || 'openai',
-      choices: [
-        { name: 'OpenRouter  (100+ models: DeepSeek, Llama, Claude, GPT, Gemini)', value: 'openrouter' },
-        { name: 'OpenAI     (GPT-4o, o3, GPT-4.1)', value: 'openai' },
-        { name: 'Anthropic  (Claude Sonnet 4, Claude Opus 4)', value: 'anthropic' },
-        { name: 'Gemini     (Gemini 2.5 Flash/Pro)', value: 'gemini' },
-        { name: 'Ollama     (local: Qwen, DeepSeek, Llama)', value: 'ollama' },
-      ],
-    },
-  ]);
-
-  if (provider !== 'ollama') {
-    const keyHints: Record<string, string> = {
-      openai: 'https://platform.openai.com/api-keys',
-      anthropic: 'https://console.anthropic.com/settings/keys',
-      gemini: 'https://aistudio.google.com/apikey',
-      openrouter: 'https://openrouter.ai/keys',
-    };
-    console.log(chalk.dim(`  Get your key: ${keyHints[provider]}`));
-
-    const existingKey = (config.get().providers as any)?.[provider]?.apiKey || process.env[`${provider.toUpperCase()}_API_KEY`] || '';
-    const { key } = await inquirer.prompt<{ key: string }>([
-      {
-        type: 'password',
-        name: 'key',
-        message: `API key for ${provider} (pasting is hidden):`,
-        mask: '*',
-        default: existingKey,
-        validate: (k: string) => {
-          const val = k || existingKey;
-          return val.trim().length > 8 || 'Key looks too short';
-        },
-      },
-    ]);
-    const finalKey = key || existingKey;
-    config.set(`providers.${provider}.apiKey`, finalKey.trim());
-  } else {
-    const { url } = await inquirer.prompt<{ url: string }>([
-      {
-        type: 'input',
-        name: 'url',
-        message: 'Ollama base URL:',
-        default: 'http://localhost:11434',
-      },
-    ]);
-    config.set('providers.ollama.baseUrl', url);
-  }
-
-  const providerModels: Record<string, { name: string, value: string }[]> = {
-    openai: [
-      { name: 'GPT-4o', value: 'gpt-4o' },
-      { name: 'o3-mini', value: 'o3-mini' },
-      { name: 'GPT-4.5 Preview', value: 'gpt-4.5-preview' }
-    ],
-    anthropic: [
-      { name: 'Claude 3.7 Sonnet', value: 'claude-3-7-sonnet-20250219' },
-      { name: 'Claude 3.5 Sonnet', value: 'claude-3-5-sonnet-latest' },
-      { name: 'Claude 3 Opus', value: 'claude-3-opus-latest' }
-    ],
-    gemini: [
-      { name: 'Gemini 2.5 Flash', value: 'gemini-2.5-flash' },
-      { name: 'Gemini 2.5 Pro', value: 'gemini-2.5-pro' }
-    ],
-    openrouter: [
-      { name: 'DeepSeek Chat V3', value: 'deepseek/deepseek-chat' },
-      { name: 'DeepSeek R1', value: 'deepseek/deepseek-r1' },
-      { name: 'Claude 3.7 Sonnet', value: 'anthropic/claude-3.7-sonnet' },
-      { name: 'GPT-4o', value: 'openai/gpt-4o' },
-      { name: 'Llama 3 (70B)', value: 'meta-llama/llama-3-70b-instruct' }
-    ],
-    ollama: [
-      { name: 'Qwen 2.5 Coder', value: 'qwen2.5-coder' },
-      { name: 'DeepSeek R1', value: 'deepseek-r1' },
-      { name: 'Llama 3', value: 'llama3' }
-    ]
-  };
-
-  const choices = [...providerModels[provider], { name: 'Other (type manually)', value: 'other' }];
+async function chooseModel(provider: ProviderName, currentModel?: string): Promise<string> {
+  const choices = [
+    ...PROVIDER_MODELS[provider],
+    ...(currentModel ? [{ name: `Keep current (${currentModel})`, value: currentModel }] : []),
+    { name: 'Other (type manually)', value: 'other' },
+  ];
 
   const { selectedModel } = await inquirer.prompt<{ selectedModel: string }>([
     {
       type: 'rawlist',
       name: 'selectedModel',
-      message: 'Default model:',
+      message: `Default model for ${provider}:`,
+      default: currentModel || PROVIDER_MODELS[provider][0]?.value,
       choices,
     },
   ]);
 
-  let model = selectedModel;
-  if (selectedModel === 'other') {
-    const { customModel } = await inquirer.prompt<{ customModel: string }>([
-      { type: 'input', name: 'customModel', message: 'Enter custom model name:' }
+  if (selectedModel !== 'other') return selectedModel;
+  const { customModel } = await inquirer.prompt<{ customModel: string }>([
+    {
+      type: 'input',
+      name: 'customModel',
+      message: 'Enter custom model name:',
+      default: currentModel || '',
+      validate: (value: string) => value.trim().length > 0 || 'Model name is required',
+    },
+  ]);
+  return customModel.trim();
+}
+
+async function configureProviderAccess(config: Config, provider: ProviderName): Promise<void> {
+  if (provider === 'ollama') {
+    const currentUrl = config.get().providers.ollama?.baseUrl || 'http://localhost:11434';
+    const { url } = await inquirer.prompt<{ url: string }>([
+      {
+        type: 'input',
+        name: 'url',
+        message: 'Ollama base URL:',
+        default: currentUrl,
+        validate: (value: string) => value.trim().length > 0 || 'Base URL is required',
+      },
     ]);
-    model = customModel.trim();
+    config.set('providers.ollama.baseUrl', url.trim());
+    return;
   }
 
-  const { autoApprove } = await inquirer.prompt<{ autoApprove: boolean }>([
+  console.log(chalk.dim(`  Get your key: ${KEY_HINTS[provider]}`));
+  const existingKey = (config.get().providers as any)?.[provider]?.apiKey || process.env[`${provider.toUpperCase()}_API_KEY`] || '';
+  const { key } = await inquirer.prompt<{ key: string }>([
+    {
+      type: 'password',
+      name: 'key',
+      message: existingKey
+        ? `API key for ${provider} (press Enter to keep existing):`
+        : `API key for ${provider} (pasting is hidden):`,
+      mask: '*',
+      validate: (value: string) => {
+        const finalValue = value || existingKey;
+        return finalValue.trim().length > 8 || 'Key looks too short';
+      },
+    },
+  ]);
+  config.set(`providers.${provider}.apiKey`, (key || existingKey).trim());
+}
+
+async function configureRuntimeSettings(config: Config, firstRun: boolean): Promise<void> {
+  const { tune } = await inquirer.prompt<{ tune: boolean }>([
+    {
+      type: 'confirm',
+      name: 'tune',
+      message: 'Configure runtime behavior now?',
+      default: firstRun,
+    },
+  ]);
+  if (!tune) return;
+
+  const current = config.get().settings;
+  const answers = await inquirer.prompt<{
+    autoApprove: boolean;
+    streamOut: boolean;
+    modelCouncil: boolean;
+    councilMode: 'adaptive' | 'always' | 'off';
+    maxToolResultChars: string;
+  }>([
     {
       type: 'confirm',
       name: 'autoApprove',
       message: 'Auto-approve tool runs by default? (unsafe)',
-      default: false,
+      default: current.autoApprove,
     },
-  ]);
-
-  const { streamOut } = await inquirer.prompt<{ streamOut: boolean }>([
     {
       type: 'confirm',
       name: 'streamOut',
       message: 'Stream model output?',
-      default: true,
+      default: current.streamOutput,
+    },
+    {
+      type: 'confirm',
+      name: 'modelCouncil',
+      message: 'Enable hidden model council before agent replies?',
+      default: current.modelCouncil?.enabled !== false,
+    },
+    {
+      type: 'rawlist',
+      name: 'councilMode',
+      message: 'Model council token mode:',
+      default: current.modelCouncil?.mode || 'adaptive',
+      choices: [
+        { name: 'adaptive (recommended: use council only for complex work)', value: 'adaptive' },
+        { name: 'always (best planning, higher token cost)', value: 'always' },
+        { name: 'off (lowest cost)', value: 'off' },
+      ],
+    },
+    {
+      type: 'input',
+      name: 'maxToolResultChars',
+      message: 'Max tool-result chars kept in model history:',
+      default: String(current.maxToolResultChars || 24_000),
+      validate: (value: string) => {
+        const n = Number(value);
+        return (Number.isFinite(n) && n >= 4000 && n <= 100000) || 'Use a number between 4000 and 100000';
+      },
     },
   ]);
 
+  config.set('settings.autoApprove', answers.autoApprove);
+  config.set('settings.streamOutput', answers.streamOut);
+  config.set('settings.modelCouncil.enabled', answers.modelCouncil);
+  config.set('settings.modelCouncil.mode', answers.councilMode);
+  config.set('settings.maxToolResultChars', Number(answers.maxToolResultChars));
+}
+
+async function runOnboard(config: Config, options: { title?: string; firstRun?: boolean } = {}) {
+  await config.load();
+
+  const title = options.title || 'YamX · Setup / Switch Provider';
+  const firstRun = options.firstRun ?? false;
+  console.log(chalk.hex('#00FF41').bold(`\n  +==============[ ${title} ]==============+\n`));
+  console.log(chalk.dim('  Change provider, API key, Ollama URL, default model, and runtime behavior.\n'));
+
+  const { provider } = await inquirer.prompt<{ provider: ProviderName }>([
+    {
+      type: 'rawlist',
+      name: 'provider',
+      message: 'Default LLM provider:',
+      default: config.get().defaultProvider || 'openrouter',
+      choices: PROVIDER_CHOICES,
+    },
+  ]);
+
+  await configureProviderAccess(config, provider);
+  const model = await chooseModel(provider, config.get().defaultProvider === provider ? config.get().defaultModel : (config.get().providers as any)?.[provider]?.model);
+  await configureRuntimeSettings(config, firstRun);
+
   config.set('defaultProvider', provider);
   config.set('defaultModel', model);
-  config.set('settings.autoApprove', autoApprove);
-  config.set('settings.streamOutput', streamOut);
+  config.set(`providers.${provider}.model`, model);
   await config.save();
 
-  console.log(chalk.green('\n  âœ“ Configuration saved to ~/.yamx/config.json'));
-  console.log(chalk.dim(`  Provider: ${provider} Â· Model: ${model}`));
-  console.log(chalk.dim(`  Tools: ${getToolCount()} Â· Streaming: ${streamOut}`));
+  console.log(chalk.green('\n  ✓ Configuration saved to ~/.yamx/config.json'));
+  console.log(chalk.dim(`  Provider: ${provider} · Model: ${model}`));
+  console.log(chalk.dim(`  Tools: ${getToolCount()} · Streaming: ${config.get().settings.streamOutput} · Model council: ${config.get().settings.modelCouncil?.mode || 'adaptive'}`));
   console.log(chalk.hex('#00FF41')('\n  Run `yamx` to start coding.\n'));
 }
 

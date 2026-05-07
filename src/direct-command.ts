@@ -12,30 +12,48 @@ const DIRECT_COMMANDS = new Set([
 
   // system/network diagnostics
   'ipconfig', 'ifconfig', 'ping', 'tracert', 'traceroute', 'nslookup', 'netstat', 'tasklist',
-  'taskkill', 'ps', 'top', 'htop', 'kill', 'killall', 'lsof', 'ss', 'ip', 'route', 'arp',
-  'curl', 'wget', 'ssh', 'scp', 'sftp', 'ftp', 'telnet',
+  'taskkill', 'ps', 'top', 'htop', 'btop', 'kill', 'killall', 'pkill', 'pgrep', 'lsof', 'ss',
+  'ip', 'route', 'arp', 'dig', 'host', 'nmap', 'nc', 'netcat',
+  'curl', 'wget', 'ssh', 'scp', 'sftp', 'ftp', 'telnet', 'rsync',
 
   // macOS / Linux package and system tools
   'brew', 'port', 'softwareupdate', 'sw_vers', 'open', 'launchctl', 'defaults', 'xcodebuild',
   'apt', 'apt-get', 'dnf', 'yum', 'pacman', 'zypper', 'apk', 'snap', 'flatpak',
-  'systemctl', 'service', 'journalctl', 'dmesg',
+  'systemctl', 'service', 'journalctl', 'dmesg', 'loginctl', 'crontab',
 
   // Windows shell/tools
   'cls', 'chdir', 'md', 'rd', 'attrib', 'icacls', 'reg', 'sc', 'wmic', 'winget', 'choco',
-  'scoop', 'msbuild', 'devenv',
+  'scoop', 'msbuild', 'devenv', 'powershell.exe', 'pwsh.exe', 'cmd.exe', 'wsl', 'wsl.exe',
 
   // dev tools and package managers
-  'node', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'deno',
+  'node', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'deno', 'corepack',
+  'vite', 'webpack', 'rollup', 'parcel', 'turbo', 'nx', 'next', 'nuxt', 'astro', 'remix',
+  'svelte-kit', 'storybook', 'ts-node', 'tsx',
   'git', 'python', 'python3', 'py', 'pip', 'pip3', 'uv', 'poetry',
-  'pytest', 'ruff', 'black', 'mypy', 'tox', 'pipenv', 'conda',
-  'cargo', 'rustup', 'rustc', 'go', 'gofmt', 'java', 'javac', 'mvn', 'gradle', 'gradlew',
-  'dotnet', 'php', 'composer', 'ruby', 'gem', 'bundle', 'rails',
+  'pytest', 'ruff', 'black', 'mypy', 'pyright', 'tox', 'pipenv', 'conda', 'jupyter', 'ipython',
+  'cargo', 'rustup', 'rustc', 'rustfmt', 'clippy', 'go', 'gofmt', 'goimports',
+  'java', 'javac', 'mvn', 'mvnw', 'gradle', 'gradlew',
+  'dotnet', 'php', 'composer', 'artisan', 'pest', 'phpunit', 'symfony',
+  'ruby', 'gem', 'bundle', 'bundler', 'rake', 'rails',
   'make', 'cmake', 'ninja', 'meson', 'bazel', 'buck', 'gcc', 'g++', 'clang', 'clang++',
-  'tsc', 'eslint', 'prettier', 'vitest', 'jest',
+  'tsc', 'eslint', 'prettier', 'biome', 'vitest', 'jest', 'mocha', 'playwright', 'cypress',
+  'prisma', 'drizzle-kit', 'sequelize', 'knex', 'typeorm',
+
+  // mobile / desktop / native
+  'expo', 'react-native', 'flutter', 'dart', 'adb', 'emulator', 'pod', 'fastlane',
+  'electron', 'tauri', 'cargo-tauri',
 
   // containers, infra, cloud
   'docker', 'podman', 'docker-compose', 'kubectl', 'helm', 'terraform', 'tofu', 'ansible',
-  'vagrant', 'aws', 'az', 'gcloud', 'gh',
+  'vagrant', 'aws', 'az', 'gcloud', 'gh', 'vercel', 'netlify', 'flyctl', 'wrangler', 'firebase',
+  'supabase', 'railway', 'pulumi', 'serverless', 'sam',
+
+  // databases and services
+  'psql', 'mysql', 'mariadb', 'sqlite3', 'redis-cli', 'mongosh', 'mongo', 'createdb', 'dropdb',
+  'pg_dump', 'pg_restore', 'mysqldump', 'dockerize',
+
+  // AI/local model tooling
+  'ollama', 'llama', 'llama-cli', 'llama-server', 'huggingface-cli',
 
   // shells
   'cmd', 'powershell', 'pwsh', 'bash', 'sh', 'zsh', 'fish',
@@ -63,6 +81,14 @@ const NATURAL_OBJECT_WORDS = new Set([
   'feature', 'bug', 'issue', 'thing', 'tools',
 ]);
 
+const COMMAND_SUBCOMMAND_WORDS = new Set([
+  'add', 'apply', 'build', 'check', 'clean', 'compile', 'deploy', 'dev', 'doctor', 'exec',
+  'format', 'generate', 'help', 'init', 'install', 'lint', 'list', 'login', 'logout', 'migrate',
+  'publish', 'run', 'serve', 'start', 'status', 'stop', 'sync', 'test', 'update', 'upgrade',
+  'version', 'watch', 'create', 'destroy', 'down', 'dump', 'fix', 'info', 'logs', 'open',
+  'pull', 'push', 'restore', 'restart', 'shell', 'up',
+]);
+
 export function parseDirectCommand(input: string): string | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
@@ -77,6 +103,7 @@ export function parseDirectCommand(input: string): string | null {
   if (looksLikeQuotedExecutable(trimmed)) return trimmed;
   if (looksLikeCompoundCommand(trimmed)) return startsWithCommand(trimmed) ? trimmed : null;
   if (startsWithCommand(trimmed)) return trimmed;
+  if (looksLikeGenericCommand(trimmed)) return trimmed;
 
   return null;
 }
@@ -96,8 +123,8 @@ function parseExplicitCommand(input: string): string | null {
 
 function startsWithCommand(input: string): boolean {
   const [firstRaw, secondRaw] = input.split(/\s+/, 2);
-  const first = commandName(firstRaw);
-  if (!DIRECT_COMMANDS.has(first)) return false;
+  const first = baseCommandName(firstRaw);
+  if (!DIRECT_COMMANDS.has(first) && !DIRECT_COMMANDS.has(commandName(firstRaw))) return false;
 
   if (first === 'make') {
     const second = secondRaw?.toLowerCase();
@@ -111,8 +138,11 @@ function startsWithCommand(input: string): boolean {
 function commandName(raw: string): string {
   return raw
     .replace(/^["']|["']$/g, '')
-    .replace(/\.(exe|cmd|bat|ps1|psm1|sh|bash|zsh|fish)$/i, '')
     .toLowerCase();
+}
+
+function baseCommandName(raw: string): string {
+  return commandName(raw).replace(/\.(exe|cmd|bat|ps1|psm1|sh|bash|zsh|fish)$/i, '');
 }
 
 function looksLikeQuestionOrTask(input: string): boolean {
@@ -136,6 +166,35 @@ function looksLikeAssignmentCommand(input: string): boolean {
 function looksLikeCompoundCommand(input: string): boolean {
   return /\s(&&|\|\||;|\|)\s/.test(input)
     || /(^|\s)(2>|1>|>>|<)\s*\S+/.test(input);
+}
+
+function looksLikeGenericCommand(input: string): boolean {
+  const parts = input.split(/\s+/);
+  if (parts.length < 2) return false;
+
+  const firstRaw = parts[0].replace(/^["']|["']$/g, '');
+  const first = commandName(firstRaw);
+  const base = baseCommandName(firstRaw);
+  const second = parts[1]?.toLowerCase() || '';
+
+  if (NATURAL_LANGUAGE_STARTERS.includes(base) || NATURAL_OBJECT_WORDS.has(base)) return false;
+  if (!/^[a-z0-9_.:@/+\\-]+$/i.test(firstRaw)) return false;
+
+  const executableLike =
+    /\.(exe|cmd|bat|ps1|psm1|sh|bash|zsh|fish|py|js|mjs|cjs|ts|rb|php|pl|jar|com)$/i.test(first)
+    || first.includes('/')
+    || first.includes('\\')
+    || first.includes(':');
+
+  const argumentLike =
+    /^-{1,2}[a-z0-9][\w-]*/i.test(second)
+    || COMMAND_SUBCOMMAND_WORDS.has(second)
+    || /^[./~]/.test(second)
+    || /^[a-z]:\\/i.test(second)
+    || /^[\w./-]+\.(json|toml|yaml|yml|md|txt|ts|tsx|js|jsx|py|go|rs|php|rb|java|cs|sln|csproj|vcxproj)$/i.test(second)
+    || /^[\w:-]+=[^\s]+/.test(second);
+
+  return executableLike || argumentLike;
 }
 
 function looksLikePowerShellCommand(input: string): boolean {

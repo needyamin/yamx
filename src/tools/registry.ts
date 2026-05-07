@@ -9,7 +9,8 @@ import { runCommand, runCommandBackground, shellDiagnostics, taskList, taskTail,
 import { gitStatus, gitDiff, gitCommit, gitLog, gitBranch, gitStash } from './git.js';
 import { fetchUrlTool } from './web.js';
 import { multiEdit, copyFile, moveFile, fileInfo, grepSearch, treeTool, patchFile } from './advanced.js';
-import { projectIntel } from './intel.js';
+import { codebaseAnalysis, projectIntel } from './intel.js';
+import { logInspect } from './logs.js';
 
 export interface Tool {
   definition: ToolDefinition;
@@ -49,7 +50,9 @@ export const allTools: Record<string, Tool> = {
   git_stash: gitStash,
 
   fetch_url: fetchUrlTool,
+  log_inspect: logInspect,
   project_intel: projectIntel,
+  codebase_analysis: codebaseAnalysis,
 };
 
 export function getToolDefinitions(): ToolDefinition[] {
@@ -71,6 +74,6 @@ export function getToolsByCategory(): Record<string, string[]> {
     Shell: ['run_command', 'run_command_background', 'shell_diagnostics', 'task_list', 'task_tail', 'task_stop'],
     Git: ['git_status', 'git_diff', 'git_commit', 'git_log', 'git_branch', 'git_stash'],
     Web: ['fetch_url'],
-    Intelligence: ['project_intel'],
+    Intelligence: ['project_intel', 'codebase_analysis', 'log_inspect'],
   };
 }

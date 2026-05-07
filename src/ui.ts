@@ -29,13 +29,11 @@ const MX = chalk.hex('#00FF41');
 const MX_DIM = chalk.hex('#008F11');
 const MX_CORE = chalk.hex('#41FF70');
 
-const VERSION = '1.0.5';
-
 export class UI {
   private spinner: Ora | null = null;
   private streamBuffer = '';
 
-  banner(provider: string, model: string, session?: { title?: string; id?: string }, toolCount = 0) {
+  banner(provider: string, model: string, session?: { title?: string; id?: string }, toolCount = 0, version = 'dev') {
     if (process.stdout.isTTY) console.clear();
 
     const threadTitle = session?.title ?? 'untitled';
@@ -43,12 +41,13 @@ export class UI {
 
     const inner = [
       ` ${MX_CORE('+')}${MX('==============[')} ${MX.bold('NEURAL LINK')} ${MX(']==============')}${MX_CORE('+')}`,
-      ` ${MX_CORE('|')}  ${MX.bold('Y A M X')}  ${chalk.hex('#00FF41').dim(`v${VERSION}`)}  ${MX_DIM('coding agent')}               ${MX_CORE('|')}`,
-      ` ${MX_CORE('|')}  ${MX_DIM('encrypted session')} ${MX_DIM('|')} ${MX_DIM(`${toolCount || '?'} tools`)} ${MX_DIM('|')} ${MX_DIM('local-first')}    ${MX_CORE('|')}`,
+      ` ${MX_CORE('|')}  ${MX.bold('Y A M X')}  ${chalk.hex('#00FF41').dim(`v${version}`)}  ${MX_DIM('coding agent')}               ${MX_CORE('|')}`,
+      ` ${MX_CORE('|')}  ${MX_DIM('encrypted session')} ${MX_DIM('|')} ${MX_DIM(`${toolCount || '?'} tools`)} ${MX_DIM('|')} ${MX_DIM('local-first powerhouse')} ${MX_CORE('|')}`,
       ` ${MX_CORE('+')}${MX('--------------')} ${MX_DIM('------------')} ${MX('--------------')}${MX_CORE('+')}`,
       '',
       `   ${MX_DIM('provider')} ${MX(provider)} ${MX_DIM('|')} ${MX_DIM('model')} ${MX(model)}`,
       `   ${MX_DIM('thread')} ${MX(threadTitle)} ${MX_DIM('|')} ${MX_DIM(threadId)}...`,
+      `   ${MX_DIM('signal')} ${MX('online')} ${MX_DIM('|')} ${MX_DIM('model council')} ${MX('armed')} ${MX_DIM('|')} ${MX_DIM('logs')} ${MX('ready')}`,
     ].join('\n');
 
     console.log('');
@@ -61,6 +60,10 @@ export class UI {
       })
     );
     console.log();
+  }
+
+  neuralStatus(stage: string, detail: string) {
+    console.log(`  ${MX('◈')} ${MX_DIM('[')}${MX(stage.toUpperCase())}${MX_DIM(']')} ${DIM(detail)}`);
   }
 
   help() {
@@ -80,6 +83,8 @@ export class UI {
         ['/cost', 'Token usage & history'],
         ['/diff', 'Git diff'],
         ['/run', 'Execute shell command'],
+        ['/log', 'Inspect logs: /log [file] --mode latest-error'],
+        ['/status', 'Runtime/session snapshot'],
         ['/tools', 'List all tools'],
         ['/skills', 'List loaded skills'],
       ]],
@@ -107,14 +112,14 @@ export class UI {
 
   startThinking(text = 'Thinking…') {
     this.spinner = ora({
-      text: DIM(text),
+      text: `${MX_DIM('[neural-link]')} ${DIM(text)}`,
       color: 'green',
       spinner: 'dots',
     }).start();
   }
 
   updateSpinner(text: string) {
-    if (this.spinner) this.spinner.text = DIM(text);
+    if (this.spinner) this.spinner.text = `${MX_DIM('[neural-link]')} ${DIM(text)}`;
   }
 
   stopSpinner() {
@@ -156,7 +161,7 @@ export class UI {
         return `${DIM(k)}=${chalk.white(JSON.stringify(val))}`;
       })
       .join(' ');
-    console.log(`\n  ${TOOL_COLOR('▸')} ${TOOL_COLOR.bold(name)} ${argsStr}`);
+    console.log(`\n  ${MX('◈')} ${MX_DIM('[TOOL LINK]')} ${TOOL_COLOR.bold(name)} ${argsStr}`);
   }
 
   toolResult(name: string, result: string, duration: number) {
@@ -167,7 +172,7 @@ export class UI {
         ? [...lines.slice(0, 12), DIM(`  … ${lines.length - 12} more lines`)]
         : lines;
 
-    console.log(`  ${SUCCESS('✓')} ${DIM(`${name} · ${duration}ms`)}`);
+    console.log(`  ${SUCCESS('✓')} ${DIM(`[TOOL OK] ${name} · ${duration}ms`)}`);
     for (const line of displayLines) {
       console.log(`    ${DIM(line)}`);
     }

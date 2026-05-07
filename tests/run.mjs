@@ -20,10 +20,12 @@ test('shell selection supports explicit Windows and Unix shells', async () => {
   assert.equal(getShell('cmd').label, 'cmd');
   assert.equal(getShell('powershell').label, 'powershell');
   assert.equal(getShell('bash').label, 'bash');
+  assert.equal(getShell('zsh').label, 'zsh');
+  assert.equal(getShell('fish').label, 'fish');
 });
 
 test('smart shell normalizes package bins and obvious shell syntax', async () => {
-  const { getSmartShell } = await import('../dist/tools/utils.js');
+  const { buildLocalFirstEnv, getLocalFirstPathEntries, getSmartShell } = await import('../dist/tools/utils.js');
   const explicitCmd = getSmartShell('npm run build', 'cmd');
   if (process.platform === 'win32') {
     assert.equal(explicitCmd.command, 'npm.cmd run build');
@@ -45,6 +47,23 @@ test('smart shell normalizes package bins and obvious shell syntax', async () =>
   if (process.platform === 'win32') {
     assert.equal(ll.command, 'dir');
   }
+
+  const unixCompound = getSmartShell('export NODE_ENV=test && npm test', 'auto');
+  if (process.platform === 'win32') {
+    assert.ok(['bash', 'cmd'].includes(unixCompound.shell.label));
+  } else {
+    assert.ok(['sh', 'bash', 'zsh', 'fish'].includes(unixCompound.shell.label));
+  }
+
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'yamx-local-path-'));
+  await fs.mkdir(path.join(dir, 'node_modules', '.bin'), { recursive: true });
+  await fs.mkdir(path.join(dir, 'vendor', 'bin'), { recursive: true });
+  const localBins = getLocalFirstPathEntries(dir);
+  assert.ok(localBins.some((entry) => entry.endsWith(path.join('node_modules', '.bin'))));
+  assert.ok(localBins.some((entry) => entry.endsWith(path.join('vendor', 'bin'))));
+  const env = buildLocalFirstEnv(dir, { PATH: 'GLOBAL_PATH' });
+  const envPath = env.PATH || env.Path;
+  assert.ok(envPath.startsWith(localBins[0]));
 });
 
 test('direct command parser catches commands but not tasks', async () => {
@@ -62,21 +81,66 @@ test('direct command parser catches commands but not tasks', async () => {
   assert.equal(parseDirectCommand('apt-get update'), 'apt-get update');
   assert.equal(parseDirectCommand('Get-ChildItem -Recurse'), 'Get-ChildItem -Recurse');
   assert.equal(parseDirectCommand('powershell -NoProfile -Command whoami'), 'powershell -NoProfile -Command whoami');
+  assert.equal(parseDirectCommand('pwsh.exe -NoProfile -Command Get-Location'), 'pwsh.exe -NoProfile -Command Get-Location');
   assert.equal(parseDirectCommand('ipconfig /all'), 'ipconfig /all');
   assert.equal(parseDirectCommand('tasklist'), 'tasklist');
   assert.equal(parseDirectCommand('xcodebuild -version'), 'xcodebuild -version');
+  assert.equal(parseDirectCommand('artisan migrate'), 'artisan migrate');
+  assert.equal(parseDirectCommand('prisma migrate dev'), 'prisma migrate dev');
+  assert.equal(parseDirectCommand('ollama list'), 'ollama list');
+  assert.equal(parseDirectCommand('flutter doctor'), 'flutter doctor');
+  assert.equal(parseDirectCommand('adb devices'), 'adb devices');
+  assert.equal(parseDirectCommand('psql -d app'), 'psql -d app');
+  assert.equal(parseDirectCommand('wrangler dev'), 'wrangler dev');
+  assert.equal(parseDirectCommand('wsl ls -la'), 'wsl ls -la');
+  assert.equal(parseDirectCommand('next build'), 'next build');
+  assert.equal(parseDirectCommand('pytest tests'), 'pytest tests');
+  assert.equal(parseDirectCommand('my-tool --version'), 'my-tool --version');
+  assert.equal(parseDirectCommand('vendor/bin/phpunit --filter LoginTest'), 'vendor/bin/phpunit --filter LoginTest');
+  assert.equal(parseDirectCommand('script.ps1 -ExecutionPolicy Bypass'), 'script.ps1 -ExecutionPolicy Bypass');
   assert.equal(parseDirectCommand('"C:\\Tools\\app.exe" --help'), '"C:\\Tools\\app.exe" --help');
   assert.equal(parseDirectCommand('fix the login bug'), null);
   assert.equal(parseDirectCommand('what is this repo?'), null);
   assert.equal(parseDirectCommand('make my agent smarter'), null);
+  assert.equal(parseDirectCommand('project build'), null);
 });
 
 test('tool risk classification separates safe, network, and destructive commands', async () => {
-  const { classifyToolCall } = await import('../dist/tool-risk.js');
+  const { classifyToolCall, isDangerousShellCommand } = await import('../dist/tool-risk.js');
   assert.equal(classifyToolCall('read_file', { path: 'package.json' }).risk, 'read-only');
+  assert.equal(classifyToolCall('codebase_analysis', { goal: 'review repo' }).risk, 'read-only');
+  assert.equal(classifyToolCall('log_inspect', { path: 'app.log' }).risk, 'read-only');
   assert.equal(classifyToolCall('run_command', { command: 'npm run build' }).risk, 'shell-safe');
+  assert.equal(classifyToolCall('run_command', { command: 'git status --short' }).risk, 'shell-safe');
+  assert.equal(classifyToolCall('run_command', { command: 'rg TODO src' }).risk, 'shell-safe');
   assert.equal(classifyToolCall('run_command', { command: 'npm install left-pad' }).risk, 'shell-network');
+  assert.equal(classifyToolCall('run_command', { command: 'curl https://example.com' }).risk, 'shell-network');
   assert.equal(classifyToolCall('run_command', { command: 'git reset --hard' }).risk, 'destructive');
+  assert.equal(classifyToolCall('run_command', { command: 'sudo apt install nginx' }).risk, 'destructive');
+  assert.equal(isDangerousShellCommand('npm run test'), false);
+  assert.equal(isDangerousShellCommand('Remove-Item -Recurse -Force dist'), true);
+});
+
+test('filesystem tools support bounded reads, edit dry-run, and search context', async () => {
+  const { readFile, editFile, searchFiles } = await import('../dist/tools/filesystem.js');
+  const filePath = path.join(process.cwd(), 'tmp-yamx-fs.txt');
+  await fs.writeFile(filePath, ['alpha', 'beta target', 'gamma', 'target delta'].join('\n'));
+  try {
+    const tail = await readFile.execute({ path: 'tmp-yamx-fs.txt', tail: true, start_line: 2 });
+    assert.match(tail, /3: gamma/);
+    assert.match(tail, /4: target delta/);
+
+    const dryRun = await editFile.execute({ path: 'tmp-yamx-fs.txt', old_text: 'target', new_text: 'TARGET', dry_run: true });
+    assert.match(dryRun, /would replace 1/);
+    const edited = await editFile.execute({ path: 'tmp-yamx-fs.txt', old_text: 'target', new_text: 'TARGET', occurrence: 2 });
+    assert.match(edited, /replaced 1 occurrence/);
+
+    const search = await searchFiles.execute({ path: '.', include: 'tmp-yamx-fs.txt', pattern: 'TARGET', context_lines: 1 });
+    assert.match(search, /-- tmp-yamx-fs.txt:4 --/);
+    assert.match(search, /> 4: TARGET delta/);
+  } finally {
+    await fs.unlink(filePath).catch(() => {});
+  }
 });
 
 test('policy blocks writes in read-only mode', async () => {
@@ -85,16 +149,63 @@ test('policy blocks writes in read-only mode', async () => {
   assert.equal(decision.blocked, true);
 });
 
+test('policy auto-approves safe shell but still asks for risky shell', async () => {
+  const { evaluateToolCall } = await import('../dist/policy.js');
+  assert.equal(evaluateToolCall('run_command', { command: 'npm run build' }).needsApproval, false);
+  assert.equal(evaluateToolCall('run_command', { command: 'git diff --stat' }).needsApproval, false);
+  assert.equal(evaluateToolCall('run_command', { command: 'npm install left-pad' }).needsApproval, true);
+  assert.equal(evaluateToolCall('run_command', { command: 'git reset --hard' }).needsApproval, true);
+});
+
 test('context prompt includes operating loop and memory section', async () => {
   const { ContextEngine } = await import('../dist/context.js');
   const prompt = await new ContextEngine(process.cwd()).buildSystemPrompt();
   assert.match(prompt, /Core Operating Loop/);
+  assert.match(prompt, /Internal Model Council/);
   assert.match(prompt, /Loaded Memory/);
   assert.match(prompt, /project_intel/);
+  assert.match(prompt, /codebase_analysis/);
+  assert.match(prompt, /log_inspect/);
+});
+
+test('agent runs hidden model council before final response', async () => {
+  const { Agent } = await import('../dist/agent.js');
+  let calls = 0;
+  const provider = {
+    name: 'test',
+    modelId: 'test-model',
+    complete: async () => {
+      calls++;
+      return { content: calls === 1 ? 'Synthesizer: proceed carefully.' : 'Done.' };
+    },
+    stream: async function* () {},
+  };
+  const agent = new Agent(provider, 'system', { stream: false, modelCouncilEnabled: true });
+  await agent.chat('fix the thing');
+  assert.equal(calls, 2);
+  assert.ok(agent.getHistory().some((message) => String(message.content || '').includes('yamx_internal_model_council')));
+});
+
+test('agent skips hidden model council for simple turns in adaptive mode', async () => {
+  const { Agent } = await import('../dist/agent.js');
+  let calls = 0;
+  const provider = {
+    name: 'test',
+    modelId: 'test-model',
+    complete: async () => {
+      calls++;
+      return { content: 'Hello.' };
+    },
+    stream: async function* () {},
+  };
+  const agent = new Agent(provider, 'system', { stream: false, modelCouncilEnabled: true, modelCouncilMode: 'adaptive' });
+  await agent.chat('hi');
+  assert.equal(calls, 1);
+  assert.equal(agent.getHistory().some((message) => String(message.content || '').includes('yamx_internal_model_council')), false);
 });
 
 test('project intel returns compact recommendations', async () => {
-  const { buildAgentInputWithProjectIntel, buildProjectIntel, shouldAttachProjectIntel } = await import('../dist/project-intel.js');
+  const { buildAgentInputWithProjectIntel, buildCodebaseAnalysis, buildProjectIntel, shouldAttachProjectIntel } = await import('../dist/project-intel.js');
   const text = await buildProjectIntel({ cwd: process.cwd(), goal: 'fix cross platform command bug', maxFiles: 20 });
   assert.match(text, /Recommended commands/);
   assert.match(text, /Package scripts/);
@@ -107,6 +218,49 @@ test('project intel returns compact recommendations', async () => {
   const wrapped = await buildAgentInputWithProjectIntel('fix shell commands', process.cwd());
   assert.match(wrapped, /<yamx_auto_project_intel>/);
   assert.match(wrapped, /User request:\nfix shell commands/);
+
+  const analysis = await buildCodebaseAnalysis({ cwd: process.cwd(), goal: 'summarize this agent architecture', depth: 'quick', maxFiles: 30 });
+  assert.match(analysis, /Codebase Analysis/);
+  assert.match(analysis, /Executive summary/);
+  assert.match(analysis, /Agentic operating plan/);
+  assert.match(analysis, /Primary entry points/);
+  assert.ok(analysis.length < 16000);
+});
+
+test('tool registry exposes codebase analysis intelligence tool', async () => {
+  const { getTool, getToolCount, getToolsByCategory } = await import('../dist/tools/registry.js');
+  assert.ok(getTool('codebase_analysis'));
+  assert.ok(getTool('log_inspect'));
+  assert.equal(getToolCount(), 29);
+  assert.ok(getToolsByCategory().Intelligence.includes('codebase_analysis'));
+  assert.ok(getToolsByCategory().Intelligence.includes('log_inspect'));
+});
+
+test('log inspector reads tails and error context', async () => {
+  const { logInspect } = await import('../dist/tools/logs.js');
+  const logPath = path.join(process.cwd(), 'tmp-yamx-test.log');
+  await fs.writeFile(logPath, [
+    'booting',
+    'ready',
+    'TypeError: Cannot read properties of undefined',
+    '    at handler src/app.ts:10',
+    'done',
+  ].join('\n'));
+  try {
+    const tail = await logInspect.execute({ path: 'tmp-yamx-test.log', mode: 'tail', lines: 2 });
+    assert.match(tail, /4:     at handler/);
+    assert.match(tail, /5: done/);
+    const errors = await logInspect.execute({ path: 'tmp-yamx-test.log', mode: 'errors', context_lines: 1 });
+    assert.match(errors, /TypeError/);
+    assert.match(errors, /handler src\/app\.ts/);
+    const latest = await logInspect.execute({ path: 'tmp-yamx-test.log', mode: 'latest-error', context_lines: 1 });
+    assert.match(latest, /Latest match at line 3/);
+    const summary = await logInspect.execute({ path: 'tmp-yamx-test.log', mode: 'summary' });
+    assert.match(summary, /Errors: 1/);
+    assert.match(summary, /Recommended next steps/);
+  } finally {
+    await fs.unlink(logPath).catch(() => {});
+  }
 });
 
 test('skill manager discovers local skills', async () => {

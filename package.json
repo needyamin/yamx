@@ -1,6 +1,6 @@
 {
   "name": "@needyamin/yamx",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Global CLI: run `yamx` from any terminal. Coding agent with 22 tools, persistent sessions, markdown rendering, and multi-provider LLMs.",
   "type": "module",
   "main": "./dist/index.js",

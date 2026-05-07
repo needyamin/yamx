@@ -11,7 +11,7 @@ Providers: **OpenAI**, **Anthropic**, **Google Gemini**, **OpenRouter** (100+ mo
 Install once (needs **[Node.js 18+](https://nodejs.org/)** and npm):
 
 ```bash
-npm install -g @needyamin/yamx
+npm install -g @needyamin/yamx@latest
 ```
 
 Then from **any folder**, in **Terminal** (macOS/Linux), **CMD**, or **PowerShell** (Windows):
@@ -61,7 +61,8 @@ npm requires **two-factor authentication** (or a **granular access token** that 
 
 1. Enable **2FA** on your account: [npm → Profile → Two-Factor Authentication](https://www.npmjs.com/settings/~YOUR_USERNAME/profile) (mode that allows **publishing**).
 2. Run `npm login` again.
-3. Run `npm publish --access public` and enter the **OTP** when npm asks.
+3. **Bump the version**: npm never allows republishing the same version (even if deleted). Increase the `version` in `package.json` before each publish.
+4. Run `npm publish --access public` and enter the **OTP** when npm asks.
 
 Or create a [**Granular Access Token**](https://www.npmjs.com/settings/~YOUR_USERNAME/tokens) with **Publish packages** for `yamx` and authenticate with that token.
 
@@ -72,7 +73,7 @@ Or create a [**Granular Access Token**](https://www.npmjs.com/settings/~YOUR_USE
 ### Install from npm
 
 ```bash
-npm install -g @needyamin/yamx
+npm install -g @needyamin/yamx@latest
 ```
 
 ### Install from source
@@ -92,6 +93,8 @@ npm link
 ```bash
 yamx --onboard
 ```
+
+The onboarding process is **100% terminal-native**. It will print the link to get your API key (e.g., [OpenRouter keys](https://openrouter.ai/keys)), but it won't force-open your browser.
 
 Or set keys in `.env` / environment and use `yamx config`.
 
@@ -182,6 +185,21 @@ State files:
 | Shell | `run_command` (cross-platform), `run_command_background` |
 | Git | `git_status`, `git_diff`, `git_commit`, `git_log`, `git_branch`, `git_stash` |
 | Web | `fetch_url` |
+
+---
+
+## Troubleshooting
+
+### `EPERM` error on Windows
+If you run `yamx` from your home directory (`C:\Users\<user>`) and see `EPERM: operation not permitted`, ensure you are using **v1.0.4+**. 
+Windows has protected junction points (like `Application Data`) in the home folder that crash standard file scanners. YamX v1.0.4+ includes a specialized scanner that handles these permissions gracefully.
+
+### Version Mismatch
+If the banner shows an old version after a global update, run:
+```bash
+npm uninstall -g @needyamin/yamx
+npm install -g @needyamin/yamx@latest
+```
 
 ---
 

@@ -52,8 +52,14 @@ export class ContextEngine {
         '__pycache__/**', '*.pyc', '.venv/**', 'venv/**',
         '.next/**', '.nuxt/**', 'coverage/**', '*.lock',
         '.DS_Store', 'Thumbs.db',
+        // Windows protected folders
+        'Application Data/**', 'Local Settings/**', 'My Documents/**',
+        'NetHood/**', 'PrintHood/**', 'Recent/**', 'SendTo/**',
+        'Start Menu/**', 'Templates/**', 'Cookies/**',
       ],
       onlyFiles: true,
+      suppressErrors: true,
+      followSymbolicLinks: false,
     });
 
     // Detect languages
@@ -95,7 +101,14 @@ export class ContextEngine {
     const fullPath = path.join(this.cwd, dir);
     if (!await fs.pathExists(fullPath)) return '';
 
-    const entries = await fs.readdir(fullPath, { withFileTypes: true });
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = await fs.readdir(fullPath, { withFileTypes: true });
+    } catch (err) {
+      // Handle EPERM or other access errors gracefully
+      return '';
+    }
+
     const filtered = entries.filter(e =>
       !e.name.startsWith('.') &&
       !['node_modules', 'dist', 'build', '__pycache__', '.git', 'coverage', '.next'].includes(e.name)
@@ -108,8 +121,12 @@ export class ContextEngine {
       lines.push(`${prefix}${icon} ${entry.name}`);
 
       if (entry.isDirectory()) {
-        const subTree = await this.buildFileTree(maxDepth, path.join(dir, entry.name), depth + 1);
-        if (subTree) lines.push(subTree);
+        try {
+          const subTree = await this.buildFileTree(maxDepth, path.join(dir, entry.name), depth + 1);
+          if (subTree) lines.push(subTree);
+        } catch {
+          // Skip if we can't read sub-directory
+        }
       }
     }
 

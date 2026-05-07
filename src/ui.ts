@@ -29,7 +29,7 @@ const MX = chalk.hex('#00FF41');
 const MX_DIM = chalk.hex('#008F11');
 const MX_CORE = chalk.hex('#41FF70');
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.5';
 
 export class UI {
   private spinner: Ora | null = null;

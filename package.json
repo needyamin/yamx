@@ -1,6 +1,6 @@
 {
   "name": "@needyamin/yamx",
-  "version": "1.0.0",
+  "version": "1.0.5",
   "description": "Global CLI: run `yamx` from any terminal. Coding agent with 22 tools, persistent sessions, markdown rendering, and multi-provider LLMs.",
   "type": "module",
   "main": "./dist/index.js",
@@ -72,7 +72,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/fs-extra": "^11.0.4",
+    "@types/fs-extra": "^11.0.0",
     "@types/inquirer": "^9.0.9",
     "@types/marked": "^5.0.2",
     "@types/node": "^25.6.0",

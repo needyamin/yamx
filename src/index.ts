@@ -24,7 +24,7 @@ import { getToolCount, getToolsByCategory } from './tools/registry.js';
 
 dotenv.config();
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.5';
 const program = new Command();
 
 program
@@ -173,7 +173,7 @@ program.action(async (options) => {
   const os = await import('os');
   const configPath = path.default.join(os.default.homedir(), '.yamx', 'config.json');
   const configExists = await fs.default.pathExists(configPath);
-  
+
   const isCommandRun = options.onboard || options.diagnose || options.history || options.clearChat || options.resetConfig || delArg;
 
   if (!configExists && !isCommandRun) {
@@ -245,7 +245,7 @@ program.action(async (options) => {
   } catch (error: any) {
     if (error.message.includes('API key not found')) {
       console.log(chalk.hex('#FF4136').bold(`\n  ⚠ ${error.message.split('.')[0]}`)); // Just the first sentence
-      
+
       const { choice } = await inquirer.prompt([
         {
           type: 'rawlist',
@@ -268,9 +268,9 @@ program.action(async (options) => {
       } else if (choice === 'env') {
         const pName = providerName.toUpperCase();
         const { key } = await inquirer.prompt([
-          { 
-            type: 'password', 
-            name: 'key', 
+          {
+            type: 'password',
+            name: 'key',
             message: `Enter your ${providerName} API key (pasting is hidden):`,
             mask: '*'
           }
@@ -285,7 +285,7 @@ program.action(async (options) => {
         envContent += `${pName}_API_KEY=${key}\n`;
         await fs.writeFile(envPath, envContent, 'utf-8');
         console.log(chalk.green(`\n  ✓ Saved to ${envPath}`));
-        
+
         // Inject into process.env so it works immediately
         process.env[`${pName}_API_KEY`] = key;
         provider = createProvider(providerName, modelName, cfg);
@@ -512,7 +512,7 @@ async function runOnboard(config: Config) {
     config.set('providers.ollama.baseUrl', url);
   }
 
-  const providerModels: Record<string, {name: string, value: string}[]> = {
+  const providerModels: Record<string, { name: string, value: string }[]> = {
     openai: [
       { name: 'GPT-4o', value: 'gpt-4o' },
       { name: 'o3-mini', value: 'o3-mini' },

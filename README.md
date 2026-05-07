@@ -1,6 +1,6 @@
 # YamX
 
-A terminal coding agent with **22 tools**, **persistent chat sessions**, **markdown rendering**, and multi-provider LLM support. It reads and edits your project, runs shell commands (with your approval), uses Git and the web, and renders rich output with syntax-highlighted code blocks.
+A terminal coding agent with **27 tools**, **persistent chat sessions**, **markdown rendering**, and multi-provider LLM support. It reads and edits your project, runs shell commands (with your approval), uses Git and the web, and renders rich output with syntax-highlighted code blocks.
 
 Providers: **OpenAI**, **Anthropic**, **Google Gemini**, **OpenRouter** (100+ models), **Ollama** (local).
 
@@ -158,16 +158,26 @@ State files:
 | `/cost` | Token usage, history length, and context size |
 | `/undo` | Revert last file edits from the current turn |
 | `/diff` | `git diff` in cwd |
-| `/tools` | List all 22 tools by category |
+| `/tools` | List all 27 tools by category |
+| `/run <cmd>` | Execute a shell command directly |
+| `/init` | Initialize YamX memory files for the project |
+| `/remember` | Save a persistent note (user or project scope) |
+| `/memory` | Show active memory files and notes |
+| `/agents` | List available subagents |
+| `/agent <n> <t>`| Run a specific subagent with a task |
+| `/skills` | List available logic skills |
 | `/exit` | Save and quit |
 
 ---
 
 ## Features
 
-- **22 Built-in Tools**: Files, shell, Git, web — see table below
+- **27 Built-in Tools**: Files, shell, Git, web, and intelligence — see table below
+- **Project Intelligence**: Automatic file recommendations and framework detection
+- **Direct Command Execution**: Type shell commands directly in chat (no prefix needed)
+- **Subagent Delegation**: Delegate complex tasks to specialized agents (`/explore`, `/plan`, `/review`)
+- **Persistent Memory**: Keep long-term project notes and user preferences across sessions
 - **Markdown rendering**: AI responses are rendered with syntax highlighting in the terminal
-- **Project context**: Scans the repo for structure, languages, and framework hints
 - **Safety**: Destructive or privileged commands ask for confirmation unless `--auto-approve`
 - **Auto-retry**: Transient API failures (429, 5xx, timeouts) retry with exponential backoff
 - **JSON repair**: Malformed tool call arguments are auto-repaired before execution
@@ -176,15 +186,16 @@ State files:
 
 ---
 
-## Built-in tools (22)
+## Built-in tools (27)
 
 | Area | Tools |
 |------|-------|
 | Files (core) | `read_file`, `write_file`, `edit_file`, `list_files`, `search_files`, `delete_file` |
-| Files (advanced) | `multi_edit`, `copy_file`, `move_file`, `file_info`, `grep_search`, `directory_tree`, `patch_file` |
-| Shell | `run_command` (cross-platform), `run_command_background` |
+| Advanced Files | `multi_edit`, `copy_file`, `move_file`, `file_info`, `grep_search`, `directory_tree`, `patch_file` |
+| Shell | `run_command`, `run_command_background`, `shell_diagnostics`, `task_list`, `task_tail`, `task_stop` |
 | Git | `git_status`, `git_diff`, `git_commit`, `git_log`, `git_branch`, `git_stash` |
 | Web | `fetch_url` |
+| Intelligence | `project_intel` |
 
 ---
 

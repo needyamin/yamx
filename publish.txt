@@ -1,0 +1,2 @@
+npm.cmd version patch --no-git-tag-version
+npm.cmd publish

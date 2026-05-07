@@ -71,12 +71,12 @@ const PROVIDER_MODELS: Record<ProviderName, { name: string; value: string }[]> =
     { name: 'Gemini 1.5 Pro', value: 'gemini-1.5-pro' },
   ],
   openrouter: [
-    { name: 'DeepSeek Chat V3', value: 'deepseek/deepseek-chat' },
-    { name: 'DeepSeek R1', value: 'deepseek/deepseek-r1' },
-    { name: 'Claude Sonnet 4', value: 'anthropic/claude-sonnet-4' },
-    { name: 'GPT-4o', value: 'openai/gpt-4o' },
-    { name: 'Gemini 2.5 Pro', value: 'google/gemini-2.5-pro' },
-    { name: 'Llama 3.1 70B', value: 'meta-llama/llama-3.1-70b-instruct' },
+    { name: 'DeepSeek Chat V3 (recommended)', value: 'deepseek-chat' },
+    { name: 'DeepSeek R1', value: 'deepseek-r1' },
+    { name: 'Claude Sonnet 4', value: 'claude-sonnet-4' },
+    { name: 'GPT-4o', value: 'gpt-4o' },
+    { name: 'Gemini 2.5 Pro', value: 'gemini-2.5-pro' },
+    { name: 'Llama 4 Maverick', value: 'llama-4-maverick' },
   ],
   ollama: [
     { name: 'Qwen 2.5 Coder', value: 'qwen2.5-coder' },
@@ -148,7 +148,7 @@ program
     } else if (action === 'provider') {
       const { provider } = await inquirer.prompt([
         {
-          type: 'rawlist',
+          type: 'list',
           name: 'provider',
           message: 'Select default provider:',
           default: config.get().defaultProvider || 'openrouter',
@@ -160,7 +160,7 @@ program
       console.log(chalk.green(`✓ Default provider set to ${provider}.`));
     } else if (action === 'model') {
       const provider = (config.get().defaultProvider || 'openrouter') as ProviderName;
-      const model = await chooseModel(provider, config.get().defaultModel);
+      const model = await chooseModel(provider, config.get().defaultModel || (provider === 'openrouter' ? 'deepseek-chat' : undefined));
       config.set('defaultModel', model);
       config.set(`providers.${provider}.model`, model);
       await config.save();
@@ -629,18 +629,21 @@ async function resolveSessionRef(
 // â”€â”€â”€ Onboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function chooseModel(provider: ProviderName, currentModel?: string): Promise<string> {
+  const defaultModel = currentModel || (provider === 'openrouter' ? 'deepseek-chat' : PROVIDER_MODELS[provider][0]?.value);
   const choices = [
     ...PROVIDER_MODELS[provider],
-    ...(currentModel ? [{ name: `Keep current (${currentModel})`, value: currentModel }] : []),
+    ...(currentModel && !PROVIDER_MODELS[provider].some((choice) => choice.value === currentModel)
+      ? [{ name: `Keep current (${currentModel})`, value: currentModel }]
+      : []),
     { name: 'Other (type manually)', value: 'other' },
   ];
 
   const { selectedModel } = await inquirer.prompt<{ selectedModel: string }>([
     {
-      type: 'rawlist',
+      type: 'list',
       name: 'selectedModel',
-      message: `Default model for ${provider}:`,
-      default: currentModel || PROVIDER_MODELS[provider][0]?.value,
+      message: `Choose model for ${provider}:`,
+      default: defaultModel,
       choices,
     },
   ]);
@@ -770,16 +773,21 @@ async function runOnboard(config: Config, options: { title?: string; firstRun?: 
 
   const { provider } = await inquirer.prompt<{ provider: ProviderName }>([
     {
-      type: 'rawlist',
+      type: 'list',
       name: 'provider',
-      message: 'Default LLM provider:',
+      message: 'Choose LLM provider:',
       default: config.get().defaultProvider || 'openrouter',
       choices: PROVIDER_CHOICES,
     },
   ]);
 
   await configureProviderAccess(config, provider);
-  const model = await chooseModel(provider, config.get().defaultProvider === provider ? config.get().defaultModel : (config.get().providers as any)?.[provider]?.model);
+  const model = await chooseModel(
+    provider,
+    config.get().defaultProvider === provider
+      ? config.get().defaultModel || (provider === 'openrouter' ? 'deepseek-chat' : undefined)
+      : (config.get().providers as any)?.[provider]?.model
+  );
   await configureRuntimeSettings(config, firstRun);
 
   config.set('defaultProvider', provider);

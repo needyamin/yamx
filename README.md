@@ -5,6 +5,7 @@ A terminal coding agent that reads and edits your project, runs shell commands, 
 Providers: **OpenAI**, **Anthropic**, **Google Gemini**, **OpenRouter** (100+ models), **Ollama** (local).
 
 ---
+<img width="108" height="108" alt="Image" src="https://github.com/user-attachments/assets/3fad0efb-cc8e-4f81-981f-536f8db20ff2" />
 
 ## What makes YamX different
 

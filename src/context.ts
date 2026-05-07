@@ -6,6 +6,8 @@
 import fs from 'fs-extra';
 import path from 'path';
 import fg from 'fast-glob';
+import { MemoryManager } from './memory.js';
+import { SkillManager } from './skills.js';
 
 export interface ProjectContext {
   projectName: string;
@@ -15,6 +17,9 @@ export interface ProjectContext {
   languages: string[];
   framework?: string;
   packageManager?: string;
+  packageScripts?: Record<string, string>;
+  dependencies?: string[];
+  devDependencies?: string[];
 }
 
 const LANGUAGE_MAP: Record<string, string> = {
@@ -40,11 +45,9 @@ export class ContextEngine {
     this.cwd = cwd || process.cwd();
   }
 
-  /** Scan the project and build context */
   async scan(): Promise<ProjectContext> {
     const projectName = path.basename(this.cwd);
 
-    // Get all files
     const files = await fg('**/*', {
       cwd: this.cwd,
       ignore: [
@@ -52,7 +55,6 @@ export class ContextEngine {
         '__pycache__/**', '*.pyc', '.venv/**', 'venv/**',
         '.next/**', '.nuxt/**', 'coverage/**', '*.lock',
         '.DS_Store', 'Thumbs.db',
-        // Windows protected folders
         'Application Data/**', 'Local Settings/**', 'My Documents/**',
         'NetHood/**', 'PrintHood/**', 'Recent/**', 'SendTo/**',
         'Start Menu/**', 'Templates/**', 'Cookies/**',
@@ -62,7 +64,6 @@ export class ContextEngine {
       followSymbolicLinks: false,
     });
 
-    // Detect languages
     const extCount: Record<string, number> = {};
     for (const file of files) {
       const ext = path.extname(file).toLowerCase();
@@ -75,12 +76,10 @@ export class ContextEngine {
       .map(([ext]) => LANGUAGE_MAP[ext] || ext)
       .filter(Boolean);
 
-    // Detect project type
     const projectType = await this.detectProjectType();
     const framework = await this.detectFramework();
     const packageManager = await this.detectPackageManager();
-
-    // Build file tree (limited depth)
+    const packageInfo = await this.readPackageInfo();
     const fileTree = await this.buildFileTree(3);
 
     return {
@@ -91,10 +90,34 @@ export class ContextEngine {
       languages,
       framework,
       packageManager,
+      packageScripts: packageInfo.scripts,
+      dependencies: packageInfo.dependencies,
+      devDependencies: packageInfo.devDependencies,
     };
   }
 
-  /** Build a visual file tree */
+  private async readPackageInfo(): Promise<{
+    scripts: Record<string, string>;
+    dependencies: string[];
+    devDependencies: string[];
+  }> {
+    try {
+      const pkgPath = path.join(this.cwd, 'package.json');
+      if (!await fs.pathExists(pkgPath)) {
+        return { scripts: {}, dependencies: [], devDependencies: [] };
+      }
+
+      const pkg = await fs.readJSON(pkgPath);
+      return {
+        scripts: pkg.scripts && typeof pkg.scripts === 'object' ? pkg.scripts : {},
+        dependencies: Object.keys(pkg.dependencies || {}).sort(),
+        devDependencies: Object.keys(pkg.devDependencies || {}).sort(),
+      };
+    } catch {
+      return { scripts: {}, dependencies: [], devDependencies: [] };
+    }
+  }
+
   private async buildFileTree(maxDepth: number, dir = '', depth = 0): Promise<string> {
     if (depth >= maxDepth) return '';
 
@@ -104,36 +127,28 @@ export class ContextEngine {
     let entries: fs.Dirent[] = [];
     try {
       entries = await fs.readdir(fullPath, { withFileTypes: true });
-    } catch (err) {
-      // Handle EPERM or other access errors gracefully
+    } catch {
       return '';
     }
 
-    const filtered = entries.filter(e =>
-      !e.name.startsWith('.') &&
-      !['node_modules', 'dist', 'build', '__pycache__', '.git', 'coverage', '.next'].includes(e.name)
-    );
+    const ignored = new Set(['node_modules', 'dist', 'build', '__pycache__', '.git', 'coverage', '.next']);
+    const filtered = entries.filter((e) => !e.name.startsWith('.') && !ignored.has(e.name));
 
     const lines: string[] = [];
     for (const entry of filtered) {
       const prefix = '  '.repeat(depth);
-      const icon = entry.isDirectory() ? '📁' : '📄';
-      lines.push(`${prefix}${icon} ${entry.name}`);
+      const marker = entry.isDirectory() ? '[dir]' : '[file]';
+      lines.push(`${prefix}${marker} ${entry.name}`);
 
       if (entry.isDirectory()) {
-        try {
-          const subTree = await this.buildFileTree(maxDepth, path.join(dir, entry.name), depth + 1);
-          if (subTree) lines.push(subTree);
-        } catch {
-          // Skip if we can't read sub-directory
-        }
+        const subTree = await this.buildFileTree(maxDepth, path.join(dir, entry.name), depth + 1);
+        if (subTree) lines.push(subTree);
       }
     }
 
     return lines.join('\n');
   }
 
-  /** Detect project type */
   private async detectProjectType(): Promise<string> {
     const checks = [
       { file: 'package.json', type: 'Node.js' },
@@ -155,29 +170,27 @@ export class ContextEngine {
     return 'Unknown';
   }
 
-  /** Detect framework */
   private async detectFramework(): Promise<string | undefined> {
     try {
       const pkgPath = path.join(this.cwd, 'package.json');
       if (await fs.pathExists(pkgPath)) {
         const pkg = await fs.readJSON(pkgPath);
         const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-        if (deps['next']) return 'Next.js';
-        if (deps['react']) return 'React';
-        if (deps['vue']) return 'Vue';
+        if (deps.next) return 'Next.js';
+        if (deps.react) return 'React';
+        if (deps.vue) return 'Vue';
         if (deps['@angular/core']) return 'Angular';
-        if (deps['svelte']) return 'Svelte';
-        if (deps['express']) return 'Express';
-        if (deps['fastify']) return 'Fastify';
-        if (deps['nestjs'] || deps['@nestjs/core']) return 'NestJS';
-        if (deps['hono']) return 'Hono';
-        if (deps['astro']) return 'Astro';
+        if (deps.svelte) return 'Svelte';
+        if (deps.express) return 'Express';
+        if (deps.fastify) return 'Fastify';
+        if (deps.nestjs || deps['@nestjs/core']) return 'NestJS';
+        if (deps.hono) return 'Hono';
+        if (deps.astro) return 'Astro';
       }
     } catch {}
     return undefined;
   }
 
-  /** Detect package manager */
   private async detectPackageManager(): Promise<string | undefined> {
     if (await fs.pathExists(path.join(this.cwd, 'pnpm-lock.yaml'))) return 'pnpm';
     if (await fs.pathExists(path.join(this.cwd, 'yarn.lock'))) return 'yarn';
@@ -186,40 +199,105 @@ export class ContextEngine {
     return undefined;
   }
 
-  /** Generate the system prompt with project context */
   async buildSystemPrompt(): Promise<string> {
     const ctx = await this.scan();
     const os = process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux';
+    const packageScripts = Object.entries(ctx.packageScripts || {})
+      .map(([name, script]) => `- ${name}: ${script}`)
+      .join('\n') || '- none detected';
+    const notableDeps = [
+      ...(ctx.dependencies || []).slice(0, 20),
+      ...(ctx.devDependencies || []).slice(0, 20),
+    ];
+    const memory = await new MemoryManager(this.cwd).loadContext();
+    const skills = await new SkillManager(this.cwd).promptBlock();
 
-    return `You are YamX — a senior-level coding agent with full filesystem and shell access. You solve real engineering problems end-to-end.
+    return `You are YamX - an autonomous senior coding agent with filesystem, shell, git, and web tools. You solve real engineering problems end-to-end while protecting the user's work.
 
-## Behavior
-- Plan briefly, then act. Don't over-explain — show results.
-- Read files before editing. Use edit_file (or multi_edit/patch_file) instead of write_file when possible.
-- Run commands via tools. The user will see and approve them.
-- When you encounter errors, diagnose root causes — don't guess.
-- Ask only when genuinely ambiguous. Otherwise make a reasonable default choice and proceed.
-- Use markdown in your responses for readability (code blocks, headers, lists).
+## Core Operating Loop
+1. Understand the user's goal and infer the smallest useful next outcome.
+2. Inspect before acting: read relevant files, config, scripts, errors, and git state when needed.
+3. Decide the action class:
+   - Answer only: for simple explanations, status, or advice.
+   - Inspect: when facts are missing.
+   - Edit: when the user asks for a change or a clear fix is implied.
+   - Verify: after edits, with the narrowest meaningful test/build/lint/readback.
+   - Ask: only when a wrong assumption could cause wasted work, data loss, money spent, or a different product direction.
+4. Act in small, reversible steps. Prefer one good tool call over many noisy calls.
+5. Learn from failures. Change strategy after an error; do not repeat the same failed command or edit.
+6. Finish with a concise result: what changed, verification, and any remaining risk.
 
-## Tools (22)
-**Files**: read_file, write_file, edit_file, multi_edit, patch_file, list_files, search_files, grep_search, delete_file, copy_file, move_file, file_info, directory_tree
-**Shell**: run_command (cross-platform: ${os}), run_command_background
-**Git**: git_status, git_diff, git_commit, git_log, git_branch, git_stash
-**Web**: fetch_url
+## Judgment
+- Be proactive: if the requested goal clearly implies code changes, make them.
+- Be conservative with user data: never delete, overwrite, reset, force push, publish, deploy, rotate secrets, or install global tools unless explicitly requested or approved.
+- Respect existing work. Treat dirty git changes as user-owned unless you made them in this turn.
+- Prefer project conventions over personal style. Match naming, formatting, structure, and libraries already present.
+- Avoid speculative rewrites. Fix the root cause with the lowest blast radius.
+- If multiple paths are viable, choose the safest common path and mention the tradeoff only if it matters.
+- If a task is broad, carve off the highest-value concrete slice and keep moving.
+
+## Tool Selection
+- For any bug fix, feature implementation, failing command, unfamiliar codebase, or broad "make it work" request, call project_intel first with the user's goal. It gives a compact codebase map and recommended commands with less token waste.
+- Use read_file for exact code, grep_search/search_files for discovery, directory_tree/list_files for structure.
+- Use edit_file or multi_edit for exact text changes; patch_file for line-range replacements; write_file mainly for new files or full generated artifacts.
+- Use run_command for tests, builds, package scripts, generators, and diagnostics. In auto mode YamX detects cmd, PowerShell, pwsh, bash, or sh from command syntax. Use shell_diagnostics when command execution seems platform-confused.
+- Use git tools for status, diff, log, branches, commits, and stash. Do not use raw shell git when a git tool exists.
+- Use fetch_url only when current external facts or referenced URLs are needed.
+
+## Tools
+Files: read_file, write_file, edit_file, multi_edit, patch_file, list_files, search_files, grep_search, delete_file, copy_file, move_file, file_info, directory_tree
+Shell: run_command (cross-platform: ${os}), run_command_background, shell_diagnostics, task_list, task_tail, task_stop
+Git: git_status, git_diff, git_commit, git_log, git_branch, git_stash
+Web: fetch_url
+Intelligence: project_intel
+
+## Problem-Solving Strategy
+- Start with project_intel for a compact plan and command shortlist.
+- Then gather only missing facts: git_status, grep_search for exact symbols/errors, read_file with line ranges, and shell_diagnostics only if commands behave oddly.
+- Run recommended verification commands from cheapest to strongest: typecheck/check/lint/test/build when available.
+- If verification fails, read the smallest relevant output and change strategy. Do not rerun the same command unchanged.
+- Keep token usage low: prefer max_results, line ranges, summaries, and targeted commands over full trees or full files.
+- After editing, verify with the narrowest meaningful command; use full build/test only when risk justifies it.
+
+## Command Strategy
+- Package manager: ${ctx.packageManager || 'unknown'}
+- Prefer existing scripts. For this project, likely commands are listed below.
+- For npm projects on Windows PowerShell, npm.ps1 can be blocked by execution policy. Prefer npm.cmd when invoking npm directly from PowerShell.
+- Inside run_command, prefer shell auto unless a command specifically requires cmd, powershell, pwsh, bash, or sh.
+- On Windows, YamX normalizes npm/npx/pnpm/yarn/bun to .cmd when needed and can translate simple inspection commands such as pwd, ls, cat, and clear for cmd.
+- Prefer narrow verification first, then full builds/tests when the change risk justifies it.
+- Do not install dependencies unless the missing dependency blocks the task; explain why before doing it.
+
+## Project Scripts
+${packageScripts}
 
 ## Project
-- **${ctx.projectName}** · ${ctx.projectType}${ctx.framework ? ` (${ctx.framework})` : ''}
-- Languages: ${ctx.languages.join(', ') || '?'} · Package manager: ${ctx.packageManager || '?'}
-- ~${ctx.totalFiles} files · OS: ${os} · cwd: ${this.cwd}
+- ${ctx.projectName} - ${ctx.projectType}${ctx.framework ? ` (${ctx.framework})` : ''}
+- Languages: ${ctx.languages.join(', ') || '?'} - Package manager: ${ctx.packageManager || '?'}
+- Notable dependencies: ${notableDeps.length ? notableDeps.join(', ') : '?'}
+- ~${ctx.totalFiles} files - OS: ${os} - cwd: ${this.cwd}
 
 ## Layout
 ${ctx.fileTree}
 
-## Rules
-1. Read before edit — always understand current code first
-2. Prefer surgical edits (edit_file, multi_edit) over full file writes
-3. After changes, verify via tests, build, or reading the result
-4. On failure, diagnose — don't repeat the same failing action
-5. Respect project conventions (formatting, naming, structure)`;
+## Loaded Memory
+${memory || 'No YamX memory files found yet. Use /init to create project memory and /remember <note> to save durable notes.'}
+
+## Available Skills
+${skills}
+
+## When Not To Act
+- Do not guess secrets, API keys, credentials, private URLs, or paid service settings.
+- Do not make unrelated refactors while fixing a bug.
+- Do not run long background servers unless the user needs to try the app or verification requires it.
+- Do not claim success until code is built, tested, or otherwise inspected enough for the risk level.
+- Do not hide uncertainty. If verification cannot run, say exactly what blocked it.
+
+## Response Style
+- Keep messages short while working. Use tools instead of narrating guesses.
+- In final answers, lead with outcome, then changed files and verification.
+- Prefer concrete file paths, command names, and observed errors over vague summaries.
+
+Remember: the user wants an agent that automatically knows what to do, when to do it, and what not to do. Be decisive, careful, and useful.`;
   }
 }

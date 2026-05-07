@@ -1,13 +1,18 @@
 #!/usr/bin/env node
 
 /**
- * YamX CLI v1.0.0 — coding agent with persistent sessions
+ * YamX CLI v1.0.0 â€” coding agent with persistent sessions
  */
 
 import { Command } from 'commander';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import dotenv from 'dotenv';
+import fs from 'fs-extra';
+import readline from 'node:readline/promises';
+import os from 'node:os';
+import nodePath from 'node:path';
+import { stdin, stdout } from 'node:process';
 import { Agent } from './agent.js';
 import { Config } from './config.js';
 import { ContextEngine } from './context.js';
@@ -20,7 +25,11 @@ import { OpenRouterProvider } from './providers/openrouter.js';
 import { Provider, Message } from './providers/base.js';
 import { execSync } from 'child_process';
 import { SessionStore, type ChatSession } from './session-store.js';
-import { getToolCount, getToolsByCategory } from './tools/registry.js';
+import { getToolCount } from './tools/registry.js';
+import { parseDirectCommand } from './direct-command.js';
+import { runCommand } from './tools/shell.js';
+import { handleCommand } from './commands/index.js';
+import { buildAgentInputWithProjectIntel, shouldAttachProjectIntel } from './project-intel.js';
 
 dotenv.config();
 
@@ -29,7 +38,7 @@ const program = new Command();
 
 program
   .name('yamx')
-  .description('YamX — agent CLI with persistent chat sessions')
+  .description('YamX â€” agent CLI with persistent chat sessions')
   .version(VERSION)
   .option('-p, --provider <provider>', 'LLM provider (openai, anthropic, gemini, openrouter, ollama)', '')
   .option('-m, --model <model>', 'Model name')
@@ -83,7 +92,7 @@ program
       ]);
       config.set(`providers.${provider}.apiKey`, key);
       await config.save();
-      console.log(chalk.green(`✓ ${provider} API key saved.`));
+      console.log(chalk.green(`âœ“ ${provider} API key saved.`));
     } else if (action === 'provider') {
       const { provider } = await inquirer.prompt([
         {
@@ -95,14 +104,14 @@ program
       ]);
       config.set('defaultProvider', provider);
       await config.save();
-      console.log(chalk.green(`✓ Default provider set to ${provider}.`));
+      console.log(chalk.green(`âœ“ Default provider set to ${provider}.`));
     } else if (action === 'model') {
       const { model } = await inquirer.prompt([
         { type: 'input', name: 'model', message: 'Enter default model name:' },
       ]);
       config.set('defaultModel', model);
       await config.save();
-      console.log(chalk.green(`✓ Default model set to ${model}.`));
+      console.log(chalk.green(`âœ“ Default model set to ${model}.`));
     } else if (action === 'budget') {
       const { n } = await inquirer.prompt([
         {
@@ -116,7 +125,7 @@ program
       if (v > 10_000) {
         config.set('settings.contextBudgetChars', v);
         await config.save();
-        console.log(chalk.green(`✓ contextBudgetChars = ${v}`));
+        console.log(chalk.green(`âœ“ contextBudgetChars = ${v}`));
       } else {
         console.log(chalk.yellow('Value too small; unchanged.'));
       }
@@ -127,7 +136,7 @@ program
       ]);
       config.set('settings.autoApprove', approve);
       await config.save();
-      console.log(chalk.green(`✓ Auto-approve set to ${approve}.`));
+      console.log(chalk.green(`âœ“ Auto-approve set to ${approve}.`));
     } else if (action === 'view') {
       const cfg = config.get();
       const safe = JSON.parse(JSON.stringify(cfg));
@@ -135,7 +144,7 @@ program
       for (const p of Object.values(safe.providers || {})) {
         if (p && typeof p === 'object' && 'apiKey' in p) {
           const k = (p as any).apiKey as string;
-          (p as any).apiKey = k ? `${k.slice(0, 8)}…${k.slice(-4)}` : '(not set)';
+          (p as any).apiKey = k ? `${k.slice(0, 8)}â€¦${k.slice(-4)}` : '(not set)';
         }
       }
       console.log(JSON.stringify(safe, null, 2));
@@ -244,7 +253,7 @@ program.action(async (options) => {
     provider = createProvider(providerName, modelName, cfg);
   } catch (error: any) {
     if (error.message.includes('API key not found')) {
-      console.log(chalk.hex('#FF4136').bold(`\n  ⚠ ${error.message.split('.')[0]}`)); // Just the first sentence
+      console.log(chalk.hex('#FF4136').bold(`\n  âš  ${error.message.split('.')[0]}`)); // Just the first sentence
 
       const { choice } = await inquirer.prompt([
         {
@@ -284,7 +293,7 @@ program.action(async (options) => {
         }
         envContent += `${pName}_API_KEY=${key}\n`;
         await fs.writeFile(envPath, envContent, 'utf-8');
-        console.log(chalk.green(`\n  ✓ Saved to ${envPath}`));
+        console.log(chalk.green(`\n  âœ“ Saved to ${envPath}`));
 
         // Inject into process.env so it works immediately
         process.env[`${pName}_API_KEY`] = key;
@@ -300,10 +309,10 @@ program.action(async (options) => {
   }
 
   const contextEngine = new ContextEngine();
-  ui.startThinking('Scanning project…');
+  ui.startThinking('Scanning projectâ€¦');
   const systemPrompt = await contextEngine.buildSystemPrompt();
   ui.stopSpinner();
-  ui.info(`Project scanned · ${getToolCount()} tools loaded · ~/.yamx/sessions/\n`);
+  ui.info(`Project scanned Â· ${getToolCount()} tools loaded Â· ~/.yamx/sessions/\n`);
 
   let currentSession: ChatSession;
 
@@ -378,15 +387,19 @@ program.action(async (options) => {
     initialHistory: initialMessages,
     onPersist: saveToDisk,
     contextBudgetChars: cfg.settings?.contextBudgetChars ?? 280_000,
+    permissionMode: cfg.settings?.permissionMode ?? 'default',
+    allowedShellCommands: cfg.settings?.allowedShellCommands ?? [],
+    deniedShellPatterns: cfg.settings?.deniedShellPatterns ?? [],
+    hooksEnabled: cfg.settings?.hooksEnabled !== false,
   });
 
   ui.banner(provider.name, provider.modelId, {
     title: currentSession.title,
     id: currentSession.id,
-  });
+  }, getToolCount());
 
   if (currentSession.messages.length === 1) {
-    console.log(chalk.dim('\n  💡 Need ideas? Try:'));
+    console.log(chalk.dim('\n  ðŸ’¡ Need ideas? Try:'));
     console.log(chalk.dim('  - "Create a new react app" or "Find all console.logs"'));
     console.log(chalk.dim('  - Type /tools to see what actions I can perform'));
     console.log(chalk.dim('  - Type /help for a list of all commands\n'));
@@ -394,10 +407,14 @@ program.action(async (options) => {
     console.log(); // Just a spacer if resuming chat
   }
 
+  const inputSession = await createInputSession();
+
   process.on('SIGINT', async () => {
     try {
       await saveToDisk();
+      inputSession.close();
     } catch {
+      inputSession.close();
       /* ignore */
     }
     console.log(chalk.dim('\nSaved. Bye.'));
@@ -407,33 +424,99 @@ program.action(async (options) => {
   while (true) {
     let input: string;
     try {
-      const response = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'prompt',
-          message: `${chalk.hex('#41FF70').bold('⚡ YamX')} ${chalk.hex('#00FF41')('›')}`,
-          validate: (i: string) => i.trim().length > 0 || 'Type a task or /help',
-        },
-      ]);
-      input = response.prompt.trim();
+      input = (await inputSession.question(`${chalk.hex('#41FF70').bold('YamX')} ${chalk.hex('#00FF41')('›')} `)).trim();
+      if (!input) continue;
+      await inputSession.save(input);
     } catch {
+      inputSession.close();
       await saveToDisk();
       console.log(chalk.dim('\nGoodbye.'));
       process.exit(0);
     }
 
     if (input.startsWith('/')) {
-      await handleCommand(input, agent, provider, { store, session: currentSession, agent });
+      await handleCommand(input, agent, provider, { store, session: currentSession, agent }, cfg, executeDirectCommand);
+      continue;
+    }
+
+    const directCommand = parseDirectCommand(input);
+    if (directCommand) {
+      await executeDirectCommand(directCommand, agent.getUI(), options.autoApprove || cfg.settings?.autoApprove || false);
       continue;
     }
 
     try {
-      await agent.chat(input);
+      const agentInput = shouldAttachProjectIntel(input)
+        ? await buildAgentInputWithProjectIntel(input)
+        : input;
+      await agent.chat(agentInput);
     } catch (error: any) {
       agent.getUI().error(`Fatal error: ${error.message}`);
     }
   }
 });
+
+async function createInputSession(): Promise<{
+  question(prompt: string): Promise<string>;
+  save(line: string): Promise<void>;
+  close(): void;
+}> {
+  const historyPath = nodePath.join(os.homedir(), '.yamx', 'history');
+  await fs.ensureDir(nodePath.dirname(historyPath));
+  const history = await fs.readFile(historyPath, 'utf-8')
+    .then((s) => s.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))
+    .catch(() => [] as string[]);
+
+  const rl = readline.createInterface({
+    input: stdin,
+    output: stdout,
+    terminal: true,
+    historySize: 500,
+    removeHistoryDuplicates: true,
+  });
+
+  // readline keeps the newest entry first internally.
+  (rl as any).history = [...history].reverse();
+
+  async function save(line: string): Promise<void> {
+    const existing = await fs.readFile(historyPath, 'utf-8')
+      .then((s) => s.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))
+      .catch(() => [] as string[]);
+    const next = [...existing.filter((item) => item !== line), line].slice(-500);
+    await fs.writeFile(historyPath, `${next.join('\n')}\n`, 'utf-8');
+  }
+
+  return {
+    question: (prompt: string) => rl.question(prompt),
+    save,
+    close: () => rl.close(),
+  };
+}
+
+async function executeDirectCommand(command: string, ui: UI, autoApprove: boolean): Promise<void> {
+  const args = { command };
+  const isDangerous = runCommand.isDangerous?.(args) ?? false;
+  if (isDangerous && !autoApprove) {
+    ui.approvalNeeded('run_command', args);
+    const { approved } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'approved',
+        message: 'This is a dangerous command. Proceed?',
+        default: false,
+      },
+    ]);
+    if (!approved) {
+      ui.warn('Command denied.');
+      return;
+    }
+  }
+
+  ui.toolCall('run_command', args);
+  const started = Date.now();
+  const result = await runCommand.execute(args);
+  ui.toolResult('run_command', result, Date.now() - started);
+}
 
 async function resolveSessionRef(
   store: SessionStore,
@@ -450,14 +533,14 @@ async function resolveSessionRef(
   return null;
 }
 
-// ─── Onboard ────────────────────────────────────────────────────────
+// â”€â”€â”€ Onboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function runOnboard(config: Config) {
   await config.load();
 
-  console.log(chalk.hex('#00FF41').bold('\n  ╔══════════════════════════════════════╗'));
-  console.log(chalk.hex('#00FF41').bold('  ║       YamX · First-Time Setup        ║'));
-  console.log(chalk.hex('#00FF41').bold('  ╚══════════════════════════════════════╝\n'));
+  console.log(chalk.hex('#00FF41').bold('\n  â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—'));
+  console.log(chalk.hex('#00FF41').bold('  â•‘       YamX Â· First-Time Setup        â•‘'));
+  console.log(chalk.hex('#00FF41').bold('  â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•\n'));
 
   const { provider } = await inquirer.prompt<{ provider: string }>([
     {
@@ -584,13 +667,13 @@ async function runOnboard(config: Config) {
   config.set('settings.streamOutput', streamOut);
   await config.save();
 
-  console.log(chalk.green('\n  ✓ Configuration saved to ~/.yamx/config.json'));
-  console.log(chalk.dim(`  Provider: ${provider} · Model: ${model}`));
-  console.log(chalk.dim(`  Tools: ${getToolCount()} · Streaming: ${streamOut}`));
+  console.log(chalk.green('\n  âœ“ Configuration saved to ~/.yamx/config.json'));
+  console.log(chalk.dim(`  Provider: ${provider} Â· Model: ${model}`));
+  console.log(chalk.dim(`  Tools: ${getToolCount()} Â· Streaming: ${streamOut}`));
   console.log(chalk.hex('#00FF41')('\n  Run `yamx` to start coding.\n'));
 }
 
-// ─── Diagnose ───────────────────────────────────────────────────────
+// â”€â”€â”€ Diagnose â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function runDiagnose(config: Config, cfg: any) {
   console.log(chalk.bold('\n  YamX Diagnostic Report\n'));
@@ -608,15 +691,15 @@ async function runDiagnose(config: Config, cfg: any) {
   const os = await import('os');
   const configPath = path.default.join(os.default.homedir(), '.yamx', 'config.json');
   const configExists = await fs.default.pathExists(configPath);
-  console.log(`  ${configExists ? chalk.green('✓') : chalk.red('✗')} Config file ${configExists ? 'exists' : 'missing'}: ${configPath}`);
+  console.log(`  ${configExists ? chalk.green('âœ“') : chalk.red('âœ—')} Config file ${configExists ? 'exists' : 'missing'}: ${configPath}`);
 
   // Provider keys
   const providers = ['openai', 'anthropic', 'gemini', 'openrouter'] as const;
   for (const p of providers) {
     const key = (cfg.providers as any)?.[p]?.apiKey || process.env[`${p.toUpperCase()}_API_KEY`];
     const has = !!key;
-    const mark = has ? chalk.green('✓') : chalk.dim('○');
-    console.log(`  ${mark} ${p.padEnd(12)} ${has ? `key: ${key.slice(0, 6)}…` : chalk.dim('not configured')}`);
+    const mark = has ? chalk.green('âœ“') : chalk.dim('â—‹');
+    console.log(`  ${mark} ${p.padEnd(12)} ${has ? `key: ${key.slice(0, 6)}â€¦` : chalk.dim('not configured')}`);
   }
 
   // Ollama
@@ -631,17 +714,17 @@ async function runDiagnose(config: Config, cfg: any) {
       req.on('error', reject);
       req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
     });
-    console.log(`  ${chalk.green('✓')} ollama       reachable at ${ollamaUrl}`);
+    console.log(`  ${chalk.green('âœ“')} ollama       reachable at ${ollamaUrl}`);
   } catch {
-    console.log(`  ${chalk.dim('○')} ollama       ${chalk.dim(`not reachable at ${ollamaUrl}`)}`);
+    console.log(`  ${chalk.dim('â—‹')} ollama       ${chalk.dim(`not reachable at ${ollamaUrl}`)}`);
   }
 
   // Git
   try {
     const gitVer = execSync('git --version', { encoding: 'utf-8' }).trim();
-    console.log(`  ${chalk.green('✓')} git          ${gitVer}`);
+    console.log(`  ${chalk.green('âœ“')} git          ${gitVer}`);
   } catch {
-    console.log(`  ${chalk.red('✗')} git          not found`);
+    console.log(`  ${chalk.red('âœ—')} git          not found`);
   }
 
   // Sessions
@@ -653,70 +736,7 @@ async function runDiagnose(config: Config, cfg: any) {
   console.log();
 }
 
-// ─── Commands ───────────────────────────────────────────────────────
-
-type PersistCtx = { store: SessionStore; session: ChatSession; agent: Agent };
-
-async function handleCommand(
-  input: string,
-  agent: Agent,
-  provider: Provider,
-  persistCtx?: PersistCtx
-) {
-  const ui = agent.getUI();
-  const cmd = input.split(' ')[0].toLowerCase();
-
-  const save = async () => {
-    if (!persistCtx) return;
-    persistCtx.session.messages = agent.getHistory();
-    persistCtx.store.updateTitleFromFirstMessage(persistCtx.session);
-    await persistCtx.store.saveSession(persistCtx.session);
-  };
-
-  switch (cmd) {
-    case '/help':
-      ui.help();
-      break;
-    case '/exit':
-    case '/quit':
-      await save();
-      console.log(chalk.dim('\nGoodbye.'));
-      process.exit(0);
-    case '/clear':
-      agent.clearHistory();
-      break;
-    case '/compact':
-      await agent.compact();
-      break;
-    case '/undo':
-      await agent.undo();
-      break;
-    case '/model':
-      ui.info(`Provider: ${provider.name} | Model: ${provider.modelId}`);
-      break;
-    case '/cost': {
-      const stats = agent.getUsageStats();
-      ui.info(`Session tokens: ↑${stats.totalInputTokens.toLocaleString()} ↓${stats.totalOutputTokens.toLocaleString()}`);
-      ui.info(`History: ${stats.historyLength} messages · ${(stats.historyChars / 1000).toFixed(0)}k chars`);
-      break;
-    }
-    case '/diff':
-      try {
-        const diff = execSync('git diff', { encoding: 'utf-8', cwd: process.cwd() });
-        console.log(diff || chalk.dim('  (no changes)'));
-      } catch {
-        ui.warn('Not a git repository or git not available.');
-      }
-      break;
-    case '/tools':
-      ui.toolsList(getToolsByCategory());
-      break;
-    default:
-      ui.warn(`Unknown command: ${cmd}. Type /help for available commands.`);
-  }
-}
-
-// ─── Provider factory ───────────────────────────────────────────────
+// â”€â”€â”€ Commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function createProvider(name: string, model: string | undefined, cfg: any): Provider {
   switch (name) {

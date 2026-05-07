@@ -35,7 +35,7 @@ export class UI {
   private spinner: Ora | null = null;
   private streamBuffer = '';
 
-  banner(provider: string, model: string, session?: { title?: string; id?: string }) {
+  banner(provider: string, model: string, session?: { title?: string; id?: string }, toolCount = 0) {
     if (process.stdout.isTTY) console.clear();
 
     const threadTitle = session?.title ?? 'untitled';
@@ -44,7 +44,7 @@ export class UI {
     const inner = [
       ` ${MX_CORE('+')}${MX('==============[')} ${MX.bold('NEURAL LINK')} ${MX(']==============')}${MX_CORE('+')}`,
       ` ${MX_CORE('|')}  ${MX.bold('Y A M X')}  ${chalk.hex('#00FF41').dim(`v${VERSION}`)}  ${MX_DIM('coding agent')}               ${MX_CORE('|')}`,
-      ` ${MX_CORE('|')}  ${MX_DIM('encrypted session')} ${MX_DIM('|')} ${MX_DIM('22 tools')} ${MX_DIM('|')} ${MX_DIM('local-first')}    ${MX_CORE('|')}`,
+      ` ${MX_CORE('|')}  ${MX_DIM('encrypted session')} ${MX_DIM('|')} ${MX_DIM(`${toolCount || '?'} tools`)} ${MX_DIM('|')} ${MX_DIM('local-first')}    ${MX_CORE('|')}`,
       ` ${MX_CORE('+')}${MX('--------------')} ${MX_DIM('------------')} ${MX('--------------')}${MX_CORE('+')}`,
       '',
       `   ${MX_DIM('provider')} ${MX(provider)} ${MX_DIM('|')} ${MX_DIM('model')} ${MX(model)}`,
@@ -70,11 +70,25 @@ export class UI {
         ['/compact', 'Compress old context'],
         ['/exit', 'Save and quit'],
       ]],
+      ['Memory', [
+        ['/init', 'Create YamX memory files'],
+        ['/memory', 'Show memory file status'],
+        ['/remember', 'Save a durable note'],
+      ]],
       ['Inspect', [
         ['/model', 'Provider & model'],
         ['/cost', 'Token usage & history'],
         ['/diff', 'Git diff'],
+        ['/run', 'Execute shell command'],
         ['/tools', 'List all tools'],
+        ['/skills', 'List loaded skills'],
+      ]],
+      ['Subagents', [
+        ['/agents', 'List built-in subagents'],
+        ['/agent', 'Run custom subagent'],
+        ['/explore', 'Read-only codebase analysis'],
+        ['/plan', 'Read-only implementation plan'],
+        ['/review', 'Review current changes'],
       ]],
       ['Edit', [
         ['/undo', 'Revert last file edits'],

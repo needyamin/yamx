@@ -7,17 +7,7 @@ import fs from 'fs-extra';
 import path from 'path';
 import fg from 'fast-glob';
 import { Tool } from './registry.js';
-
-/** Resolve a path relative to the project root */
-function resolve(filePath: string): string {
-  return path.resolve(process.cwd(), filePath);
-}
-
-/** Check if a path is within the project root (security) */
-function isWithinProject(filePath: string): boolean {
-  const resolved = resolve(filePath);
-  return resolved.startsWith(process.cwd());
-}
+import { ensureInsideProject, formatBytes } from './utils.js';
 
 export const readFile: Tool = {
   definition: {
@@ -34,8 +24,9 @@ export const readFile: Tool = {
     },
   },
   async execute(args) {
-    const filePath = resolve(args.path);
-    if (!isWithinProject(args.path)) return 'Error: Path outside project directory.';
+    const target = ensureInsideProject(args.path);
+    if (!target.ok) return target.error;
+    const filePath = target.path;
     if (!await fs.pathExists(filePath)) return `Error: File not found: ${args.path}`;
 
     const content = await fs.readFile(filePath, 'utf-8');
@@ -64,8 +55,9 @@ export const writeFile: Tool = {
   },
   needsApproval: true,
   async execute(args) {
-    const filePath = resolve(args.path);
-    if (!isWithinProject(args.path)) return 'Error: Path outside project directory.';
+    const target = ensureInsideProject(args.path);
+    if (!target.ok) return target.error;
+    const filePath = target.path;
 
     await fs.ensureDir(path.dirname(filePath));
     const existed = await fs.pathExists(filePath);
@@ -93,8 +85,9 @@ Use this instead of write_file when you only need to change part of a file. The 
   },
   needsApproval: true,
   async execute(args) {
-    const filePath = resolve(args.path);
-    if (!isWithinProject(args.path)) return 'Error: Path outside project directory.';
+    const target = ensureInsideProject(args.path);
+    if (!target.ok) return target.error;
+    const filePath = target.path;
     if (!await fs.pathExists(filePath)) return `Error: File not found: ${args.path}`;
 
     const content = await fs.readFile(filePath, 'utf-8');
@@ -128,7 +121,9 @@ export const listFiles: Tool = {
     },
   },
   async execute(args) {
-    const dirPath = resolve(args.path || '.');
+    const target = ensureInsideProject(args.path || '.');
+    if (!target.ok) return target.error;
+    const dirPath = target.path;
     if (!await fs.pathExists(dirPath)) return `Error: Directory not found: ${args.path || '.'}`;
 
     if (args.pattern || args.recursive) {
@@ -172,7 +167,9 @@ export const searchFiles: Tool = {
     },
   },
   async execute(args) {
-    const searchDir = resolve(args.path || '.');
+    const target = ensureInsideProject(args.path || '.');
+    if (!target.ok) return target.error;
+    const searchDir = target.path;
     const includePattern = args.include || '**/*';
     const maxResults = args.max_results || 50;
 
@@ -221,8 +218,9 @@ export const deleteFile: Tool = {
   },
   needsApproval: true,
   async execute(args) {
-    const filePath = resolve(args.path);
-    if (!isWithinProject(args.path)) return 'Error: Path outside project directory.';
+    const target = ensureInsideProject(args.path);
+    if (!target.ok) return target.error;
+    const filePath = target.path;
     if (!await fs.pathExists(filePath)) return `Error: Not found: ${args.path}`;
 
     const stat = await fs.stat(filePath);
@@ -235,11 +233,3 @@ export const deleteFile: Tool = {
     }
   },
 };
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}

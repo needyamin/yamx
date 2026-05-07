@@ -25,6 +25,14 @@ export interface YamConfig {
     autoCommit: boolean;
     /** Approx. total JSON size of history before auto-summarization (chars) */
     contextBudgetChars: number;
+    permissionMode: 'default' | 'ask' | 'read-only' | 'auto-safe';
+    allowedShellCommands: string[];
+    deniedShellPatterns: string[];
+    hooksEnabled: boolean;
+    subagents: {
+      enabled: boolean;
+      defaultModel?: string;
+    };
   };
 }
 
@@ -39,6 +47,13 @@ const DEFAULT_CONFIG: YamConfig = {
     temperature: 0.1,
     autoCommit: false,
     contextBudgetChars: 280_000,
+    permissionMode: 'default',
+    allowedShellCommands: [],
+    deniedShellPatterns: [],
+    hooksEnabled: true,
+    subagents: {
+      enabled: true,
+    },
   },
 };
 

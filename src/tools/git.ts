@@ -1,17 +1,25 @@
 /**
- * Yam Agent - Git Integration Tools
- * Full git workflow: status, diff, commit, branch, log, stash.
+ * YamX - Git integration tools.
  */
 
-import { execSync } from 'child_process';
 import { Tool } from './registry.js';
+import { ensureInsideProject, runProcess } from './utils.js';
 
-function git(cmd: string): string {
-  try {
-    return execSync(`git ${cmd}`, { encoding: 'utf-8', cwd: process.cwd(), timeout: 30000 }).trim();
-  } catch (error: any) {
-    return `Git error: ${error.stderr?.toString() || error.message}`;
-  }
+async function git(args: string[], timeoutMs = 30_000): Promise<string> {
+  const result = await runProcess('git', args, { timeoutMs, maxChars: 120_000 });
+  if (result.code === 0) return result.text.trim();
+  const suffix = result.timedOut ? `\n(timed out after ${timeoutMs}ms)` : '';
+  return `Git error: ${result.text || `exit ${result.code}`}${suffix}`;
+}
+
+function positiveInt(value: unknown, fallback: number, max: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.min(Math.trunc(n), max);
+}
+
+function validRefName(name: string): boolean {
+  return /^[A-Za-z0-9._/-]+$/.test(name) && !name.includes('..') && !name.endsWith('/') && !name.endsWith('.');
 }
 
 export const gitStatus: Tool = {
@@ -21,10 +29,13 @@ export const gitStatus: Tool = {
     parameters: { type: 'object', properties: {} },
   },
   async execute() {
-    const branch = git('branch --show-current');
-    const status = git('status --short');
-    const ahead = git('rev-list --count @{upstream}..HEAD 2>/dev/null || echo "N/A"');
-    return `Branch: ${branch}\nAhead by: ${ahead} commits\n\n${status || '(working tree clean)'}`;
+    const branch = await git(['branch', '--show-current']);
+    const status = await git(['status', '--short']);
+    const upstream = await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']);
+    const ahead = upstream.startsWith('Git error')
+      ? 'N/A'
+      : await git(['rev-list', '--count', `${upstream}..HEAD`]);
+    return `Branch: ${branch || '(detached)'}\nAhead by: ${ahead} commits\n\n${status || '(working tree clean)'}`;
   },
 };
 
@@ -41,9 +52,14 @@ export const gitDiff: Tool = {
     },
   },
   async execute(args) {
-    const staged = args.staged ? '--cached' : '';
-    const file = args.file || '';
-    const diff = git(`diff ${staged} ${file}`.trim());
+    const cmd = ['diff'];
+    if (args.staged) cmd.push('--cached');
+    if (args.file) {
+      const file = ensureInsideProject(args.file);
+      if (!file.ok) return file.error;
+      cmd.push('--', args.file);
+    }
+    const diff = await git(cmd);
     return diff || '(no changes)';
   },
 };
@@ -63,11 +79,13 @@ export const gitCommit: Tool = {
   },
   needsApproval: true,
   async execute(args) {
+    const message = String(args.message || '').trim();
+    if (!message) return 'Error: Commit message is required.';
     if (args.add_all !== false) {
-      git('add -A');
+      const added = await git(['add', '-A']);
+      if (added.startsWith('Git error')) return added;
     }
-    const result = git(`commit -m "${args.message.replace(/"/g, '\\"')}"`);
-    return result;
+    return git(['commit', '-m', message], 60_000);
   },
 };
 
@@ -78,15 +96,16 @@ export const gitLog: Tool = {
     parameters: {
       type: 'object',
       properties: {
-        count: { type: 'number', description: 'Number of commits to show (default: 10)' },
+        count: { type: 'number', description: 'Number of commits to show (default: 10, max 100)' },
         oneline: { type: 'boolean', description: 'Compact one-line format (default: true)' },
       },
     },
   },
   async execute(args) {
-    const count = args.count || 10;
-    const format = args.oneline !== false ? '--oneline' : '';
-    return git(`log -n ${count} ${format}`);
+    const count = positiveInt(args.count, 10, 100);
+    const cmd = ['log', '-n', String(count)];
+    if (args.oneline !== false) cmd.push('--oneline');
+    return git(cmd);
   },
 };
 
@@ -107,13 +126,15 @@ export const gitBranch: Tool = {
   async execute(args) {
     switch (args.action) {
       case 'list':
-        return git('branch -a');
+        return git(['branch', '-a']);
       case 'create':
         if (!args.name) return 'Error: Branch name required';
-        return git(`checkout -b ${args.name}`);
+        if (!validRefName(args.name)) return 'Error: Invalid branch name.';
+        return git(['checkout', '-b', args.name]);
       case 'switch':
         if (!args.name) return 'Error: Branch name required';
-        return git(`checkout ${args.name}`);
+        if (!validRefName(args.name)) return 'Error: Invalid branch name.';
+        return git(['checkout', args.name]);
       default:
         return `Unknown action: ${args.action}. Use "list", "create", or "switch".`;
     }
@@ -133,16 +154,19 @@ export const gitStash: Tool = {
       required: ['action'],
     },
   },
+  needsApproval: true,
   async execute(args) {
     switch (args.action) {
       case 'save':
-        return git(`stash push -m "${args.message || 'yam-agent stash'}"`);
+        return git(['stash', 'push', '-m', String(args.message || 'yamx stash')]);
       case 'pop':
-        return git('stash pop');
-      case 'list':
-        return git('stash list') || '(no stashes)';
+        return git(['stash', 'pop']);
+      case 'list': {
+        const list = await git(['stash', 'list']);
+        return list || '(no stashes)';
+      }
       default:
-        return `Unknown action: ${args.action}`;
+        return `Unknown action: ${args.action}. Use "save", "pop", or "list".`;
     }
   },
 };

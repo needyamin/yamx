@@ -7,15 +7,7 @@ import fs from 'fs-extra';
 import path from 'path';
 import fg from 'fast-glob';
 import { Tool } from './registry.js';
-
-function resolve(filePath: string): string {
-  return path.resolve(process.cwd(), filePath);
-}
-
-function isWithinProject(filePath: string): boolean {
-  const resolved = resolve(filePath);
-  return resolved.startsWith(process.cwd());
-}
+import { ensureInsideProject, formatBytes } from './utils.js';
 
 export const multiEdit: Tool = {
   definition: {
@@ -45,8 +37,9 @@ Use this when you need to make several non-adjacent changes to the same file —
   },
   needsApproval: true,
   async execute(args) {
-    const filePath = resolve(args.path);
-    if (!isWithinProject(args.path)) return 'Error: Path outside project directory.';
+    const target = ensureInsideProject(args.path);
+    if (!target.ok) return target.error;
+    const filePath = target.path;
     if (!await fs.pathExists(filePath)) return `Error: File not found: ${args.path}`;
 
     let content = await fs.readFile(filePath, 'utf-8');
@@ -83,7 +76,11 @@ export const copyFile: Tool = {
   needsApproval: true,
   async execute(args) {
     try {
-      await fs.copy(resolve(args.source), resolve(args.destination));
+      const source = ensureInsideProject(args.source);
+      if (!source.ok) return source.error;
+      const destination = ensureInsideProject(args.destination);
+      if (!destination.ok) return destination.error;
+      await fs.copy(source.path, destination.path);
       return `Copied ${args.source} → ${args.destination}`;
     } catch (error: any) {
       return `Error: ${error.message}`;
@@ -107,7 +104,11 @@ export const moveFile: Tool = {
   needsApproval: true,
   async execute(args) {
     try {
-      await fs.move(resolve(args.source), resolve(args.destination));
+      const source = ensureInsideProject(args.source);
+      if (!source.ok) return source.error;
+      const destination = ensureInsideProject(args.destination);
+      if (!destination.ok) return destination.error;
+      await fs.move(source.path, destination.path);
       return `Moved ${args.source} → ${args.destination}`;
     } catch (error: any) {
       return `Error: ${error.message}`;
@@ -129,7 +130,9 @@ export const fileInfo: Tool = {
   },
   async execute(args) {
     try {
-      const filePath = resolve(args.path);
+      const target = ensureInsideProject(args.path);
+      if (!target.ok) return target.error;
+      const filePath = target.path;
       const stat = await fs.stat(filePath);
       const lines = stat.isFile()
         ? (await fs.readFile(filePath, 'utf-8')).split('\n').length
@@ -168,7 +171,9 @@ export const grepSearch: Tool = {
     },
   },
   async execute(args) {
-    const searchDir = resolve(args.path || '.');
+    const target = ensureInsideProject(args.path || '.');
+    if (!target.ok) return target.error;
+    const searchDir = target.path;
     const includePattern = args.include || '**/*';
     const maxResults = args.max_results || 30;
     const contextLines = args.context_lines ?? 2;
@@ -231,7 +236,9 @@ export const treeTool: Tool = {
     },
   },
   async execute(args) {
-    const rootDir = resolve(args.path || '.');
+    const target = ensureInsideProject(args.path || '.');
+    if (!target.ok) return target.error;
+    const rootDir = target.path;
     const maxDepth = args.max_depth ?? 4;
     const showHidden = args.show_hidden ?? false;
     const showSizes = args.show_sizes ?? true;
@@ -312,8 +319,9 @@ Provide the start_line and end_line (1-indexed, inclusive) and the new content t
   },
   needsApproval: true,
   async execute(args) {
-    const filePath = resolve(args.path);
-    if (!isWithinProject(args.path)) return 'Error: Path outside project directory.';
+    const target = ensureInsideProject(args.path);
+    if (!target.ok) return target.error;
+    const filePath = target.path;
     if (!await fs.pathExists(filePath)) return `Error: File not found: ${args.path}`;
 
     const content = await fs.readFile(filePath, 'utf-8');
@@ -333,11 +341,3 @@ Provide the start_line and end_line (1-indexed, inclusive) and the new content t
     return `Patched ${args.path}: replaced lines ${args.start_line}-${args.end_line} (${removedCount} lines) with ${newLines.length} lines. File now has ${lines.length} lines.`;
   },
 };
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}

@@ -6,6 +6,9 @@
 
 import { Provider, Message, ToolCall, CompletionResult } from './providers/base.js';
 import { allTools, getToolDefinitions, getTool } from './tools/registry.js';
+import { ensureInsideProject } from './tools/utils.js';
+import { evaluateToolCall, PermissionMode } from './policy.js';
+import { HookManager } from './hooks.js';
 import { UI } from './ui.js';
 import inquirer from 'inquirer';
 
@@ -23,6 +26,10 @@ export interface AgentOptions {
   onPersist?: () => void | Promise<void>;
   /** Total serialized history size (chars) before auto-compression */
   contextBudgetChars?: number;
+  permissionMode?: PermissionMode;
+  allowedShellCommands?: string[];
+  deniedShellPatterns?: string[];
+  hooksEnabled?: boolean;
 }
 
 export class Agent {
@@ -34,6 +41,8 @@ export class Agent {
   private totalOutputTokens = 0;
   private fileChanges: Array<{ path: string; oldContent: string; action: string }> = [];
   private turnStartTime = 0;
+  private toolCallCounts = new Map<string, number>();
+  private hooks = new HookManager();
 
   /** Retry wrapper for API calls */
   private async withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
@@ -173,6 +182,7 @@ export class Agent {
     await this.ensureContextBudget();
     this.history.push({ role: 'user', content: userInput });
     this.fileChanges = []; // Reset undo buffer per turn
+    this.toolCallCounts.clear();
     this.turnStartTime = Date.now();
 
     let iterations = 0;
@@ -380,8 +390,61 @@ export class Agent {
       }
 
       // Check if approval is needed
-      if (tool.needsApproval && !this.options.autoApprove) {
-        const isDangerous = tool.isDangerous?.(args) ?? false;
+      const toolKey = this.toolCallKey(tc.function.name, args);
+      const toolCount = (this.toolCallCounts.get(toolKey) || 0) + 1;
+      this.toolCallCounts.set(toolKey, toolCount);
+      const repeatLimit = this.repeatLimit(tc.function.name);
+      if (toolCount > repeatLimit) {
+        const msg = `Skipped repeated ${tc.function.name} call with identical arguments. Choose a different diagnostic or implementation strategy.`;
+        this.ui.warn(msg);
+        this.history.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          name: tc.function.name,
+          content: msg,
+        });
+        continue;
+      }
+
+      const policy = evaluateToolCall(tc.function.name, args, {
+        permissionMode: this.options.permissionMode,
+        autoApprove: this.options.autoApprove,
+        allowedShellCommands: this.options.allowedShellCommands,
+        deniedShellPatterns: this.options.deniedShellPatterns,
+      });
+      if (policy.blocked) {
+        const msg = `Policy blocked ${tc.function.name}: ${policy.reason}`;
+        this.ui.warn(msg);
+        this.history.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          name: tc.function.name,
+          content: msg,
+        });
+        continue;
+      }
+
+      if (this.options.hooksEnabled !== false) {
+        const hook = await this.hooks.run('PreToolUse', {
+          tool_name: tc.function.name,
+          tool_args: args,
+        }, tc.function.name);
+        if (hook.blocked) {
+          const msg = `PreToolUse hook blocked ${tc.function.name}: ${hook.errors.join('\n') || hook.output}`;
+          this.ui.warn(msg);
+          this.history.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            name: tc.function.name,
+            content: msg,
+          });
+          continue;
+        }
+      }
+
+      // Check if approval is needed
+      if (tool.needsApproval && policy.needsApproval) {
+        const isDangerous = policy.risk === 'destructive' || (tool.isDangerous?.(args) ?? false);
 
         this.ui.approvalNeeded(tc.function.name, args);
 
@@ -421,6 +484,18 @@ export class Agent {
         const duration = Date.now() - startTime;
         this.ui.toolResult(tc.function.name, result, duration);
 
+        if (this.options.hooksEnabled !== false) {
+          const hook = await this.hooks.run('PostToolUse', {
+            tool_name: tc.function.name,
+            tool_args: args,
+            result,
+            duration_ms: duration,
+          }, tc.function.name);
+          if (hook.errors.length > 0) {
+            this.ui.warn(`PostToolUse hook feedback: ${hook.errors.join('\n')}`);
+          }
+        }
+
         this.history.push({
           role: 'tool',
           tool_call_id: tc.id,
@@ -431,6 +506,18 @@ export class Agent {
         const duration = Date.now() - startTime;
         const errorMsg = `Error executing ${tc.function.name}: ${error.message}`;
         this.ui.error(`${errorMsg} (${duration}ms)`);
+
+        if (this.options.hooksEnabled !== false) {
+          const hook = await this.hooks.run('PostToolUseFailure', {
+            tool_name: tc.function.name,
+            tool_args: args,
+            error: error.message,
+            duration_ms: duration,
+          }, tc.function.name);
+          if (hook.errors.length > 0 || hook.output) {
+            this.ui.warn(`PostToolUseFailure hook feedback: ${hook.errors.join('\n') || hook.output}`);
+          }
+        }
 
         this.history.push({
           role: 'tool',
@@ -444,11 +531,40 @@ export class Agent {
     return true; // continue the loop
   }
 
+  private toolCallKey(name: string, args: unknown): string {
+    return `${name}:${this.stableStringify(args)}`;
+  }
+
+  private repeatLimit(name: string): number {
+    const readOnlyRepeatable = new Set([
+      'read_file',
+      'list_files',
+      'search_files',
+      'grep_search',
+      'file_info',
+      'directory_tree',
+      'git_status',
+      'git_diff',
+      'git_log',
+      'task_list',
+      'task_tail',
+    ]);
+    return readOnlyRepeatable.has(name) ? 2 : 1;
+  }
+
+  private stableStringify(value: unknown): string {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) return `[${value.map((v) => this.stableStringify(v)).join(',')}]`;
+    const obj = value as Record<string, unknown>;
+    return `{${Object.keys(obj).sort().map((k) => `${JSON.stringify(k)}:${this.stableStringify(obj[k])}`).join(',')}}`;
+  }
+
   /** Track file changes for undo */
   private async trackFileChange(filePath: string) {
     const fs = await import('fs-extra');
-    const path = await import('path');
-    const fullPath = path.resolve(process.cwd(), filePath);
+    const target = ensureInsideProject(filePath);
+    if (!target.ok) return;
+    const fullPath = target.path;
     try {
       if (await fs.default.pathExists(fullPath)) {
         const content = await fs.default.readFile(fullPath, 'utf-8');
@@ -467,10 +583,11 @@ export class Agent {
     }
 
     const fs = await import('fs-extra');
-    const path = await import('path');
 
     for (const change of this.fileChanges.reverse()) {
-      const fullPath = path.resolve(process.cwd(), change.path);
+      const target = ensureInsideProject(change.path);
+      if (!target.ok) continue;
+      const fullPath = target.path;
       if (change.action === 'created') {
         await fs.default.unlink(fullPath).catch(() => {});
         this.ui.info(`Removed: ${change.path}`);

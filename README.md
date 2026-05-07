@@ -178,6 +178,7 @@ When something breaks, YamX can inspect command output, running task output, and
 
 ```text
 /log
+/log app.log --mode auto
 /log storage/logs/app.log --mode latest-error
 /log app.log --mode summary
 /log app.log --mode errors --lines 20 --pattern TypeError
@@ -187,6 +188,7 @@ Log modes:
 
 | Mode | Use |
 |------|-----|
+| `auto` | Summary + latest error + recent tail; best first choice |
 | `tail` | Last lines of a log, useful for recent crashes |
 | `head` | Startup/header lines |
 | `errors` | Error-like lines with nearby context |
@@ -195,6 +197,8 @@ Log modes:
 | `full` | Full log, only when smaller modes are not enough |
 
 For background commands started by YamX, use `/status`, `/tools`, or ask the agent to inspect `task_tail`.
+
+When a command or log output contains a failure signal, YamX adds an internal failure protocol for the model: extract the exact error, inspect logs/task output, search referenced code/config, apply the smallest fix, and rerun the narrow failing command.
 
 ---
 
@@ -223,13 +227,14 @@ Context budget before auto-summary
 - **Adaptive Model Council**: Hidden Analyst, Planner, Critic, and Synthesizer pass for complex tasks, with adaptive mode to save tokens on simple turns
 - **Token economy**: Large tool outputs are compacted before entering model history, preserving errors, warnings, head/tail context, and next-step hints
 - **Local-first command execution**: Shell runs prefer project-local tools from `node_modules/.bin`, `vendor/bin`, virtualenvs, `bin/`, and `scripts/` before global binaries
-- **Log Inspector**: Discover log files or inspect log head, tail, full content, and error-context for failure analysis
+- **DevOps command support**: Understands common everyday commands like `cd`, `mkdir`, `touch`, `cat`, `head`, `tail`, `chmod`, `chown`, `systemctl`, `journalctl`, `kubectl`, `docker`, `ansible`, and Windows equivalents
+- **Log Inspector**: Discover logs or inspect `auto`, `head`, `tail`, `latest-error`, `summary`, `errors`, and full content for failure analysis
 - **Neural Link UI**: Terminal banner and live status signals show when YamX is receiving input, consulting the model council, streaming model output, and running tools
 - **Direct Command Execution**: Type shell commands directly in chat (no prefix needed)
 - **Subagent Delegation**: Delegate complex tasks to specialized agents (`/explore`, `/plan`, `/review`)
 - **Persistent Memory**: Keep long-term project notes and user preferences across sessions
 - **Markdown rendering**: AI responses are rendered with syntax highlighting in the terminal
-- **Safety**: Destructive or privileged commands ask for confirmation unless `--auto-approve`
+- **Safety**: Sensitive, destructive, privileged, publishing, package-install, credential, and permission-changing commands are classified and require approval or are blocked when exfiltration is detected
 - **Auto-retry**: Transient API failures (429, 5xx, timeouts) retry with exponential backoff
 - **JSON repair**: Malformed tool call arguments are auto-repaired before execution
 - **Turn timing**: Each turn shows elapsed time and iteration count
@@ -281,9 +286,9 @@ On Windows PowerShell, use `npm.cmd run build` or `npm.cmd test` if script execu
 ### Runtime behavior
 
 - **Local-first**: shell commands prefer project binaries from `node_modules/.bin`, `vendor/bin`, virtualenvs, `bin/`, and `scripts/`.
-- **Failure-aware**: failed commands can be analyzed through command output, `task_tail`, and `log_inspect` for head/tail/full/error-context logs.
+- **Failure-aware**: failed commands can be analyzed through command output, `task_tail`, and `log_inspect mode=auto/latest-error/summary` before fixes are applied.
 - **Token-aware**: adaptive model council and compact tool-result history keep output quality high without sending huge logs/files back to the model.
-- **Safe by default**: normal read/build/test commands can run smoothly, while destructive, privileged, publishing, network install, and force-push style commands ask for approval.
+- **Safe by default**: normal read/build/test/dev commands can run smoothly, while sensitive, destructive, privileged, publishing, network install, permission-changing, and force-push commands ask for approval or are blocked when clearly unsafe.
 - **Persistent**: config, active session id, chat history, memory, and command history are stored under `~/.yamx/`.
 
 ---
@@ -307,7 +312,8 @@ On Windows PowerShell, use `npm.cmd run build` or `npm.cmd test` if script execu
 - `edit_file` supports `dry_run`, `occurrence`, and `replace_all`.
 - `search_files` supports `case_sensitive`, `context_lines`, and `max_results`.
 - `list_files` supports recursive/pattern listing, hidden files, and result caps.
-- `log_inspect` supports discovery plus `head`, `tail`, `errors`, `latest-error`, `summary`, and `full`.
+- `log_inspect` supports discovery plus `auto`, `head`, `tail`, `errors`, `latest-error`, `summary`, and `full`.
+- `run_command` is local-first and cross-platform; on Windows it can translate common Unix-style inspection commands such as `pwd`, `ls`, `cat`, `head`, `tail`, `touch`, `mkdir -p`, `cp`, `mv`, and `clear`.
 
 ---
 

@@ -8,6 +8,7 @@ import path from 'path';
 import fg from 'fast-glob';
 import { MemoryManager } from './memory.js';
 import { SkillManager } from './skills.js';
+import { formatLocalToolsForPrompt, preferredAnalysisRunner, preferredJsonTool, preferredYamlTool, preferredSearchTool } from './tool-detect.js';
 
 export interface ProjectContext {
   projectName: string;
@@ -211,6 +212,17 @@ export class ContextEngine {
     ];
     const memory = await new MemoryManager(this.cwd).loadContext();
     const skills = await new SkillManager(this.cwd).promptBlock();
+    const localTools = formatLocalToolsForPrompt();
+    const analysisRunner = preferredAnalysisRunner();
+    const jsonTool = preferredJsonTool();
+    const yamlTool = preferredYamlTool();
+    const searchTool = preferredSearchTool();
+    const localHelpers = [
+      analysisRunner ? `analysis runner: ${analysisRunner.name}` : 'analysis runner: none',
+      jsonTool ? `json: ${jsonTool.name}` : 'json: none',
+      yamlTool ? `yaml: ${yamlTool.name}` : 'yaml: none',
+      searchTool ? `search: ${searchTool.name}` : 'search: none',
+    ].join(' | ');
 
     return `You are YamX - an autonomous senior coding agent with filesystem, shell, git, and web tools. You solve real engineering problems end-to-end while protecting the user's work.
 
@@ -237,6 +249,22 @@ export class ContextEngine {
 - Save tokens on mechanical work: use project_intel/codebase_analysis/log_inspect summaries, read_file line ranges, max_results, tail/head/latest-error, and targeted grep before full files.
 - Prefer one precise tool call over broad scans. If output is huge, ask for or generate a smaller slice instead of feeding the whole output back to the model.
 - Keep final answers concise but complete: outcome, important files/commands, verification, and remaining risk.
+
+## Local Compute First (Token Saver)
+- For analysis, parsing, counting, math, regex, JSON/CSV/XML/YAML inspection, dataset stats, file diffs, hashing, encoding, or any deterministic transformation, run a local tool instead of doing it in the model.
+- Auto-detected helpers on this machine: ${localHelpers}
+- Preferred local helpers (cross-platform when available): python/python3 -c "..." for analysis and computation; jq for JSON; yq for YAML; rg/grep/findstr for search; awk/sed for column/text work; sort/uniq -c/wc for counts; head/tail/cut/tr for slicing; xxd/od/base64/sha256sum for binary or encoding work; node -e "..." when Python is unavailable; sqlite3 for ad-hoc data queries.
+- Default workflow when the user asks "how many", "what is the largest", "find all matches of", "summarize this file", "count by", "compare these", "extract X from Y", or similar: write a small one-liner using a detected helper, run it via run_command, then read only the small result back into the model.
+- Examples (illustrative, not literal):
+  - python -c "import json,sys;d=json.load(open('package.json'));print(len(d.get('dependencies',{})))"
+  - jq '.scripts | keys | length' package.json
+  - rg -c "TODO" src
+  - awk -F, '{c[$3]++} END {for (k in c) print c[k], k}' data.csv | sort -nr | head
+- Do not paste large file content/log content into the chat. Slice with read_file ranges, log_inspect summary/latest-error, or extract with the tools above first.
+- If a preferred helper is missing, fall back automatically (python <-> node -e <-> jq <-> awk/sed). Detected availability is provided below; do not ask the model to compute when a local helper exists.
+
+## Detected Local Tooling
+${localTools}
 
 ## Judgment
 - Be proactive: if the requested goal clearly implies code changes, make them.

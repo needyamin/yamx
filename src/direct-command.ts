@@ -1,64 +1,146 @@
 const DIRECT_COMMANDS = new Set([
   // identity/env/process
   'whoami', 'hostname', 'id', 'uname', 'ver', 'date', 'time', 'where', 'which', 'whereis',
-  'env', 'printenv', 'set', 'sleep', 'timeout', 'watch',
+  'env', 'printenv', 'set', 'sleep', 'timeout', 'watch', 'uptime', 'who', 'users', 'last',
+  'lastlog', 'w', 'tty', 'logname', 'groups', 'getent', 'nice', 'renice', 'ionice', 'chrt',
+  'nohup', 'disown', 'jobs', 'fg', 'bg', 'wait', 'screen', 'tmux', 'byobu', 'zellij',
 
   // filesystem inspection
   'pwd', 'cd', 'pushd', 'popd', 'ls', 'll', 'la', 'dir', 'tree', 'echo', 'cat', 'type',
-  'head', 'tail', 'more', 'less', 'find', 'findstr', 'grep', 'egrep', 'fgrep', 'rg',
+  'head', 'tail', 'more', 'less', 'find', 'findstr', 'grep', 'egrep', 'fgrep', 'rg', 'ag',
   'sed', 'awk', 'wc', 'sort', 'uniq', 'cut', 'tr', 'tee', 'xargs', 'realpath', 'readlink',
   'stat', 'file', 'du', 'df', 'touch', 'mkdir', 'rmdir', 'cp', 'copy', 'xcopy', 'robocopy',
   'mv', 'move', 'ren', 'rename', 'rm', 'del', 'erase', 'chmod', 'chown', 'chgrp', 'umask',
+  'mount', 'umount', 'fdisk', 'parted', 'blkid', 'lsblk', 'lsof',
+  'ln', 'link', 'unlink', 'install', 'mktemp', 'basename', 'dirname', 'pathchk',
+
+  // text processing and data
+  'diff', 'cmp', 'patch', 'comm', 'paste', 'fmt', 'expand', 'unexpand', 'nl', 'pr',
+  'split', 'csplit', 'join', 'rev', 'shuf', 'hexdump', 'xxd', 'od', 'base64', 'base32',
+  'jq', 'yq', 'xq', 'fx', 'jp', 'mlr', 'duckdb', 'csvkit', 'csvcut', 'csvgrep', 'csvlook',
+  'sd', 'choose', 'htmlq',
+
+  // archives / compression
+  'tar', 'gzip', 'gunzip', 'bzip2', 'bunzip2', 'xz', 'unxz', 'lzma', 'unlzma',
+  'zip', 'unzip', '7z', '7za', 'rar', 'unrar', 'zstd', 'unzstd', 'compress', 'uncompress',
+
+  // editors
+  'vi', 'vim', 'nvim', 'emacs', 'emacsclient', 'nano', 'pico', 'micro', 'hx', 'kak', 'joe',
+  'ed', 'code', 'codium', 'subl',
+
+  // crypto / security / hashing
+  'openssl', 'gpg', 'gpg2', 'age', 'sops', 'mkcert', 'certbot', 'htpasswd', 'pwgen', 'keytool',
+  'ssh-keygen', 'ssh-keyscan', 'ssh-add', 'ssh-agent', 'ssh-copy-id',
+  'shasum', 'md5sum', 'sha1sum', 'sha256sum', 'sha512sum', 'b2sum', 'cksum', 'sum',
+  'gitleaks', 'trivy', 'grype', 'snyk', 'semgrep', 'codeql',
+
+  // system inspection (cross-platform)
+  'systeminfo', 'sw_vers', 'hostnamectl', 'timedatectl', 'localectl', 'lsb_release',
+  'lscpu', 'lsmem', 'lsmod', 'lsusb', 'lspci', 'lsscsi', 'lshw', 'dmidecode', 'hwinfo',
+  'nproc', 'arch', 'free', 'vmstat', 'iostat', 'mpstat', 'sar', 'getconf', 'ulimit',
+  'driverquery', 'gpresult', 'getmac', 'powercfg', 'winsat', 'wevtutil', 'vssadmin',
+  'bcdedit', 'fsutil', 'manage-bde', 'cipher', 'defrag', 'mountvol', 'shutdown', 'logoff',
+  'reboot', 'halt', 'poweroff', 'systemd-analyze', 'machinectl', 'networkctl', 'resolvectl',
+  'busctl', 'modprobe', 'insmod', 'rmmod', 'depmod', 'udevadm', 'udisksctl',
+  'sync', 'swapon', 'swapoff', 'hdparm', 'smartctl',
+  'fsck', 'e2fsck', 'btrfs', 'zfs', 'zpool', 'cryptsetup', 'losetup',
+  'lvcreate', 'lvremove', 'vgcreate', 'pvcreate',
+
+  // monitoring / benchmarking
+  'atop', 'glances', 'dstat', 'collectd', 'telegraf', 'gtop', 'bottom',
+  'ab', 'wrk', 'hey', 'siege', 'vegeta', 'k6', 'stress', 'stress-ng', 'fio', 'sysbench',
+  'iperf', 'iperf3', 'qperf', 'speedtest', 'speedtest-cli',
 
   // system/network diagnostics
   'ipconfig', 'ifconfig', 'ping', 'tracert', 'traceroute', 'nslookup', 'netstat', 'tasklist',
-  'taskkill', 'ps', 'top', 'htop', 'btop', 'kill', 'killall', 'pkill', 'pgrep', 'lsof', 'ss',
-  'ip', 'route', 'arp', 'dig', 'host', 'nmap', 'nc', 'netcat', 'tcpdump', 'wireshark',
-  'curl', 'wget', 'ssh', 'scp', 'sftp', 'ftp', 'telnet', 'rsync',
+  'taskkill', 'ps', 'top', 'htop', 'btop', 'kill', 'killall', 'pkill', 'pgrep', 'ss',
+  'ip', 'route', 'arp', 'dig', 'host', 'nmap', 'nc', 'netcat', 'tcpdump', 'tshark', 'wireshark',
+  'curl', 'wget', 'http', 'httpie', 'xh', 'mosh',
+  'ssh', 'scp', 'sftp', 'ftp', 'telnet', 'rsync',
+  'iotop', 'nethogs', 'bmon', 'iftop', 'tracepath', 'mtr', 'pathping', 'nbtstat', 'nltest',
+  'quser', 'qwinsta', 'query',
+  'iptables', 'ip6tables', 'ufw', 'firewall-cmd', 'fail2ban-client',
+  'ethtool', 'mii-tool', 'brctl', 'bridge', 'nmcli', 'nmtui', 'iw', 'iwconfig', 'iwlist',
+  'wpa_cli', 'wpa_supplicant',
 
   // macOS / Linux package and system tools
-  'brew', 'port', 'softwareupdate', 'sw_vers', 'open', 'launchctl', 'defaults', 'xcodebuild',
-  'apt', 'apt-get', 'dnf', 'yum', 'pacman', 'zypper', 'apk', 'snap', 'flatpak',
+  'brew', 'port', 'softwareupdate', 'open', 'launchctl', 'defaults', 'xcodebuild',
+  'apt', 'apt-get', 'aptitude', 'dnf', 'yum', 'pacman', 'zypper', 'apk', 'snap', 'flatpak',
   'sudo', 'doas', 'systemctl', 'service', 'journalctl', 'dmesg', 'loginctl', 'crontab',
 
   // Windows shell/tools
-  'cls', 'chdir', 'md', 'rd', 'attrib', 'icacls', 'cacls', 'takeown', 'whoami', 'net', 'netsh',
+  'cls', 'chdir', 'md', 'rd', 'attrib', 'icacls', 'cacls', 'takeown', 'net', 'netsh',
   'reg', 'sc', 'wmic', 'winget', 'choco', 'scoop', 'msbuild', 'devenv',
+  'chkdsk', 'sfc', 'dism', 'auditpol', 'klist', 'eventcreate', 'tzutil', 'whynot',
   'powershell.exe', 'pwsh.exe', 'cmd.exe', 'wsl', 'wsl.exe',
 
   // dev tools and package managers
-  'node', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'deno', 'corepack',
+  'node', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'deno', 'corepack', 'nodemon', 'pm2', 'forever',
   'vite', 'webpack', 'rollup', 'parcel', 'turbo', 'nx', 'next', 'nuxt', 'astro', 'remix',
   'svelte-kit', 'storybook', 'ts-node', 'tsx',
-  'git', 'python', 'python3', 'py', 'pip', 'pip3', 'uv', 'poetry',
-  'pytest', 'ruff', 'black', 'mypy', 'pyright', 'tox', 'pipenv', 'conda', 'jupyter', 'ipython',
+  'git', 'hg', 'svn', 'jj', 'fossil', 'bzr',
+  'python', 'python3', 'py', 'pip', 'pip3', 'pipx', 'uv', 'poetry',
+  'pytest', 'ruff', 'black', 'mypy', 'pyright', 'tox', 'pipenv', 'conda', 'mamba',
+  'jupyter', 'ipython', 'gunicorn', 'uvicorn', 'daphne', 'hypercorn', 'uwsgi',
   'cargo', 'rustup', 'rustc', 'rustfmt', 'clippy', 'go', 'gofmt', 'goimports',
-  'java', 'javac', 'mvn', 'mvnw', 'gradle', 'gradlew',
-  'dotnet', 'php', 'composer', 'artisan', 'pest', 'phpunit', 'symfony',
+  'java', 'javac', 'jar', 'jdb', 'jstack', 'jmap', 'jstat', 'jconsole', 'jcmd', 'jps',
+  'javap', 'jshell', 'jpackage', 'jlink', 'jhsdb',
+  'mvn', 'mvnw', 'gradle', 'gradlew',
+  'dotnet', 'nuget', 'paket', 'php', 'composer', 'artisan', 'pest', 'phpunit', 'symfony',
   'ruby', 'gem', 'bundle', 'bundler', 'rake', 'rails',
-  'make', 'cmake', 'ninja', 'meson', 'bazel', 'buck', 'gcc', 'g++', 'clang', 'clang++',
+  'make', 'cmake', 'ninja', 'meson', 'bazel', 'buck', 'xmake', 'scons', 'qmake', 'premake5',
+  'gcc', 'g++', 'clang', 'clang++', 'clang-format', 'shellcheck', 'shfmt', 'hadolint',
   'tsc', 'eslint', 'prettier', 'biome', 'vitest', 'jest', 'mocha', 'playwright', 'cypress',
   'prisma', 'drizzle-kit', 'sequelize', 'knex', 'typeorm',
+  'pre-commit', 'sonar-scanner',
 
   // mobile / desktop / native
-  'expo', 'react-native', 'flutter', 'dart', 'adb', 'emulator', 'pod', 'fastlane',
-  'electron', 'tauri', 'cargo-tauri',
+  'expo', 'react-native', 'flutter', 'dart', 'adb', 'fastboot', 'sdkmanager', 'avdmanager',
+  'bundletool', 'aapt', 'aapt2', 'apksigner', 'zipalign', 'emulator', 'pod', 'fastlane',
+  'electron', 'tauri', 'cargo-tauri', 'carthage', 'swift', 'swiftc', 'swift-format',
+  'xcrun', 'simctl', 'ios-deploy',
 
   // containers, infra, cloud
-  'docker', 'podman', 'docker-compose', 'compose', 'kubectl', 'kubectx', 'kubens', 'k9s',
-  'helm', 'terraform', 'tofu', 'ansible', 'ansible-playbook',
-  'vagrant', 'aws', 'az', 'gcloud', 'gh', 'vercel', 'netlify', 'flyctl', 'wrangler', 'firebase',
-  'supabase', 'railway', 'pulumi', 'serverless', 'sam',
+  'docker', 'podman', 'docker-compose', 'compose', 'docker-buildx', 'buildx',
+  'buildah', 'skopeo', 'crictl', 'ctr', 'runc', 'lazydocker', 'dive',
+  'kubectl', 'kubectx', 'kubens', 'kustomize', 'kubeadm', 'minikube', 'kind', 'k3s', 'k3d',
+  'eksctl', 'k9s', 'krew', 'argocd', 'flux', 'fluxctl', 'skaffold', 'tilt', 'telepresence',
+  'istioctl', 'linkerd', 'calicoctl', 'ciliumctl',
+  'helm', 'terraform', 'tofu', 'ansible', 'ansible-playbook', 'ansible-vault', 'vagrant',
+  'aws', 'az', 'gcloud', 'gh', 'glab', 'vercel', 'netlify', 'flyctl', 'fly', 'wrangler',
+  'firebase', 'supabase', 'railway', 'pulumi', 'serverless', 'sam',
+  'doctl', 'linode-cli', 'hcloud', 'civo', 'ibmcloud', 'oci', 'sf', 'sfdx', 'heroku',
 
   // databases and services
-  'psql', 'mysql', 'mariadb', 'sqlite3', 'redis-cli', 'mongosh', 'mongo', 'createdb', 'dropdb',
-  'pg_dump', 'pg_restore', 'mysqldump', 'dockerize',
+  'psql', 'pgcli', 'mycli', 'litecli', 'mysql', 'mariadb', 'sqlite3', 'redis-cli',
+  'mongosh', 'mongo', 'mongoimport', 'mongoexport', 'mongodump', 'mongorestore',
+  'createdb', 'dropdb', 'pg_dump', 'pg_restore', 'mysqldump', 'cqlsh', 'influx', 'dockerize',
 
   // AI/local model tooling
-  'ollama', 'llama', 'llama-cli', 'llama-server', 'huggingface-cli',
+  'ollama', 'llama', 'llama-cli', 'llama-server', 'huggingface-cli', 'transformers-cli',
+  'litellm', 'vllm', 'ray',
+
+  // audio / video / image
+  'ffmpeg', 'ffprobe', 'ffplay', 'mpv', 'mplayer', 'vlc', 'sox',
+  'convert', 'magick', 'mogrify', 'identify', 'composite', 'montage',
+  'exiftool', 'jpegtran', 'pngcrush', 'optipng', 'jpegoptim', 'gifsicle',
+
+  // crypto / blockchain dev
+  'geth', 'forge', 'anvil', 'cast', 'hardhat', 'anchor', 'solana', 'bitcoin-cli',
+
+  // docs / help
+  'man', 'info', 'apropos', 'whatis', 'tldr',
+
+  // modern CLI replacements
+  'bat', 'exa', 'eza', 'fd', 'dust', 'duf', 'broot', 'fzf', 'zoxide', 'lsd',
+  'delta', 'difftastic', 'atuin', 'starship', 'mcfly',
+
+  // fun / utility
+  'cowsay', 'fortune', 'sl', 'lolcat', 'neofetch', 'pfetch', 'fastfetch', 'screenfetch',
+  'archey', 'figlet', 'toilet', 'banner', 'bc', 'dc', 'expr', 'factor', 'seq',
 
   // shells
-  'cmd', 'powershell', 'pwsh', 'bash', 'sh', 'zsh', 'fish',
+  'cmd', 'powershell', 'pwsh', 'bash', 'sh', 'zsh', 'fish', 'nu', 'xonsh', 'elvish',
 ]);
 
 const POWERSHELL_VERBS = [

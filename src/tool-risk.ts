@@ -97,6 +97,10 @@ const SAFE_SHELL_PATTERNS = [
   /^\s*git\s+(diff|log|branch|status|show|rev-parse|remote)\b/i,
   /^\s*(dir|ls|pwd|cd|type|cat|head|tail|more|rg|grep|findstr|where|which|tree|mkdir|touch|stat|du|df|whoami|hostname|ipconfig|ifconfig|netstat|tasklist|ps)\b/i,
   /^\s*(Get-ChildItem|Get-Content|Select-String|Test-Path|Resolve-Path|Get-Location)\b/i,
+  /^\s*(systeminfo|sw_vers|hostnamectl|timedatectl|localectl|lsb_release|uname|ver|uptime|date|time)\b/i,
+  /^\s*(lscpu|lsmem|lsmod|lsusb|lspci|lsscsi|lshw|lsblk|nproc|arch|free|vmstat|iostat|mpstat|sar|getconf|dmidecode|hwinfo)\b/i,
+  /^\s*(driverquery|gpresult|getmac|powercfg\s+\/(list|query|q)|winsat\s+query|wevtutil\s+(el|gl|qe))\b/i,
+  /^\s*(who|users|w|tty|logname|groups|id|getent)\b/i,
 ];
 
 export interface ToolRiskResult {

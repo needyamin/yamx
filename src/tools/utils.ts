@@ -2,6 +2,13 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  formatLocalToolsForPrompt,
+  preferredAnalysisRunner,
+  preferredJsonTool,
+  preferredYamlTool,
+  preferredSearchTool,
+} from '../tool-detect.js';
 
 export const PROJECT_ROOT = path.resolve(process.cwd());
 
@@ -127,6 +134,10 @@ export function getSmartShell(command: string, shellName?: string): SmartShellCo
 
 export function getShellDiagnostics(): string {
   const localPaths = getLocalFirstPathEntries(PROJECT_ROOT);
+  const analysis = preferredAnalysisRunner();
+  const json = preferredJsonTool();
+  const yaml = preferredYamlTool();
+  const search = preferredSearchTool();
   const rows = [
     ['platform', `${process.platform} ${process.arch}`],
     ['default', getDefaultShell().label],
@@ -137,9 +148,14 @@ export function getShellDiagnostics(): string {
     ['sh', String(shellAvailable('sh'))],
     ['zsh', String(shellAvailable('zsh'))],
     ['fish', String(shellAvailable('fish'))],
+    ['analysis', analysis ? `${analysis.name} (${analysis.path})` : 'none'],
+    ['json', json ? `${json.name} (${json.path})` : 'none'],
+    ['yaml', yaml ? `${yaml.name} (${yaml.path})` : 'none'],
+    ['search', search ? `${search.name} (${search.path})` : 'none'],
     ['local bins', localPaths.length ? localPaths.map((p) => path.relative(PROJECT_ROOT, p) || '.').join(', ') : '(none found)'],
   ];
-  return rows.map(([k, v]) => `${k.padEnd(12)} ${v}`).join('\n');
+  const main = rows.map(([k, v]) => `${k.padEnd(12)} ${v}`).join('\n');
+  return `${main}\n\nDetected local tools:\n${formatLocalToolsForPrompt()}`;
 }
 
 export function getLocalFirstPathEntries(cwd = PROJECT_ROOT): string[] {

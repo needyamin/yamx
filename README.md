@@ -1,149 +1,241 @@
 # YamX
 
-A terminal coding agent with **29 tools**, **persistent chat sessions**, **markdown rendering**, and multi-provider LLM support. It reads and edits your project, runs shell commands (with your approval), uses Git and the web, and renders rich output with syntax-highlighted code blocks.
+A terminal coding agent that reads and edits your project, runs shell commands, uses Git and the web, and analyzes logs — without burning your model tokens. **29 built-in tools**, direct-command execution, persistent chat sessions, and multi-provider LLM support.
 
 Providers: **OpenAI**, **Anthropic**, **Google Gemini**, **OpenRouter** (100+ models), **Ollama** (local).
 
 ---
 
-## Global command `yamx`
+## What makes YamX different
 
-Install once (needs **[Node.js 18+](https://nodejs.org/)** and npm):
+- **Local first, model second.** When you type a command like `systeminfo`, `lscpu`, `tar`, `jq`, or `python`, YamX runs it directly on your shell. No model call, no token cost.
+- **Auto-detected helpers.** YamX probes ~70 common tools cross-platform on startup (python, node, jq, yq, awk, sed, rg, openssl, sha256sum, etc.) and tells the model exactly what's installed and where.
+- **Local compute first.** For analysis, parsing, counting, math, JSON/CSV/YAML inspection, the agent prefers running a small one-liner with `python` / `jq` / `awk` / `node` instead of doing the work in chat. Smaller context, lower cost, deterministic results.
+- **Failure-aware.** When commands or services fail, YamX inspects task output and logs (`auto`, `latest-error`, `summary`, `tail`, `head`, `errors`, `full`) and follows an internal failure protocol before applying a fix.
+- **Safe by default.** Sensitive, destructive, privileged, publishing, package-install, credential, and permission-changing commands are classified and require approval — or are blocked outright if they look like exfiltration.
+
+---
+
+## Install
+
+Needs **[Node.js 18+](https://nodejs.org/)** and npm.
 
 ```bash
 npm install -g @needyamin/yamx@latest
 ```
 
-Then from **any folder**, in **Terminal** (macOS/Linux), **CMD**, or **PowerShell** (Windows):
+Then from any folder:
 
 ```bash
 yamx
 ```
 
-### Uninstallation (Remove Everything)
-To completely remove YamX and all its data from your system:
-
-1. **Remove the global package**:
-   ```bash
-   npm uninstall -g @needyamin/yamx
-   ```
-
-2. **Delete the configuration and sessions folder**:
-   YamX stores your API keys and chat history in your home directory.
-   - **Windows (PowerShell)**: `Remove-Item -Recurse -Force ~/.yamx`
-   - **Windows (CMD)**: `rmdir /s /q %USERPROFILE%\.yamx`
-   - **macOS/Linux**: `rm -rf ~/.yamx`
-
-npm registers the CLI via the package [`bin`](https://docs.npmjs.com/cli/v10/configuring-npm/package-json#bin) field.
-
-**Without installing globally**, you can still run (after the package is on the npm registry):
-
-```bash
-npx @needyamin/yamx
-```
-
-**From a git clone** (developers):
-
-```bash
-cd yamx && npm install && npm link
-```
-
-After `npm link`, `yamx` is on your PATH like a global install.
-
-### If `yamx` is not recognized
-
-- Run `npm bin -g` (older npm) or check where global binaries go: `npm prefix -g` → add `\bin` (Windows) or `/bin` (Unix) to your **PATH**.
-- On Windows, reopen CMD/PowerShell after installing Node/npm.
-
-### Publishing (`npm publish` returns 403)
-
-npm requires **two-factor authentication** (or a **granular access token** that can publish) for package uploads.
-
-1. Enable **2FA** on your account: [npm → Profile → Two-Factor Authentication](https://www.npmjs.com/settings/~YOUR_USERNAME/profile) (mode that allows **publishing**).
-2. Run `npm login` again.
-3. **Bump the version**: npm never allows republishing the same version (even if deleted). Increase the `version` in `package.json` before each publish.
-4. Run `npm publish --access public` and enter the **OTP** when npm asks.
-
-Or create a [**Granular Access Token**](https://www.npmjs.com/settings/~YOUR_USERNAME/tokens) with **Publish packages** for `yamx` and authenticate with that token.
-
----
-
-## Quick start
-
-### Install from npm
-
-```bash
-npm install -g @needyamin/yamx@latest
-```
-
-### Install from source
+### From source (developers)
 
 ```bash
 git clone https://github.com/needyamin/yamx.git
 cd yamx
 npm install
-npm run build
 npm link
 ```
 
 `npm install` runs `prepare` and builds `dist/` so the `yamx` binary is ready.
 
-### Setup or switch provider/model
+### Without installing globally
+
+```bash
+npx @needyamin/yamx
+```
+
+### Uninstall
+
+```bash
+npm uninstall -g @needyamin/yamx
+```
+
+Then delete config and sessions:
+- Windows (PowerShell): `Remove-Item -Recurse -Force ~/.yamx`
+- Windows (CMD): `rmdir /s /q %USERPROFILE%\.yamx`
+- macOS/Linux: `rm -rf ~/.yamx`
+
+---
+
+## First run
 
 ```bash
 yamx --onboard
 ```
 
-The onboarding process is **100% terminal-native** and can be rerun anytime to switch provider, API key, Ollama URL, default model, streaming, auto-approve, or model council settings. It prints the link to get your API key (e.g., [OpenRouter keys](https://openrouter.ai/keys)), but it won't force-open your browser.
-
-Or set keys in `.env` / environment and use `yamx config`.
-
-### Check your setup
+Walks you through provider, API key, default model, streaming, auto-approve, and model council settings. Rerun anytime to switch.
 
 ```bash
 yamx --diagnose
 ```
 
-Shows Node version, API key status, Git availability, Ollama connectivity, and session count.
-
-### Run
+Checks Node version, API keys, Git, Ollama connectivity, sessions, and detected local tools.
 
 ```bash
 yamx
 ```
 
-Conversations are **saved automatically** under `~/.yamx/sessions/`. The last active session is restored the next time you start YamX (unless you start a new chat).
+Starts the chat. Conversations auto-save under `~/.yamx/sessions/` and resume next launch.
+
+---
+
+## Direct command execution (no token cost)
+
+Type a real shell command and YamX runs it locally without calling the model.
+
+```text
+systeminfo
+lscpu
+free -h
+uptime
+hostnamectl
+docker ps
+kubectl get pods
+git status
+npm run build
+python -c "print(1+2)"
+jq .scripts package.json
+tar -xzf archive.tgz
+```
+
+YamX recognizes hundreds of commands across:
+
+- Identity / process: `whoami`, `id`, `uname`, `uptime`, `who`, `ps`, `nice`, `tmux`, `screen`
+- Filesystem: `cd`, `ls`, `cat`, `head`, `tail`, `mkdir`, `cp`, `mv`, `chmod`, `mount`, `lsblk`
+- System inspection: `systeminfo`, `lscpu`, `lspci`, `free`, `vmstat`, `dmidecode`, `driverquery`, `gpresult`, `powercfg`, `sw_vers`, `hostnamectl`
+- Networking: `ipconfig`, `ifconfig`, `ping`, `traceroute`, `dig`, `nmap`, `ss`, `iptables`, `ufw`, `nmcli`, `iperf3`
+- Archives & text: `tar`, `zip`, `unzip`, `7z`, `jq`, `yq`, `xxd`, `base64`, `sha256sum`, `awk`, `sed`, `rg`, `fd`, `bat`
+- Crypto / security: `openssl`, `gpg`, `ssh-keygen`, `mkcert`, `htpasswd`, `gitleaks`, `trivy`, `semgrep`
+- Dev tools: `node`, `python`, `go`, `cargo`, `rustc`, `java`, `mvn`, `gradle`, `dotnet`, `php`, `ruby`, `make`, `cmake`
+- Frameworks: `next`, `nuxt`, `vite`, `webpack`, `astro`, `remix`, `storybook`, `flutter`, `react-native`, `expo`
+- Containers / cloud / k8s: `docker`, `podman`, `kubectl`, `helm`, `minikube`, `argocd`, `flux`, `terraform`, `aws`, `gcloud`, `az`, `gh`, `vercel`, `netlify`
+- Databases: `psql`, `mysql`, `sqlite3`, `mongosh`, `redis-cli`, `pgcli`, `mongoimport`
+- AI / blockchain: `ollama`, `llama-cli`, `huggingface-cli`, `forge`, `cast`, `solana`, `geth`
+- Modern CLIs: `bat`, `eza`, `fd`, `dust`, `duf`, `fzf`, `zoxide`, `delta`, `zellij`, `tldr`, `man`
+
+Natural-language requests like `fix the login bug`, `make my agent smarter`, or `what is this repo?` still go to the model. YamX detects the difference automatically.
+
+You can also force a direct command with `$ cmd`, `! cmd`, `> cmd`, or `run: cmd`.
+
+---
+
+## Local tool auto-detection
+
+On startup, YamX probes for common helpers using `where.exe` (Windows) or `command -v` (Unix) and injects the results into the system prompt:
+
+- **Runtimes**: python, python3, py, node, deno, bun, ruby, perl, go, java, dotnet, rustc
+- **Data**: jq, yq, xq, fx, mlr, duckdb, sqlite3
+- **Search**: rg, grep, ag, findstr, fd
+- **Text**: awk, sed, tr, sort, uniq, wc, cut, head, tail, paste, comm, diff, patch
+- **Archive**: tar, gzip, bzip2, xz, zip, unzip, 7z, zstd
+- **Crypto**: openssl, gpg, base64, sha256sum, sha1sum, md5sum, xxd
+- **Network**: curl, wget, http, httpie, xh
+- **Database**: psql, mysql, mongosh, redis-cli
+- **Build**: make, cmake, ninja
+- **Container / cloud**: docker, podman, kubectl, helm, aws, gcloud, az, gh, terraform
+- **Shells**: bash, zsh, fish, pwsh, powershell, wsl
+
+The model is told the chosen runner per category, e.g. `analysis runner: python | json: jq | yaml: yq | search: rg`. If a preferred tool is missing, the agent falls back automatically (`python` → `python3` → `py` → `node`; `jq` → `python` → `node`; `awk` → `gawk`; `grep` → `rg` → `findstr`).
+
+Inspect everything with the in-chat `/run shell_diagnostics` command or by asking the agent for `shell_diagnostics`.
+
+---
+
+## Local compute first (token saver)
+
+For analysis tasks, the agent is instructed to run a small one-liner locally instead of computing in the model:
+
+```text
+python -c "import json;d=json.load(open('package.json'));print(len(d.get('dependencies',{})))"
+jq '.scripts | keys | length' package.json
+rg -c "TODO" src
+awk -F, '{c[$3]++} END {for (k in c) print c[k], k}' data.csv | sort -nr | head
+sha256sum dist/*.js
+```
+
+Triggers include "how many", "what is the largest", "find all matches of", "summarize this file", "count by", "compare these", "extract X from Y", and similar. The agent feeds only the small result back into chat — not the full file.
+
+---
+
+## Failure and log analysis
+
+When something breaks, YamX inspects command output, running task output, and log files before applying a fix.
+
+```text
+/log
+/log app.log --mode auto
+/log storage/logs/app.log --mode latest-error
+/log app.log --mode summary
+/log app.log --mode errors --lines 20 --pattern TypeError
+```
+
+| Mode | Use |
+|------|-----|
+| `auto` | Summary + latest error + recent tail. Best first choice. |
+| `tail` | Last lines of a log, useful for recent crashes |
+| `head` | Startup / header lines |
+| `errors` | Error-like lines with nearby context |
+| `latest-error` | Most recent error with context |
+| `summary` | Counts fatal/error/warning/timeout signals and suggests next steps |
+| `full` | Full log; use only when smaller modes are not enough |
+
+For background commands started by YamX, use `/status`, `/tools`, or ask the agent to inspect `task_tail`.
+
+When a command or log shows a failure signal, YamX adds an internal failure protocol for the model: extract the exact error, inspect logs/task output, search referenced code/config, apply the smallest fix, then rerun the narrow failing command.
+
+---
+
+## Token economy
+
+YamX keeps output quality high while avoiding wasted tokens.
+
+- **Direct commands** bypass the model entirely (zero tokens).
+- **Adaptive model council** uses extra reasoning only for complex tasks.
+- **Compact tool history** truncates large command/log/file outputs while preserving errors, warnings, and head/tail context.
+- **Targeted inspection** prefers `read_file` line ranges, `search_files` context, `log_inspect summary/latest-error`, and `max_results` before full dumps.
+- **Local compute first** instructs the model to run python/jq/awk locally instead of computing in chat.
+
+Configurable in `yamx config`:
+
+```text
+Model council mode: adaptive | always | off
+Max tool-result chars kept in history (4000–100000)
+Context budget before auto-summary
+```
 
 ---
 
 ## Configuration
 
 - **Env / `.env`**: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, optional `DEFAULT_PROVIDER`, `DEFAULT_MODEL`
-- **Interactive**: `yamx config` (setup/switch wizard, API keys, default provider/model, **context budget**, tool-result history size, auto-approve, model council, view config)
+- **Interactive**: `yamx config` — setup/switch wizard, API keys, default provider/model, context budget, tool-result history size, auto-approve, model council, view config
 - **Reset only app settings** (keeps session files): `yamx --reset-config`
+
+State files:
+
+- `~/.yamx/config.json` — keys and preferences
+- `~/.yamx/state.json` — active session id
+- `~/.yamx/sessions/<uuid>.json` — message history per chat
 
 ---
 
-## Session & memory
+## Sessions
 
 | Command / flag | What it does |
-|----------------|----------------|
+|----------------|--------------|
 | `yamx` | Continue last session (or most recent saved chat) |
 | `yamx --new-chat` | New thread and session file |
 | `yamx --history` | List saved conversations (`*` = active) |
 | `yamx --resume <id>` | Resume by full UUID or unique prefix |
-| `yamx --clear-chat` | Clear **active** session to system prompt only, then exit |
+| `yamx --clear-chat` | Clear active session to system prompt only, then exit |
 | `yamx --delete-chat <id>` | Delete one saved session by id or prefix |
 
-- **Auto-save**: After each completed turn, on `/exit`, and on Ctrl+C (SIGINT)
-- **Long threads**: When stored history size exceeds **context budget** (chars, default in config), old turns are **summarized internally** while keeping the system message and recent messages—no extra user action required
-- **Manual compress**: `/compact` in the REPL
-
-State files:
-
-- `~/.yamx/config.json` — keys and preferences  
-- `~/.yamx/state.json` — active session id  
-- `~/.yamx/sessions/<uuid>.json` — message history per chat  
+- **Auto-save** after each turn, on `/exit`, and on Ctrl+C.
+- **Long threads** are summarized internally when stored history exceeds the context budget; system message and recent messages are kept.
+- **Manual compress**: `/compact`.
 
 ---
 
@@ -166,130 +258,9 @@ State files:
 | `/remember` | Save a persistent note (user or project scope) |
 | `/memory` | Show active memory files and notes |
 | `/agents` | List available subagents |
-| `/agent <n> <t>`| Run a specific subagent with a task |
+| `/agent <n> <t>` | Run a specific subagent with a task |
 | `/skills` | List available logic skills |
 | `/exit` | Save and quit |
-
----
-
-## Failure and log analysis
-
-When something breaks, YamX can inspect command output, running task output, and log files before applying a fix.
-
-```text
-/log
-/log app.log --mode auto
-/log storage/logs/app.log --mode latest-error
-/log app.log --mode summary
-/log app.log --mode errors --lines 20 --pattern TypeError
-```
-
-Log modes:
-
-| Mode | Use |
-|------|-----|
-| `auto` | Summary + latest error + recent tail; best first choice |
-| `tail` | Last lines of a log, useful for recent crashes |
-| `head` | Startup/header lines |
-| `errors` | Error-like lines with nearby context |
-| `latest-error` | Most recent error with context |
-| `summary` | Counts fatal/error/warning/timeout signals and suggests next steps |
-| `full` | Full log, only when smaller modes are not enough |
-
-For background commands started by YamX, use `/status`, `/tools`, or ask the agent to inspect `task_tail`.
-
-When a command or log output contains a failure signal, YamX adds an internal failure protocol for the model: extract the exact error, inspect logs/task output, search referenced code/config, apply the smallest fix, and rerun the narrow failing command.
-
----
-
-## Token economy
-
-YamX is designed to keep output quality high while avoiding unnecessary token spend.
-
-- **Adaptive model council** uses extra reasoning for complex work and skips simple turns.
-- **Compact tool history** keeps large command/log/file outputs from bloating the chat context.
-- **Targeted inspection** prefers `read_file` line ranges, `search_files` context, `log_inspect summary/latest-error`, and `max_results` before full dumps.
-
-Configurable in `yamx config`:
-
-```text
-Model council mode: adaptive | always | off
-Max tool-result chars kept in history: 4000-100000
-Context budget before auto-summary
-```
-
----
-
-## Features
-
-- **29 Built-in Tools**: Files, shell, Git, web, and intelligence — see table below
-- **Project Intelligence**: Automatic file recommendations, framework detection, deterministic architecture summaries, risk notes, and next-step planning
-- **Adaptive Model Council**: Hidden Analyst, Planner, Critic, and Synthesizer pass for complex tasks, with adaptive mode to save tokens on simple turns
-- **Token economy**: Large tool outputs are compacted before entering model history, preserving errors, warnings, head/tail context, and next-step hints
-- **Local-first command execution**: Shell runs prefer project-local tools from `node_modules/.bin`, `vendor/bin`, virtualenvs, `bin/`, and `scripts/` before global binaries
-- **DevOps command support**: Understands common everyday commands like `cd`, `mkdir`, `touch`, `cat`, `head`, `tail`, `chmod`, `chown`, `systemctl`, `journalctl`, `kubectl`, `docker`, `ansible`, and Windows equivalents
-- **Log Inspector**: Discover logs or inspect `auto`, `head`, `tail`, `latest-error`, `summary`, `errors`, and full content for failure analysis
-- **Neural Link UI**: Terminal banner and live status signals show when YamX is receiving input, consulting the model council, streaming model output, and running tools
-- **Direct Command Execution**: Type shell commands directly in chat (no prefix needed)
-- **Subagent Delegation**: Delegate complex tasks to specialized agents (`/explore`, `/plan`, `/review`)
-- **Persistent Memory**: Keep long-term project notes and user preferences across sessions
-- **Markdown rendering**: AI responses are rendered with syntax highlighting in the terminal
-- **Safety**: Sensitive, destructive, privileged, publishing, package-install, credential, and permission-changing commands are classified and require approval or are blocked when exfiltration is detected
-- **Auto-retry**: Transient API failures (429, 5xx, timeouts) retry with exponential backoff
-- **JSON repair**: Malformed tool call arguments are auto-repaired before execution
-- **Turn timing**: Each turn shows elapsed time and iteration count
-- **Diagnostics**: `yamx --diagnose` checks keys, connectivity, and environment
-
----
-
-## Project architecture
-
-YamX is a TypeScript/Node.js CLI agent. The CLI starts in `src/index.ts`, loads config and sessions, builds a project-aware system prompt, then hands user requests to the core ReAct loop in `src/agent.ts`.
-
-### Main flow
-
-```text
-yamx command
-  -> src/index.ts              CLI flags, onboarding, config, REPL
-  -> src/context.ts            project scan, memory, skills, system prompt
-  -> src/agent.ts              model calls, tool loop, approvals, retries, persistence
-  -> src/tools/registry.ts     all built-in tools exposed to the model
-  -> src/providers/*           OpenAI, Anthropic, Gemini, OpenRouter, Ollama
-```
-
-### Important modules
-
-| Path | Purpose |
-|------|---------|
-| `src/agent.ts` | Main agent loop, model council, streaming, tool execution, undo tracking, context compaction |
-| `src/context.ts` | Project scan, framework detection, memory/skills loading, system prompt generation |
-| `src/tools/` | Filesystem, shell, Git, web, intelligence, and log inspection tools |
-| `src/tools/utils.ts` | Project path safety, shell selection, local-first PATH, command execution |
-| `src/direct-command.ts` | Detects when user input is a direct shell command |
-| `src/tool-risk.ts` / `src/policy.ts` | Classifies tool risk and decides approval/blocking behavior |
-| `src/project-intel.ts` | Compact project intelligence and codebase analysis packets |
-| `src/session-store.ts` | Persistent chat sessions under `~/.yamx/sessions/` |
-| `src/memory.ts` / `src/skills.ts` / `src/subagents.ts` | Long-term notes, reusable skills, and specialist agents |
-
-### Development commands
-
-```bash
-npm install        # install dependencies and run prepare/build
-npm run build      # compile TypeScript into dist/
-npm test           # build and run the test suite
-npm link           # expose local yamx globally for development
-yamx --diagnose    # check runtime config, keys, git, Ollama, sessions
-```
-
-On Windows PowerShell, use `npm.cmd run build` or `npm.cmd test` if script execution policy blocks `npm.ps1`.
-
-### Runtime behavior
-
-- **Local-first**: shell commands prefer project binaries from `node_modules/.bin`, `vendor/bin`, virtualenvs, `bin/`, and `scripts/`.
-- **Failure-aware**: failed commands can be analyzed through command output, `task_tail`, and `log_inspect mode=auto/latest-error/summary` before fixes are applied.
-- **Token-aware**: adaptive model council and compact tool-result history keep output quality high without sending huge logs/files back to the model.
-- **Safe by default**: normal read/build/test/dev commands can run smoothly, while sensitive, destructive, privileged, publishing, network install, permission-changing, and force-push commands ask for approval or are blocked when clearly unsafe.
-- **Persistent**: config, active session id, chat history, memory, and command history are stored under `~/.yamx/`.
 
 ---
 
@@ -298,37 +269,69 @@ On Windows PowerShell, use `npm.cmd run build` or `npm.cmd test` if script execu
 | Area | Tools |
 |------|-------|
 | Files (core) | `read_file`, `write_file`, `edit_file`, `list_files`, `search_files`, `delete_file` |
-| Advanced Files | `multi_edit`, `copy_file`, `move_file`, `file_info`, `grep_search`, `directory_tree`, `patch_file` |
+| Advanced files | `multi_edit`, `copy_file`, `move_file`, `file_info`, `grep_search`, `directory_tree`, `patch_file` |
 | Shell | `run_command`, `run_command_background`, `shell_diagnostics`, `task_list`, `task_tail`, `task_stop` |
 | Git | `git_status`, `git_diff`, `git_commit`, `git_log`, `git_branch`, `git_stash` |
 | Web | `fetch_url` |
 | Intelligence | `project_intel`, `codebase_analysis`, `log_inspect` |
 
----
+### Advanced tool notes
 
-## Advanced tool notes
-
-- `read_file` supports line ranges, `tail`, and `max_chars`; it refuses likely binary files.
+- `read_file` supports line ranges, `tail`, and `max_chars`; refuses likely binary files.
 - `edit_file` supports `dry_run`, `occurrence`, and `replace_all`.
 - `search_files` supports `case_sensitive`, `context_lines`, and `max_results`.
 - `list_files` supports recursive/pattern listing, hidden files, and result caps.
 - `log_inspect` supports discovery plus `auto`, `head`, `tail`, `errors`, `latest-error`, `summary`, and `full`.
-- `run_command` is local-first and cross-platform; on Windows it can translate common Unix-style inspection commands such as `pwd`, `ls`, `cat`, `head`, `tail`, `touch`, `mkdir -p`, `cp`, `mv`, and `clear`.
+- `run_command` is local-first and cross-platform; on Windows it can translate common Unix-style commands such as `pwd`, `ls`, `cat`, `head`, `tail`, `touch`, `mkdir -p`, `cp`, `mv`, `clear`.
 
 ---
 
-## Troubleshooting
+## Project architecture
 
-### `EPERM` error on Windows
-If you run `yamx` from your home directory (`C:\Users\<user>`) and see `EPERM: operation not permitted`, ensure you are using **v1.0.4+**. 
-Windows has protected junction points (like `Application Data`) in the home folder that crash standard file scanners. YamX v1.0.4+ includes a specialized scanner that handles these permissions gracefully.
+YamX is a TypeScript / Node.js CLI agent.
 
-### Version Mismatch
-If the banner shows an old version after a global update, run:
-```bash
-npm uninstall -g @needyamin/yamx
-npm install -g @needyamin/yamx@latest
+```text
+yamx command
+  -> src/index.ts          CLI flags, onboarding, config, REPL
+  -> src/context.ts        project scan, memory, skills, system prompt, tool detection
+  -> src/agent.ts          model calls, tool loop, approvals, retries, persistence
+  -> src/tools/registry.ts all built-in tools exposed to the model
+  -> src/providers/*       OpenAI, Anthropic, Gemini, OpenRouter, Ollama
 ```
+
+| Path | Purpose |
+|------|---------|
+| `src/agent.ts` | Main agent loop, model council, streaming, tool execution, undo tracking, context compaction |
+| `src/context.ts` | Project scan, framework detection, memory/skills loading, system prompt generation |
+| `src/tool-detect.ts` | Cross-platform local tool probe (python, node, jq, awk, ...) |
+| `src/tools/` | Filesystem, shell, Git, web, intelligence, log inspection tools |
+| `src/tools/utils.ts` | Project path safety, shell selection, local-first PATH, command execution |
+| `src/direct-command.ts` | Detects when user input is a direct shell command |
+| `src/tool-risk.ts` / `src/policy.ts` | Classifies tool risk and decides approval/blocking behavior |
+| `src/project-intel.ts` | Compact project intelligence and codebase analysis packets |
+| `src/session-store.ts` | Persistent chat sessions under `~/.yamx/sessions/` |
+| `src/memory.ts` / `src/skills.ts` / `src/subagents.ts` | Long-term notes, reusable skills, specialist agents |
+
+### Development commands
+
+```bash
+npm install        # install dependencies and run prepare/build
+npm run build      # compile TypeScript into dist/
+npm test           # build and run the test suite
+npm link           # expose local yamx globally for development
+yamx --diagnose    # check runtime config, keys, git, Ollama, sessions, detected tools
+```
+
+On Windows PowerShell, use `npm.cmd run build` or `npm.cmd test` if script execution policy blocks `npm.ps1`.
+
+### Runtime behavior
+
+- **Local-first**: shell commands prefer project binaries from `node_modules/.bin`, `vendor/bin`, virtualenvs, `bin/`, `scripts/`.
+- **Tool-aware**: cross-platform probe surfaces python/node/jq/awk/etc. and feeds the chosen runner to the model.
+- **Failure-aware**: failed commands are analyzed via command output, `task_tail`, and `log_inspect mode=auto/latest-error/summary` before fixes.
+- **Token-aware**: direct commands skip the model; tool history is compacted; analysis is delegated to local one-liners.
+- **Safe by default**: normal read/build/test/dev commands run smoothly; sensitive, destructive, privileged, publishing, network-install, permission-changing, and force-push commands ask for approval or are blocked.
+- **Persistent**: config, active session id, chat history, memory, and command history are stored under `~/.yamx/`.
 
 ---
 
@@ -339,24 +342,43 @@ yamx [options]
 
 Options:
   -p, --provider <name>     openai | anthropic | gemini | openrouter | ollama
-  -m, --model <id>         Model id
-  -t, --temperature <n>    0–1 (default 0.1)
-  --max-tokens <n>         Max output tokens
-  --auto-approve           Approve all tool calls (unsafe)
-  --no-stream              Disable streaming
+  -m, --model <id>          Model id
+  -t, --temperature <n>     0–1 (default 0.1)
+  --max-tokens <n>          Max output tokens
+  --auto-approve            Approve all tool calls (unsafe)
+  --no-stream               Disable streaming
 
-  --new-chat               Start a new conversation
-  --clear-chat             Clear active session history, exit
-  --history                List saved conversations, exit
-  --resume <id>            Resume session (uuid or prefix)
-  --delete-chat <id>       Delete a session, exit
-  --onboard                Setup/switch provider, API key, model, and core settings
-  --reset-config           Reset ~/.yamx/config.json defaults, exit
-  --diagnose               Check config, keys, connectivity
+  --new-chat                Start a new conversation
+  --clear-chat              Clear active session history, exit
+  --history                 List saved conversations, exit
+  --resume <id>             Resume session (uuid or prefix)
+  --delete-chat <id>        Delete a session, exit
+  --onboard                 Setup/switch provider, API key, model, and core settings
+  --reset-config            Reset ~/.yamx/config.json defaults, exit
+  --diagnose                Check config, keys, connectivity, detected tools
 
 Commands:
-  yamx config              Interactive settings, setup wizard, token controls
+  yamx config               Interactive settings, setup wizard, token controls
 ```
+
+---
+
+## Troubleshooting
+
+### `yamx` command not found
+Run `npm prefix -g` and add `\bin` (Windows) or `/bin` (Unix) to your PATH. On Windows, reopen CMD/PowerShell after installing Node/npm.
+
+### `EPERM` error on Windows
+If you run `yamx` from your home directory (`C:\Users\<user>`) and see `EPERM: operation not permitted`, ensure you are using v1.0.4+. Windows has protected junction points (like `Application Data`) in the home folder that crash standard file scanners; YamX v1.0.4+ handles them gracefully.
+
+### Banner shows old version after update
+```bash
+npm uninstall -g @needyamin/yamx
+npm install -g @needyamin/yamx@latest
+```
+
+### `npm publish` returns 403
+npm requires 2FA (or a granular access token with publish permission) for uploads. Bump the version in `package.json`, run `npm login`, then `npm publish --access public` and enter the OTP.
 
 ---
 

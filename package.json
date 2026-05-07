@@ -1,6 +1,6 @@
 {
   "name": "yamx",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Global CLI: run `yamx` from any terminal. Coding agent with persistent sessions and multi-provider LLMs.",
   "type": "module",
   "main": "./dist/index.js",

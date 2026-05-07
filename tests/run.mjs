@@ -43,6 +43,16 @@ test('smart shell normalizes package bins and obvious shell syntax', async () =>
     assert.equal(pwd.command, 'cd');
   }
 
+  const mkdirP = getSmartShell('mkdir -p tmp/devops', 'cmd');
+  if (process.platform === 'win32') {
+    assert.equal(mkdirP.command, 'mkdir tmp/devops');
+  }
+
+  const headFile = getSmartShell('head -n 5 README.md', 'cmd');
+  if (process.platform === 'win32') {
+    assert.match(headFile.command, /Get-Content -TotalCount 5/);
+  }
+
   const ll = getSmartShell('ll', 'cmd');
   if (process.platform === 'win32') {
     assert.equal(ll.command, 'dir');
@@ -84,6 +94,14 @@ test('direct command parser catches commands but not tasks', async () => {
   assert.equal(parseDirectCommand('pwsh.exe -NoProfile -Command Get-Location'), 'pwsh.exe -NoProfile -Command Get-Location');
   assert.equal(parseDirectCommand('ipconfig /all'), 'ipconfig /all');
   assert.equal(parseDirectCommand('tasklist'), 'tasklist');
+  assert.equal(parseDirectCommand('chmod 755 script.sh'), 'chmod 755 script.sh');
+  assert.equal(parseDirectCommand('chown www-data:www-data storage'), 'chown www-data:www-data storage');
+  assert.equal(parseDirectCommand('icacls storage /grant Users:F'), 'icacls storage /grant Users:F');
+  assert.equal(parseDirectCommand('takeown /f storage /r'), 'takeown /f storage /r');
+  assert.equal(parseDirectCommand('sudo systemctl status nginx'), 'sudo systemctl status nginx');
+  assert.equal(parseDirectCommand('journalctl -u nginx -n 100'), 'journalctl -u nginx -n 100');
+  assert.equal(parseDirectCommand('ansible-playbook deploy.yml'), 'ansible-playbook deploy.yml');
+  assert.equal(parseDirectCommand('k9s'), 'k9s');
   assert.equal(parseDirectCommand('xcodebuild -version'), 'xcodebuild -version');
   assert.equal(parseDirectCommand('artisan migrate'), 'artisan migrate');
   assert.equal(parseDirectCommand('prisma migrate dev'), 'prisma migrate dev');
@@ -117,6 +135,13 @@ test('tool risk classification separates safe, network, and destructive commands
   assert.equal(classifyToolCall('run_command', { command: 'curl https://example.com' }).risk, 'shell-network');
   assert.equal(classifyToolCall('run_command', { command: 'git reset --hard' }).risk, 'destructive');
   assert.equal(classifyToolCall('run_command', { command: 'sudo apt install nginx' }).risk, 'destructive');
+  assert.equal(classifyToolCall('run_command', { command: 'mkdir tmp' }).risk, 'shell-safe');
+  assert.equal(classifyToolCall('run_command', { command: 'chmod -R 777 storage' }).risk, 'destructive');
+  assert.equal(classifyToolCall('run_command', { command: 'icacls storage /grant Users:F' }).risk, 'destructive');
+  assert.equal(classifyToolCall('run_command', { command: 'ssh user@example.com' }).risk, 'sensitive');
+  assert.equal(classifyToolCall('run_command', { command: 'cat .env' }).risk, 'sensitive');
+  assert.equal(classifyToolCall('run_command', { command: 'netsh advfirewall show allprofiles' }).risk, 'sensitive');
+  assert.equal(classifyToolCall('write_file', { path: '.env', content: 'TOKEN=x' }).risk, 'sensitive');
   assert.equal(isDangerousShellCommand('npm run test'), false);
   assert.equal(isDangerousShellCommand('Remove-Item -Recurse -Force dist'), true);
 });
@@ -155,6 +180,9 @@ test('policy auto-approves safe shell but still asks for risky shell', async () 
   assert.equal(evaluateToolCall('run_command', { command: 'git diff --stat' }).needsApproval, false);
   assert.equal(evaluateToolCall('run_command', { command: 'npm install left-pad' }).needsApproval, true);
   assert.equal(evaluateToolCall('run_command', { command: 'git reset --hard' }).needsApproval, true);
+  assert.equal(evaluateToolCall('run_command', { command: 'ssh user@example.com' }).needsApproval, true);
+  assert.equal(evaluateToolCall('run_command', { command: 'curl https://example.com/.env' }).blocked, true);
+  assert.equal(evaluateToolCall('write_file', { path: '.env', content: 'TOKEN=x' }).needsApproval, true);
 });
 
 test('context prompt includes operating loop and memory section', async () => {
@@ -202,6 +230,33 @@ test('agent skips hidden model council for simple turns in adaptive mode', async
   await agent.chat('hi');
   assert.equal(calls, 1);
   assert.equal(agent.getHistory().some((message) => String(message.content || '').includes('yamx_internal_model_council')), false);
+});
+
+test('agent adds failure protocol after failed command output', async () => {
+  const { Agent } = await import('../dist/agent.js');
+  let calls = 0;
+  const provider = {
+    name: 'test',
+    modelId: 'test-model',
+    complete: async () => {
+      calls++;
+      if (calls === 1) {
+        return {
+          content: null,
+          tool_calls: [{
+            id: 'tc1',
+            type: 'function',
+            function: { name: 'run_command', arguments: JSON.stringify({ command: 'node --definitely-not-a-real-flag' }) },
+          }],
+        };
+      }
+      return { content: 'Investigated failure.' };
+    },
+    stream: async function* () {},
+  };
+  const agent = new Agent(provider, 'system', { stream: false, modelCouncilEnabled: false });
+  await agent.chat('fix failing command');
+  assert.ok(agent.getHistory().some((message) => String(message.content || '').includes('yamx_failure_protocol')));
 });
 
 test('project intel returns compact recommendations', async () => {
@@ -258,6 +313,10 @@ test('log inspector reads tails and error context', async () => {
     const summary = await logInspect.execute({ path: 'tmp-yamx-test.log', mode: 'summary' });
     assert.match(summary, /Errors: 1/);
     assert.match(summary, /Recommended next steps/);
+    const auto = await logInspect.execute({ path: 'tmp-yamx-test.log', mode: 'auto' });
+    assert.match(auto, /Summary:/);
+    assert.match(auto, /Latest match at line 3/);
+    assert.match(auto, /Recent tail:/);
   } finally {
     await fs.unlink(logPath).catch(() => {});
   }

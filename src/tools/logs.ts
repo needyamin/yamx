@@ -6,7 +6,7 @@ import { ensureInsideProject, formatBytes } from './utils.js';
 
 const DEFAULT_LINES = 120;
 const DEFAULT_MAX_CHARS = 80_000;
-const ERROR_PATTERN = /(error|exception|fatal|failed|failure|panic|traceback|stack trace|uncaught|unhandled|segfault|timeout|eaddrinuse|enoent|eacces|eperm|syntaxerror|typeerror|referenceerror|warning|warn)/i;
+const ERROR_PATTERN = /(error|exception|fatal|failed|failure|panic|traceback|stack trace|uncaught|unhandled|segfault|timeout|eaddrinuse|econnrefused|etimedout|enoent|eacces|eperm|syntaxerror|typeerror|referenceerror|warning|warn|cannot find module|module not found|permission denied|address already in use|port .* in use|migration.*failed|sqlstate|constraint violation)/i;
 const SEVERITY_PATTERNS: Array<[string, RegExp]> = [
   ['fatal', /\b(fatal|panic|segfault|crash)\b/i],
   ['error', /\b(error|exception|failed|failure|uncaught|unhandled|traceback|syntaxerror|typeerror|referenceerror)\b/i],
@@ -23,7 +23,7 @@ export const logInspect: Tool = {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Relative path to a log file. If omitted, returns likely log files in the project.' },
-        mode: { type: 'string', enum: ['tail', 'head', 'full', 'errors', 'summary', 'latest-error'], description: 'How to inspect the log (default: tail)' },
+        mode: { type: 'string', enum: ['auto', 'tail', 'head', 'full', 'errors', 'summary', 'latest-error'], description: 'How to inspect the log (default: auto)' },
         lines: { type: 'number', description: 'Number of lines for head/tail/errors context (default 120, max 1000)' },
         pattern: { type: 'string', description: 'Optional regex to search for instead of the built-in error pattern' },
         context_lines: { type: 'number', description: 'Lines before and after each error/pattern match (default 3, max 20)' },
@@ -33,7 +33,7 @@ export const logInspect: Tool = {
   },
   async execute(args: {
     path?: string;
-    mode?: 'tail' | 'head' | 'full' | 'errors' | 'summary' | 'latest-error';
+    mode?: 'auto' | 'tail' | 'head' | 'full' | 'errors' | 'summary' | 'latest-error';
     lines?: number;
     pattern?: string;
     context_lines?: number;
@@ -52,12 +52,21 @@ export const logInspect: Tool = {
     const maxChars = bounded(args.max_chars, DEFAULT_MAX_CHARS, 1000, 300_000);
     const lineCount = bounded(args.lines, DEFAULT_LINES, 1, 1000);
     const contextLines = bounded(args.context_lines, 3, 0, 20);
-    const mode = args.mode || 'tail';
+    const mode = args.mode || 'auto';
     const content = await fs.readFile(target.path, 'utf-8');
     const lines = content.split(/\r?\n/);
 
     let body: string;
-    if (mode === 'head') {
+    if (mode === 'auto') {
+      body = [
+        summarizeLog(lines, args.pattern),
+        '',
+        formatLatestError(lines, args.pattern, Math.max(contextLines, 6)),
+        '',
+        'Recent tail:',
+        formatLines(lines.slice(Math.max(0, lines.length - Math.min(lineCount, 80))), Math.max(1, lines.length - Math.min(lineCount, 80) + 1)),
+      ].join('\n');
+    } else if (mode === 'head') {
       body = formatLines(lines.slice(0, lineCount), 1);
     } else if (mode === 'full') {
       body = formatLines(lines, 1);
@@ -118,7 +127,7 @@ async function discoverLogs(): Promise<string> {
     'Likely log files (newest first):',
     ...entries.map((entry) => `- ${entry.path} (${formatBytes(entry.size)})`),
     '',
-    'Call log_inspect again with a path and mode: tail, head, full, errors, latest-error, or summary.',
+    'Call log_inspect again with a path and mode: auto, tail, head, full, errors, latest-error, or summary.',
   ].join('\n');
 }
 

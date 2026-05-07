@@ -8,22 +8,23 @@ const DIRECT_COMMANDS = new Set([
   'head', 'tail', 'more', 'less', 'find', 'findstr', 'grep', 'egrep', 'fgrep', 'rg',
   'sed', 'awk', 'wc', 'sort', 'uniq', 'cut', 'tr', 'tee', 'xargs', 'realpath', 'readlink',
   'stat', 'file', 'du', 'df', 'touch', 'mkdir', 'rmdir', 'cp', 'copy', 'xcopy', 'robocopy',
-  'mv', 'move', 'ren', 'rename', 'rm', 'del', 'erase',
+  'mv', 'move', 'ren', 'rename', 'rm', 'del', 'erase', 'chmod', 'chown', 'chgrp', 'umask',
 
   // system/network diagnostics
   'ipconfig', 'ifconfig', 'ping', 'tracert', 'traceroute', 'nslookup', 'netstat', 'tasklist',
   'taskkill', 'ps', 'top', 'htop', 'btop', 'kill', 'killall', 'pkill', 'pgrep', 'lsof', 'ss',
-  'ip', 'route', 'arp', 'dig', 'host', 'nmap', 'nc', 'netcat',
+  'ip', 'route', 'arp', 'dig', 'host', 'nmap', 'nc', 'netcat', 'tcpdump', 'wireshark',
   'curl', 'wget', 'ssh', 'scp', 'sftp', 'ftp', 'telnet', 'rsync',
 
   // macOS / Linux package and system tools
   'brew', 'port', 'softwareupdate', 'sw_vers', 'open', 'launchctl', 'defaults', 'xcodebuild',
   'apt', 'apt-get', 'dnf', 'yum', 'pacman', 'zypper', 'apk', 'snap', 'flatpak',
-  'systemctl', 'service', 'journalctl', 'dmesg', 'loginctl', 'crontab',
+  'sudo', 'doas', 'systemctl', 'service', 'journalctl', 'dmesg', 'loginctl', 'crontab',
 
   // Windows shell/tools
-  'cls', 'chdir', 'md', 'rd', 'attrib', 'icacls', 'reg', 'sc', 'wmic', 'winget', 'choco',
-  'scoop', 'msbuild', 'devenv', 'powershell.exe', 'pwsh.exe', 'cmd.exe', 'wsl', 'wsl.exe',
+  'cls', 'chdir', 'md', 'rd', 'attrib', 'icacls', 'cacls', 'takeown', 'whoami', 'net', 'netsh',
+  'reg', 'sc', 'wmic', 'winget', 'choco', 'scoop', 'msbuild', 'devenv',
+  'powershell.exe', 'pwsh.exe', 'cmd.exe', 'wsl', 'wsl.exe',
 
   // dev tools and package managers
   'node', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'deno', 'corepack',
@@ -44,7 +45,8 @@ const DIRECT_COMMANDS = new Set([
   'electron', 'tauri', 'cargo-tauri',
 
   // containers, infra, cloud
-  'docker', 'podman', 'docker-compose', 'kubectl', 'helm', 'terraform', 'tofu', 'ansible',
+  'docker', 'podman', 'docker-compose', 'compose', 'kubectl', 'kubectx', 'kubens', 'k9s',
+  'helm', 'terraform', 'tofu', 'ansible', 'ansible-playbook',
   'vagrant', 'aws', 'az', 'gcloud', 'gh', 'vercel', 'netlify', 'flyctl', 'wrangler', 'firebase',
   'supabase', 'railway', 'pulumi', 'serverless', 'sam',
 

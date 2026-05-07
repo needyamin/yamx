@@ -12,6 +12,7 @@ import fs from 'fs-extra';
 import readline from 'node:readline/promises';
 import os from 'node:os';
 import nodePath from 'node:path';
+import { createRequire } from 'node:module';
 import { stdin, stdout } from 'node:process';
 import { Agent } from './agent.js';
 import { Config } from './config.js';
@@ -33,10 +34,13 @@ import { buildAgentInputWithProjectIntel, shouldAttachProjectIntel } from './pro
 
 dotenv.config();
 
-const VERSION = '1.0.6';
+const require = createRequire(import.meta.url);
+const packageJson = require('../package.json') as { version?: string };
+const VERSION = packageJson.version || '0.0.0';
 const program = new Command();
 
 type ProviderName = 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'ollama';
+const PROVIDER_NAMES = new Set<ProviderName>(['openai', 'anthropic', 'gemini', 'openrouter', 'ollama']);
 
 const PROVIDER_CHOICES: Array<{ name: string; value: ProviderName }> = [
   { name: 'OpenRouter  (100+ models: DeepSeek, Llama, Claude, GPT, Gemini)', value: 'openrouter' },
@@ -85,6 +89,11 @@ const PROVIDER_MODELS: Record<ProviderName, { name: string; value: string }[]> =
     { name: 'CodeLlama', value: 'codellama' },
   ],
 };
+
+function normalizeProviderName(value: unknown): ProviderName {
+  const provider = String(value || '').trim().toLowerCase() as ProviderName;
+  return PROVIDER_NAMES.has(provider) ? provider : 'openrouter';
+}
 
 program
   .name('yamx')
@@ -142,22 +151,22 @@ program
           choices: PROVIDER_CHOICES.filter((choice) => choice.value !== 'ollama'),
         },
       ]);
-      await configureProviderAccess(config, provider);
+      await configureProviderAccess(config, normalizeProviderName(provider));
       await config.save();
       console.log(chalk.green(`✓ ${provider} API key saved.`));
     } else if (action === 'provider') {
       const { provider } = await inquirer.prompt([
         {
-          type: 'list',
+          type: 'rawlist',
           name: 'provider',
           message: 'Select default provider:',
           default: config.get().defaultProvider || 'openrouter',
           choices: PROVIDER_CHOICES,
         },
       ]);
-      config.set('defaultProvider', provider);
+      config.set('defaultProvider', normalizeProviderName(provider));
       await config.save();
-      console.log(chalk.green(`✓ Default provider set to ${provider}.`));
+      console.log(chalk.green(`✓ Default provider set to ${normalizeProviderName(provider)}.`));
     } else if (action === 'model') {
       const provider = (config.get().defaultProvider || 'openrouter') as ProviderName;
       const model = await chooseModel(provider, config.get().defaultModel || (provider === 'openrouter' ? 'deepseek-chat' : undefined));
@@ -629,10 +638,12 @@ async function resolveSessionRef(
 // â”€â”€â”€ Onboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function chooseModel(provider: ProviderName, currentModel?: string): Promise<string> {
-  const defaultModel = currentModel || (provider === 'openrouter' ? 'deepseek-chat' : PROVIDER_MODELS[provider][0]?.value);
+  const safeProvider = normalizeProviderName(provider);
+  const models = PROVIDER_MODELS[safeProvider] || PROVIDER_MODELS.openrouter;
+  const defaultModel = currentModel || (safeProvider === 'openrouter' ? 'deepseek-chat' : models[0]?.value);
   const choices = [
-    ...PROVIDER_MODELS[provider],
-    ...(currentModel && !PROVIDER_MODELS[provider].some((choice) => choice.value === currentModel)
+    ...models,
+    ...(currentModel && !models.some((choice) => choice.value === currentModel)
       ? [{ name: `Keep current (${currentModel})`, value: currentModel }]
       : []),
     { name: 'Other (type manually)', value: 'other' },
@@ -640,9 +651,9 @@ async function chooseModel(provider: ProviderName, currentModel?: string): Promi
 
   const { selectedModel } = await inquirer.prompt<{ selectedModel: string }>([
     {
-      type: 'list',
+      type: 'rawlist',
       name: 'selectedModel',
-      message: `Choose model for ${provider}:`,
+      message: `Choose model for ${safeProvider}:`,
       default: defaultModel,
       choices,
     },
@@ -662,6 +673,7 @@ async function chooseModel(provider: ProviderName, currentModel?: string): Promi
 }
 
 async function configureProviderAccess(config: Config, provider: ProviderName): Promise<void> {
+  provider = normalizeProviderName(provider);
   if (provider === 'ollama') {
     const currentUrl = config.get().providers.ollama?.baseUrl || 'http://localhost:11434';
     const { url } = await inquirer.prompt<{ url: string }>([
@@ -771,15 +783,16 @@ async function runOnboard(config: Config, options: { title?: string; firstRun?: 
   console.log(chalk.hex('#00FF41').bold(`\n  +==============[ ${title} ]==============+\n`));
   console.log(chalk.dim('  Change provider, API key, Ollama URL, default model, and runtime behavior.\n'));
 
-  const { provider } = await inquirer.prompt<{ provider: ProviderName }>([
+  const { provider: selectedProvider } = await inquirer.prompt<{ provider: string }>([
     {
-      type: 'list',
+      type: 'rawlist',
       name: 'provider',
       message: 'Choose LLM provider:',
       default: config.get().defaultProvider || 'openrouter',
       choices: PROVIDER_CHOICES,
     },
   ]);
+  const provider = normalizeProviderName(selectedProvider);
 
   await configureProviderAccess(config, provider);
   const model = await chooseModel(

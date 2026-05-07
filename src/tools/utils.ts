@@ -203,14 +203,36 @@ function translateSimpleUnixInspectionForCmd(command: string): string {
   const c = command.trim();
   if (/^pwd\s*$/i.test(c)) return 'cd';
   if (/^ls(\s+(-la|-al|-l|-a))?\s*$/i.test(c)) return 'dir';
+  if (/^ls\s+([^\s|&<>]+)\s*$/i.test(c)) return `dir ${c.replace(/^ls\s+/i, '')}`;
   if (/^ll\s*$/i.test(c) || /^la\s*$/i.test(c)) return 'dir';
   if (/^cat\s+([^\s|&<>]+)\s*$/i.test(c)) return `type ${c.replace(/^cat\s+/i, '')}`;
-  if (/^touch\s+([^\s|&<>]+)\s*$/i.test(c)) return `copy /b NUL ${c.replace(/^touch\s+/i, '')}`;
+  if (/^head(\s+-n\s+\d+)?\s+([^\s|&<>]+)\s*$/i.test(c)) {
+    const n = c.match(/\s+-n\s+(\d+)/i)?.[1] || '10';
+    const file = c.replace(/^head(\s+-n\s+\d+)?\s+/i, '');
+    return `powershell.exe -NoProfile -Command "Get-Content -TotalCount ${n} ${quotePowerShell(file)}"`;
+  }
+  if (/^tail(\s+-n\s+\d+)?\s+([^\s|&<>]+)\s*$/i.test(c)) {
+    const n = c.match(/\s+-n\s+(\d+)/i)?.[1] || '10';
+    const file = c.replace(/^tail(\s+-n\s+\d+)?\s+/i, '');
+    return `powershell.exe -NoProfile -Command "Get-Content -Tail ${n} ${quotePowerShell(file)}"`;
+  }
+  if (/^mkdir\s+-p\s+([^\s|&<>]+)\s*$/i.test(c)) return `mkdir ${c.replace(/^mkdir\s+-p\s+/i, '')}`;
+  if (/^touch\s+([^\s|&<>]+)(\s+[^\s|&<>]+)*\s*$/i.test(c)) {
+    const files = c.replace(/^touch\s+/i, '').split(/\s+/);
+    return files.map((file) => `if not exist ${file} type NUL > ${file}`).join(' && ');
+  }
+  if (/^rm\s+-f\s+([^\s|&<>]+)\s*$/i.test(c)) return `del /f ${c.replace(/^rm\s+-f\s+/i, '')}`;
   if (/^rm\s+([^\s|&<>]+)\s*$/i.test(c)) return `del ${c.replace(/^rm\s+/i, '')}`;
+  if (/^rmdir\s+([^\s|&<>]+)\s*$/i.test(c)) return `rmdir ${c.replace(/^rmdir\s+/i, '')}`;
   if (/^cp\s+([^\s|&<>]+)\s+([^\s|&<>]+)\s*$/i.test(c)) return c.replace(/^cp\s+/i, 'copy ');
   if (/^mv\s+([^\s|&<>]+)\s+([^\s|&<>]+)\s*$/i.test(c)) return c.replace(/^mv\s+/i, 'move ');
+  if (/^chmod\s+([0-7]{3,4})\s+([^\s|&<>]+)\s*$/i.test(c)) return `icacls ${c.replace(/^chmod\s+[0-7]{3,4}\s+/i, '')}`;
   if (/^clear\s*$/i.test(c)) return 'cls';
   return command;
+}
+
+function quotePowerShell(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 function looksLikePowerShell(command: string): boolean {

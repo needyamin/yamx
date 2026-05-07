@@ -16,6 +16,11 @@ export interface PolicyDecision {
   reason: string;
 }
 
+const BLOCKED_SENSITIVE_SHELL = [
+  /\b(curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr|irm)\b.*(\.env|id_rsa|\.pem|token|secret|password)/i,
+  /\b(cat|type|Get-Content)\s+.*(id_rsa|\.pem)\b/i,
+];
+
 export function evaluateToolCall(name: string, args: any, options: PolicyOptions = {}): PolicyDecision {
   const mode = options.permissionMode || 'default';
   const classified = classifyToolCall(name, args);
@@ -31,6 +36,15 @@ export function evaluateToolCall(name: string, args: any, options: PolicyOptions
 
   if (name === 'run_command' || name === 'run_command_background') {
     const command = String(args?.command || '');
+    if (classified.risk === 'sensitive' && BLOCKED_SENSITIVE_SHELL.some((pattern) => pattern.test(command))) {
+      return {
+        risk: classified.risk,
+        needsApproval: false,
+        blocked: true,
+        reason: 'Blocked sensitive credential exfiltration/read pattern.',
+      };
+    }
+
     for (const pattern of options.deniedShellPatterns || []) {
       try {
         if (new RegExp(pattern, 'i').test(command)) {
@@ -60,6 +74,15 @@ export function evaluateToolCall(name: string, args: any, options: PolicyOptions
   }
 
   if (classified.destructive) {
+    return {
+      risk: classified.risk,
+      needsApproval: true,
+      blocked: false,
+      reason: classified.reason,
+    };
+  }
+
+  if (classified.risk === 'sensitive') {
     return {
       risk: classified.risk,
       needsApproval: true,

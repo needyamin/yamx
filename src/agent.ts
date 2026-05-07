@@ -488,7 +488,11 @@ export class Agent {
       const repeatLimit = this.repeatLimit(tc.function.name);
       if (toolCount > repeatLimit) {
         const msg = `Skipped repeated ${tc.function.name} call with identical arguments. Choose a different diagnostic or implementation strategy.`;
-        this.ui.warn(msg);
+        if (this.isUserVisibleRepeatWarning(tc.function.name)) {
+          this.ui.warn(msg);
+        } else {
+          this.ui.neuralStatus('guard', `avoided duplicate ${tc.function.name}; trying a different path`);
+        }
         this.history.push({
           role: 'tool',
           tool_call_id: tc.id,
@@ -593,7 +597,7 @@ export class Agent {
           role: 'tool',
           tool_call_id: tc.id,
           name: tc.function.name,
-          content: this.compactToolResultForHistory(tc.function.name, result),
+          content: this.prepareToolResultForHistory(tc.function.name, result),
         });
       } catch (error: any) {
         const duration = Date.now() - startTime;
@@ -645,6 +649,19 @@ export class Agent {
     return readOnlyRepeatable.has(name) ? 2 : 1;
   }
 
+  private isUserVisibleRepeatWarning(name: string): boolean {
+    return !new Set([
+      'run_command',
+      'read_file',
+      'search_files',
+      'grep_search',
+      'log_inspect',
+      'task_tail',
+      'git_status',
+      'git_diff',
+    ]).has(name);
+  }
+
   private stableStringify(value: unknown): string {
     if (value === null || typeof value !== 'object') return JSON.stringify(value);
     if (Array.isArray(value)) return `[${value.map((v) => this.stableStringify(v)).join(',')}]`;
@@ -670,6 +687,29 @@ export class Agent {
       '\nTail:\n' + tail,
       '\nUse narrower tool arguments (line ranges, max_results, log_inspect mode=latest-error/summary) if more detail is needed.',
     ].filter(Boolean).join('\n').slice(0, maxChars);
+  }
+
+  private prepareToolResultForHistory(toolName: string, result: string): string {
+    const base = this.compactToolResultForHistory(toolName, result);
+    if (!this.isFailureResult(toolName, result)) return base;
+
+    return [
+      base,
+      '',
+      '<yamx_failure_protocol>',
+      'The previous command/tool result indicates a failure. Do not guess a fix from one line only.',
+      'Next steps:',
+      '1. Identify the exact error message, file path, stack frame, port, missing command, or failing assertion.',
+      '2. If a background task or log file may exist, use task_tail or log_inspect mode=auto/latest-error/summary.',
+      '3. Search the codebase for the exact symbol/error/config referenced by the logs.',
+      '4. Apply the smallest fix, then rerun the narrow failing command.',
+      '</yamx_failure_protocol>',
+    ].join('\n');
+  }
+
+  private isFailureResult(toolName: string, result: string): boolean {
+    if (!['run_command', 'run_command_background', 'task_tail', 'log_inspect'].includes(toolName)) return false;
+    return /\(exit\s+[1-9]\d*|timed out|error|exception|fatal|failed|failure|traceback|uncaught|unhandled|typeerror|syntaxerror|referenceerror|eaddrinuse|econnrefused|enoent|eacces|eperm/i.test(result);
   }
 
   /** Track file changes for undo */

@@ -1,4 +1,4 @@
-export type ToolRisk = 'read-only' | 'project-write' | 'shell-safe' | 'shell-network' | 'destructive' | 'external';
+export type ToolRisk = 'read-only' | 'project-write' | 'shell-safe' | 'shell-network' | 'sensitive' | 'destructive' | 'external';
 
 const WRITE_TOOLS = new Set([
   'write_file',
@@ -43,6 +43,10 @@ const DESTRUCTIVE_PATTERNS = [
   /\bmkfs\b/i,
   /\bdd\s+/i,
   /\bchmod\s+777\b/i,
+  /\bchmod\s+(-R|--recursive)\b/i,
+  /\bchown\s+(-R|--recursive)\b/i,
+  /\btakeown\b.*\s\/r\b/i,
+  /\bicacls\b.*\s\/grant\b.*:(f|full)\b/i,
   /\bgit\s+reset\s+--hard\b/i,
   /\bgit\s+push\b.*\b--force\b/i,
   /\bgit\s+clean\b.*\b-f\b/i,
@@ -51,6 +55,16 @@ const DESTRUCTIVE_PATTERNS = [
   /\bnpm\s+publish\b/i,
   /\b(sudo|doas)\b/i,
   /\b(systemctl|service)\s+(start|stop|restart|reload|enable|disable)\b/i,
+];
+
+const SENSITIVE_PATTERNS = [
+  /\b(env|printenv|set)\b.*\b(KEY|TOKEN|SECRET|PASSWORD|PASS|CREDENTIAL|AUTH)\b/i,
+  /\b(type|cat|Get-Content)\s+(\.env|.*\.pem|.*id_rsa|.*credentials?|.*secrets?)/i,
+  /\b(curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr|irm)\b.*(\.env|id_rsa|\.pem|token|secret|password)/i,
+  /\b(ssh|scp|sftp|rsync)\b/i,
+  /\breg\s+(add|delete|import)\b/i,
+  /\bnetsh\s+(firewall|advfirewall|interface|winsock)\b/i,
+  /\b(crontab\s+-r|schtasks\s+\/delete)\b/i,
 ];
 
 const NETWORK_PATTERNS = [
@@ -81,7 +95,7 @@ const SAFE_SHELL_PATTERNS = [
   /^\s*(npm|pnpm|yarn|bun)(\.cmd)?\s+(-v|--version|--help)\s*$/i,
   /^\s*(git\s+)?status\b/i,
   /^\s*git\s+(diff|log|branch|status|show|rev-parse|remote)\b/i,
-  /^\s*(dir|ls|pwd|cd|type|cat|head|tail|more|rg|grep|findstr|where|which|tree)\b/i,
+  /^\s*(dir|ls|pwd|cd|type|cat|head|tail|more|rg|grep|findstr|where|which|tree|mkdir|touch|stat|du|df|whoami|hostname|ipconfig|ifconfig|netstat|tasklist|ps)\b/i,
   /^\s*(Get-ChildItem|Get-Content|Select-String|Test-Path|Resolve-Path|Get-Location)\b/i,
 ];
 
@@ -102,6 +116,10 @@ export function classifyToolCall(name: string, args: any): ToolRiskResult {
   }
 
   if (WRITE_TOOLS.has(name)) {
+    const targetPath = String(args?.path || args?.source || args?.destination || '');
+    if (isSensitivePath(targetPath)) {
+      return { risk: 'sensitive', destructive: false, reason: 'sensitive file path write' };
+    }
     return { risk: name === 'delete_file' ? 'destructive' : 'project-write', destructive: name === 'delete_file', reason: 'project write tool' };
   }
 
@@ -111,6 +129,9 @@ export function classifyToolCall(name: string, args: any): ToolRiskResult {
 export function classifyShellCommand(command: string): ToolRiskResult {
   if (DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(command))) {
     return { risk: 'destructive', destructive: true, reason: 'destructive or privileged shell command pattern' };
+  }
+  if (SENSITIVE_PATTERNS.some((pattern) => pattern.test(command))) {
+    return { risk: 'sensitive', destructive: false, reason: 'sensitive credential, registry, remote access, or firewall command pattern' };
   }
   if (NETWORK_PATTERNS.some((pattern) => pattern.test(command))) {
     return { risk: 'shell-network', destructive: false, reason: 'network, package, or dependency-changing shell command' };
@@ -123,4 +144,9 @@ export function classifyShellCommand(command: string): ToolRiskResult {
 
 export function isDangerousShellCommand(command: string): boolean {
   return classifyShellCommand(command).destructive;
+}
+
+function isSensitivePath(filePath: string): boolean {
+  return /(^|[\\/])(\.env(\..*)?|id_rsa|id_dsa|id_ed25519|credentials?\.json|secrets?\.json|\.npmrc|\.pypirc|\.netrc)$/i.test(filePath)
+    || /\.(pem|key|p12|pfx)$/i.test(filePath);
 }

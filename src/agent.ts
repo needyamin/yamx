@@ -18,6 +18,11 @@ export interface AgentOptions {
   stream?: boolean;
   maxTokens?: number;
   temperature?: number;
+  /** Restored from disk; if set, overrides fresh system-only bootstrap */
+  initialHistory?: Message[] | null;
+  onPersist?: () => void | Promise<void>;
+  /** Total serialized history size (chars) before auto-compression */
+  contextBudgetChars?: number;
 }
 
 export class Agent {
@@ -28,7 +33,6 @@ export class Agent {
   private totalInputTokens = 0;
   private totalOutputTokens = 0;
   private fileChanges: Array<{ path: string; oldContent: string; action: string }> = [];
-  private turnStartTime = 0;
 
   /** Retry wrapper for API calls */
   private async withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
@@ -66,14 +70,104 @@ export class Agent {
       temperature: 0.1,
       ...options,
     };
-    this.history.push({ role: 'system', content: systemPrompt });
+    if (this.options.initialHistory && this.options.initialHistory.length > 0) {
+      this.history = JSON.parse(JSON.stringify(this.options.initialHistory)) as Message[];
+    } else {
+      this.history.push({ role: 'system', content: systemPrompt });
+    }
+  }
+
+  getHistory(): Message[] {
+    return JSON.parse(JSON.stringify(this.history)) as Message[];
+  }
+
+  private estimateHistoryChars(): number {
+    return this.history.reduce((n, m) => n + JSON.stringify(m).length, 0);
+  }
+
+  private async ensureContextBudget(): Promise<void> {
+    const budget = this.options.contextBudgetChars ?? 280_000;
+    let guard = 0;
+    while (this.estimateHistoryChars() > budget && this.history.length > 4 && guard < 10) {
+      guard++;
+      await this.compactMiddle(16, true);
+    }
+  }
+
+  /** Summarize the middle of history; keep system + last `keepLast` messages. Preserves system. */
+  private async compactMiddle(keepLast: number, silent = false): Promise<void> {
+    if (this.history.length <= 2 + keepLast) return;
+
+    const systemPrompt = this.history[0];
+    const recentMessages = this.history.slice(-keepLast);
+    const oldMessages = this.history.slice(1, -keepLast);
+
+    if (oldMessages.length === 0) return;
+
+    if (!silent) this.ui.startThinking('Compacting conversation...');
+    else this.ui.startThinking('Optimizing context (long conversation)…');
+
+    const oldText = oldMessages
+      .map((m) => {
+        const c = m.content ?? '';
+        const toolInfo =
+          m.role === 'tool'
+            ? `[tool ${m.name ?? ''}]: ${c.slice(0, 2000)}`
+            : m.tool_calls
+              ? `[assistant tool_calls]`
+              : `[${m.role}]: ${c.slice(0, 1500)}`;
+        return toolInfo;
+      })
+      .join('\n---\n');
+
+    const summaryResult = await this.withRetry(
+      () =>
+        this.provider.complete({
+          messages: [
+            {
+              role: 'system',
+              content:
+                'Summarize the following chat segment for a coding assistant. Preserve: user goals, file paths touched, commands run, errors, and decisions. Be dense.',
+            },
+            { role: 'user', content: oldText.slice(0, 120_000) },
+          ],
+          maxTokens: 4096,
+          temperature: 0.2,
+        }),
+      'Summarize'
+    );
+
+    this.ui.stopSpinner();
+
+    const summary = summaryResult.content || 'Prior context summarized.';
+    this.history = [
+      systemPrompt,
+      {
+        role: 'user',
+        content: `[Compressed thread memory — retain facts below for continuity]\n${summary}`,
+      },
+      {
+        role: 'assistant',
+        content:
+          'Understood. I treat that summary as authoritative background for the recent messages that follow.',
+      },
+      ...recentMessages,
+    ];
+
+    if (!silent) {
+      this.ui.success(`Compacted ${oldMessages.length} messages. History: ${this.history.length} messages.`);
+    } else {
+      this.ui.info('Context compressed to stay within model limits.');
+    }
+
+    await Promise.resolve(this.options.onPersist?.());
   }
 
   /** Main chat entry point */
   async chat(userInput: string): Promise<void> {
+    await this.ensureContextBudget();
     this.history.push({ role: 'user', content: userInput });
     this.fileChanges = []; // Reset undo buffer per turn
-    this.turnStartTime = Date.now();
 
     let iterations = 0;
 
@@ -104,8 +198,7 @@ export class Agent {
       this.ui.warn(`Reached maximum tool iterations (${MAX_TOOL_ITERATIONS}). Stopping.`);
     }
 
-    const elapsed = ((Date.now() - this.turnStartTime) / 1000).toFixed(1);
-    this.ui.info(`Turn completed in ${elapsed}s`);
+    await Promise.resolve(this.options.onPersist?.());
   }
 
   /** Non-streaming completion */
@@ -371,9 +464,10 @@ export class Agent {
 
   /** Clear history */
   clearHistory() {
-    const system = this.history[0]; // preserve system prompt
+    const system = this.history[0];
     this.history = [system];
     this.ui.success('Conversation history cleared.');
+    void this.options.onPersist?.();
   }
 
   /** Compact history — summarize old messages to save tokens */
@@ -382,36 +476,7 @@ export class Agent {
       this.ui.warn('Not enough history to compact.');
       return;
     }
-
-    const systemPrompt = this.history[0];
-    const recentMessages = this.history.slice(-6);
-    const oldMessages = this.history.slice(1, -6);
-
-    if (oldMessages.length === 0) {
-      this.ui.warn('Not enough old messages to compact.');
-      return;
-    }
-
-    this.ui.startThinking('Compacting conversation...');
-
-    const summaryResult = await this.provider.complete({
-      messages: [
-        { role: 'system', content: 'Summarize the following conversation in a concise paragraph. Include key decisions, files modified, and important context.' },
-        { role: 'user', content: oldMessages.map(m => `[${m.role}]: ${m.content?.slice(0, 500)}`).join('\n') },
-      ],
-    });
-
-    this.ui.stopSpinner();
-
-    const summary = summaryResult.content || 'Previous conversation context.';
-    this.history = [
-      systemPrompt,
-      { role: 'user', content: `[Conversation Summary]: ${summary}` },
-      { role: 'assistant', content: 'Understood. I have the context from our previous conversation.' },
-      ...recentMessages,
-    ];
-
-    this.ui.success(`Compacted ${oldMessages.length} messages into summary. History: ${this.history.length} messages.`);
+    await this.compactMiddle(6, false);
   }
 
   /** Get usage stats */

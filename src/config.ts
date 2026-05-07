@@ -23,6 +23,8 @@ export interface YamConfig {
     maxTokens: number;
     temperature: number;
     autoCommit: boolean;
+    /** Approx. total JSON size of history before auto-summarization (chars) */
+    contextBudgetChars: number;
   };
 }
 
@@ -36,6 +38,7 @@ const DEFAULT_CONFIG: YamConfig = {
     maxTokens: 16384,
     temperature: 0.1,
     autoCommit: false,
+    contextBudgetChars: 280_000,
   },
 };
 
@@ -58,6 +61,14 @@ export class Config {
       }
     } catch {
       // Use defaults
+    }
+
+    // Override defaults with env vars
+    if (process.env.DEFAULT_PROVIDER) {
+      this.config.defaultProvider = process.env.DEFAULT_PROVIDER;
+    }
+    if (process.env.DEFAULT_MODEL) {
+      this.config.defaultModel = process.env.DEFAULT_MODEL;
     }
 
     // Override with env vars
@@ -105,5 +116,15 @@ export class Config {
       obj = obj[keys[i]];
     }
     obj[keys[keys.length - 1]] = value;
+  }
+
+  /** Replace on-disk config with defaults (sessions under ~/.yamx/sessions are kept). */
+  async resetToDefaults(): Promise<void> {
+    this.config = {
+      ...DEFAULT_CONFIG,
+      providers: {},
+      settings: { ...DEFAULT_CONFIG.settings },
+    };
+    await this.save();
   }
 }

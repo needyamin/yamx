@@ -1,16 +1,15 @@
 /**
- * Yam Agent - Shell & Command Execution Tools
- * Run commands with safety checks and interactive approval.
+ * YamX — shell execution (cross-platform: bash/sh, Windows cmd)
  */
 
-import { execSync, spawn } from 'child_process';
+import { spawn } from 'node:child_process';
+import path from 'node:path';
 import { Tool } from './registry.js';
 
-/** Dangerous command patterns that always require approval */
 const DANGEROUS_PATTERNS = [
   /rm\s+(-rf?|--recursive)/i,
-  /del\s+/i,
-  /rmdir\s+/i,
+  /rmdir\s+(\/s|\/q|\s+\/s)/i,
+  /\bdel(\s+\/f|\s+\/s|\s+\\\\)/i,
   /format\s+/i,
   /mkfs/i,
   /dd\s+/i,
@@ -24,77 +23,119 @@ const DANGEROUS_PATTERNS = [
   /drop\s+database/i,
   /drop\s+table/i,
   /truncate\s+table/i,
+  /sudo\s+/i,
+  /systemctl\s+/i,
+  /apt(-get)?\s+/i,
+  /dnf\s+/i,
+  /yum\s+/i,
+  /pacman\s+/i,
 ];
+
+const MAX_CHARS = 100_000;
+const TIMEOUT_MS = 120_000;
+
+function runShell(
+  command: string,
+  cwd: string,
+  timeoutMs: number
+): Promise<{ text: string; code: number | null }> {
+  return new Promise((resolve) => {
+    const child = spawn(command, {
+      shell: true,
+      cwd,
+      env: process.env,
+      windowsHide: true,
+    });
+
+    let out = '';
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        child.kill();
+      }
+    }, timeoutMs);
+
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
+    child.stdout?.on('data', (c: string) => {
+      out += c;
+    });
+    child.stderr?.on('data', (c: string) => {
+      out += c;
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ text: out.trim(), code });
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      resolve({ text: `Spawn error: ${err.message}`, code: 1 });
+    });
+  });
+}
 
 export const runCommand: Tool = {
   definition: {
     name: 'run_command',
-    description: `Execute a shell command and return the output. Use this for: running tests, installing packages, building projects, checking git status, running linters, etc.
-Commands run in the project root directory. Timeout is 60 seconds.`,
+    description: `Run a shell command in the project directory. Works on Windows (cmd) and Unix. Use for installs, tests, git, build, system tasks.`,
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', description: 'The shell command to execute' },
-        cwd: { type: 'string', description: 'Working directory (relative to project root, default: ".")' },
+        command: { type: 'string', description: 'Full command line (e.g. npm test, dir, ./script.sh)' },
+        cwd: { type: 'string', description: 'Subdirectory relative to cwd (default ".")' },
       },
       required: ['command'],
     },
   },
   needsApproval: true,
   isDangerous(args) {
-    return DANGEROUS_PATTERNS.some(p => p.test(args.command));
+    return DANGEROUS_PATTERNS.some((p) => p.test(args.command));
   },
-  async execute(args) {
-    try {
-      const cwd = args.cwd
-        ? require('path').resolve(process.cwd(), args.cwd)
-        : process.cwd();
+  async execute(args: { command: string; cwd?: string }) {
+    const cwd = args.cwd ? path.resolve(process.cwd(), args.cwd) : process.cwd();
+    const { text, code } = await runShell(args.command, cwd, TIMEOUT_MS);
 
-      const output = execSync(args.command, {
-        encoding: 'utf-8',
-        cwd,
-        timeout: 60000,
-        maxBuffer: 1024 * 1024 * 5, // 5MB
-        env: { ...process.env },
-      });
-
-      const trimmed = output.trim();
-      if (trimmed.length > 10000) {
-        return `[Output truncated to 10000 chars]\n${trimmed.slice(0, 10000)}\n...[${trimmed.length - 10000} more chars]`;
-      }
-      return trimmed || '(command completed with no output)';
-    } catch (error: any) {
-      const stdout = error.stdout?.toString() || '';
-      const stderr = error.stderr?.toString() || '';
-      return `Command failed (exit code ${error.status || 'unknown'}):\n${stderr || stdout || error.message}`.slice(0, 10000);
+    let body = text;
+    if (code !== 0 && code !== null) {
+      body = body ? `${body}\n(exit ${code})` : `(exit ${code})`;
     }
+    if (!body) body = code === 0 ? '(no output)' : `(exit ${code}, no output)`;
+
+    if (body.length > MAX_CHARS) {
+      return `[Truncated]\n${body.slice(0, MAX_CHARS)}\n…${body.length - MAX_CHARS} more chars`;
+    }
+    return body;
   },
 };
 
 export const runCommandBackground: Tool = {
   definition: {
     name: 'run_command_background',
-    description: 'Start a long-running command in the background (e.g., dev server). Returns immediately with process info.',
+    description: 'Start a long-running command in the background (dev server, watch).',
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', description: 'The command to run in background' },
-        cwd: { type: 'string', description: 'Working directory (default: ".")' },
+        command: { type: 'string', description: 'Command to run' },
+        cwd: { type: 'string', description: 'Working directory (default ".")' },
       },
       required: ['command'],
     },
   },
   needsApproval: true,
-  async execute(args) {
-    const parts = args.command.split(/\s+/);
-    const proc = spawn(parts[0], parts.slice(1), {
-      cwd: args.cwd || process.cwd(),
-      stdio: 'ignore',
-      detached: true,
+  async execute(args: { command: string; cwd?: string }) {
+    const cwd = args.cwd ? path.resolve(process.cwd(), args.cwd) : process.cwd();
+    const child = spawn(args.command, {
       shell: true,
+      cwd,
+      env: process.env,
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
     });
-    proc.unref();
-
-    return `Started background process: PID ${proc.pid}\nCommand: ${args.command}`;
+    child.unref();
+    return `Background PID ${child.pid}\n${args.command}`;
   },
 };

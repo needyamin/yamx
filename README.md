@@ -4,7 +4,20 @@ Terminal assistant built around **commands, packages, scripts, logs, git, and qu
 
 **Providers:** OpenAI, Anthropic, Google Gemini, OpenRouter (many models), Ollama (local).
 
+<<<<<<< HEAD
 Needs **Node.js 18+**.
+=======
+---
+<img width="108" height="108" alt="Image" src="https://github.com/user-attachments/assets/3fad0efb-cc8e-4f81-981f-536f8db20ff2" />
+
+## What makes YamX different
+
+- **Local first, model second.** When you type a command like `systeminfo`, `lscpu`, `tar`, `jq`, or `python`, YamX runs it directly on your shell. No model call, no token cost.
+- **Auto-detected helpers.** YamX probes ~70 common tools cross-platform on startup (python, node, jq, yq, awk, sed, rg, openssl, sha256sum, etc.) and tells the model exactly what's installed and where.
+- **Local compute first.** For analysis, parsing, counting, math, JSON/CSV/YAML inspection, the agent prefers running a small one-liner with `python` / `jq` / `awk` / `node` instead of doing the work in chat. Smaller context, lower cost, deterministic results.
+- **Failure-aware.** When commands or services fail, YamX inspects task output and logs (`auto`, `latest-error`, `summary`, `tail`, `head`, `errors`, `full`) and follows an internal failure protocol before applying a fix.
+- **Safe by default.** Sensitive, destructive, privileged, publishing, package-install, credential, and permission-changing commands are classified and require approval — or are blocked outright if they look like exfiltration.
+>>>>>>> 85c56ec82033ff8bb7d4102558b92fde37d959a3
 
 ---
 

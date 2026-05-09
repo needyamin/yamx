@@ -54,7 +54,7 @@ yamx --diagnose   # Node, registry, keys (mask), git, Ollama, sessions, probes
 yamx              # REPL (sessions persist under ~/.yamx/sessions/)
 ```
 
-If no `config.json` exists, the CLI will steer you through setup on first launch.
+If **`~/.yamx/config.json`** is missing, or your **default (or `-p`) cloud provider** has **no API key** in config and no matching env var (`OPENROUTER_API_KEY`, etc.), a normal **`yamx`** run starts **the same interactive flow as `yamx --onboard`** before the REPL. Use **`yamx --onboard`** anytime to redo setup explicitly.
 
 ---
 

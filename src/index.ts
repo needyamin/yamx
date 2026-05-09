@@ -15,7 +15,7 @@ import nodePath from 'node:path';
 import { createRequire } from 'node:module';
 import { stdin, stdout } from 'node:process';
 import { Agent } from './agent.js';
-import { Config } from './config.js';
+import { Config, type YamConfig } from './config.js';
 import { ContextEngine } from './context.js';
 import { UI } from './ui.js';
 import { OpenAIProvider } from './providers/openai.js';
@@ -101,6 +101,29 @@ const PROVIDER_MODELS: Record<ProviderName, { name: string; value: string }[]> =
 function normalizeProviderName(value: unknown): ProviderName {
   const provider = String(value || '').trim().toLowerCase() as ProviderName;
   return PROVIDER_NAMES.has(provider) ? provider : 'openrouter';
+}
+
+/** Cloud providers need an API key; local Ollama does not by default. */
+function providerUsesApiKey(p: ProviderName): boolean {
+  return p !== 'ollama';
+}
+
+/**
+ * True when the user needs interactive setup before a normal chat run:
+ * no ~/.yamx/config.json yet, or no key (config + env) for the resolved default/cloud provider.
+ */
+function needsAutoOnboarding(
+  configFileExists: boolean,
+  cfg: YamConfig,
+  cliProviderFlag?: string
+): boolean {
+  if (!configFileExists) return true;
+  const p = normalizeProviderName(cliProviderFlag || cfg.defaultProvider || 'openrouter');
+  if (!providerUsesApiKey(p)) return false;
+  const pk = cfg.providers?.[p] as { apiKey?: string } | undefined;
+  const fromCfg = pk?.apiKey;
+  const fromEnv = process.env[`${p.toUpperCase()}_API_KEY`];
+  return !String(fromCfg || fromEnv || '').trim();
 }
 
 program
@@ -294,9 +317,20 @@ program.action(async (options) => {
 
   const isCommandRun = options.onboard || options.diagnose || options.history || options.clearChat || options.resetConfig || delArg;
 
-  if (!configExists && !isCommandRun) {
-    console.log(chalk.yellow('\nWelcome to YamX! Let\'s do a quick first-time setup.'));
-    await runOnboard(config, { title: 'YamX · First-Time Setup', firstRun: true });
+  const cliProvider = typeof options.provider === 'string' && options.provider.trim() ? options.provider : undefined;
+
+  if (!isCommandRun && needsAutoOnboarding(configExists, cfg, cliProvider)) {
+    console.log(
+      chalk.yellow(
+        configExists
+          ? '\nYamX needs an API key for your default provider — starting setup.'
+          : "\nWelcome to YamX — starting first-time setup (same as `yamx --onboard`)."
+      )
+    );
+    await runOnboard(config, {
+      title: configExists ? 'YamX · Complete setup' : 'YamX · First-time setup',
+      firstRun: !configExists,
+    });
     Object.assign(cfg, config.get());
   }
 

@@ -20,6 +20,7 @@ export class OpenAIChatProvider implements Provider {
   name: string;
   modelId: string;
   private client: OpenAI;
+  private usesOfficialOpenAI: boolean;
 
   constructor(opts: OpenAIChatProviderOptions) {
     const headers = opts.defaultHeaders;
@@ -31,6 +32,7 @@ export class OpenAIChatProvider implements Provider {
 
     this.name = opts.name;
     this.modelId = opts.model;
+    this.usesOfficialOpenAI = opts.name === 'openai' && !opts.baseURL;
     this.client = new OpenAI({
       apiKey: opts.apiKey,
       baseURL: opts.baseURL,
@@ -52,6 +54,9 @@ export class OpenAIChatProvider implements Provider {
   }
 
   async complete(options: CompletionOptions): Promise<CompletionResult> {
+    const tokenLimit = this.usesOfficialOpenAI
+      ? { max_completion_tokens: options.maxTokens ?? 16384 }
+      : { max_tokens: options.maxTokens ?? 16384 };
     const response = await this.client.chat.completions.create({
       model: this.modelId,
       messages: options.messages.map(m => ({
@@ -63,7 +68,7 @@ export class OpenAIChatProvider implements Provider {
       })),
       tools: this.formatTools(options.tools),
       temperature: options.temperature ?? 0.1,
-      max_tokens: options.maxTokens ?? 16384,
+      ...tokenLimit,
     });
 
     const choice = response.choices[0];
@@ -80,6 +85,9 @@ export class OpenAIChatProvider implements Provider {
   }
 
   async *stream(options: CompletionOptions): AsyncGenerator<StreamChunk> {
+    const tokenLimit = this.usesOfficialOpenAI
+      ? { max_completion_tokens: options.maxTokens ?? 16384 }
+      : { max_tokens: options.maxTokens ?? 16384 };
     const stream = await this.client.chat.completions.create({
       model: this.modelId,
       messages: options.messages.map(m => ({
@@ -91,7 +99,7 @@ export class OpenAIChatProvider implements Provider {
       })),
       tools: this.formatTools(options.tools),
       temperature: options.temperature ?? 0.1,
-      max_tokens: options.maxTokens ?? 16384,
+      ...tokenLimit,
       stream: true,
     });
 

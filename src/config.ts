@@ -44,7 +44,7 @@ export interface YamConfig {
     verboseCli?: boolean;
     /** Max assistant markdown chars shown and persisted per reply (hard UX/token guard). */
     maxAssistantMarkdownChars?: number;
-    /** Read-only runtime probes auto-run before agent turn for install/PATH-style asks (default on). */
+    /** Read-only runtime/project ops probes auto-run before agent turn for install/PATH/diagnose asks (default on). */
     preflightRuntimeProbes?: boolean;
   };
 }

@@ -286,6 +286,8 @@ export class UI {
         ['/model', 'Provider & model'],
         ['/cost', 'Token usage & history'],
         ['/diff', 'Git diff'],
+        ['/pwd', 'Show YamX shell cwd'],
+        ['/cd', 'Change YamX shell cwd'],
         ['/run', 'Execute shell command'],
         ['/log', 'Inspect logs: /log [file] --mode latest-error'],
         ['/status', 'Runtime/session snapshot'],

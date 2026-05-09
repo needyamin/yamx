@@ -10,7 +10,7 @@ export class AnthropicProvider implements Provider {
   modelId: string;
   private client: Anthropic;
 
-  constructor(apiKey: string, model: string = 'claude-sonnet-4-6') {
+  constructor(apiKey: string, model: string = 'claude-sonnet-4-20250514') {
     this.client = new Anthropic({ apiKey });
     this.modelId = model;
   }

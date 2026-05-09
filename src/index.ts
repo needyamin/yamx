@@ -84,17 +84,22 @@ const KEY_HINTS: Record<Exclude<ProviderName, 'ollama'>, string> = {
 
 const PROVIDER_MODELS: Record<ProviderName, { name: string; value: string }[]> = {
   openai: [
-    { name: 'GPT-5.5', value: 'gpt-5.5' },
-    { name: 'GPT-5.4', value: 'gpt-5.4' },
-    { name: 'GPT-4o', value: 'gpt-4o' },
+    { name: 'GPT-5.2 (recommended)', value: 'gpt-5.2' },
+    { name: 'GPT-5.1', value: 'gpt-5.1' },
+    { name: 'GPT-5', value: 'gpt-5' },
+    { name: 'GPT-5 mini', value: 'gpt-5-mini' },
+    { name: 'GPT-5 nano', value: 'gpt-5-nano' },
     { name: 'GPT-4.1', value: 'gpt-4.1' },
-    { name: 'o4-mini', value: 'o4-mini' },
     { name: 'o3', value: 'o3' },
+    { name: 'o4-mini', value: 'o4-mini' },
+    { name: 'GPT-4o', value: 'gpt-4o' },
   ],
   anthropic: [
-    { name: 'Claude Sonnet 4.6', value: 'claude-sonnet-4-6' },
-    { name: 'Claude Opus 4.7', value: 'claude-opus-4-7' },
+    { name: 'Claude Opus 4.1', value: 'claude-opus-4-1-20250805' },
+    { name: 'Claude Sonnet 4', value: 'claude-sonnet-4-20250514' },
+    { name: 'Claude Opus 4', value: 'claude-opus-4-20250514' },
     { name: 'Claude 3.7 Sonnet', value: 'claude-3-7-sonnet-20250219' },
+    { name: 'Claude 3.5 Haiku', value: 'claude-3-5-haiku-20241022' },
   ],
   gemini: [
     { name: 'Gemini 3 Flash Preview', value: 'gemini-3-flash-preview' },
@@ -109,17 +114,16 @@ const PROVIDER_MODELS: Record<ProviderName, { name: string; value: string }[]> =
   ],
   grok: [
     { name: 'Grok 4.3', value: 'grok-4.3' },
-    { name: 'Grok 4.20 reasoning (API id)', value: 'grok-4.20-0309-reasoning' },
-    { name: 'Grok 4.20 non-reasoning (API id)', value: 'grok-4.20-0309-non-reasoning' },
-    { name: 'Grok 4.20 multi-agent', value: 'grok-4.20-multi-agent-0309' },
+    { name: 'Grok 4 latest', value: 'grok-4-latest' },
+    { name: 'Grok 4', value: 'grok-4' },
   ],
   openrouter: [
     { name: 'DeepSeek Chat V3.1 (recommended)', value: 'deepseek-chat' },
     { name: 'DeepSeek R1', value: 'deepseek-r1' },
     { name: 'Claude Sonnet 4.6', value: 'claude-sonnet-4' },
-    { name: 'GPT-5.5', value: 'gpt-5.5' },
+    { name: 'GPT-5.2', value: 'gpt-5.2' },
     { name: 'Gemini 3 Flash Preview', value: 'gemini-3-flash' },
-    { name: 'Kimi K2.5', value: 'kimi-k2.5' },
+    { name: 'Kimi K2.6', value: 'kimi-k2.6' },
     { name: 'Grok 4.3', value: 'grok-4.3' },
     { name: 'Llama 4 Maverick', value: 'llama-4-maverick' },
   ],
@@ -663,7 +667,7 @@ program.action(async (options) => {
 
     const directCommand = parseDirectCommand(input);
     if (directCommand) {
-      await executeDirectCommand(directCommand, agent.getUI(), options.autoApprove || cfg.settings?.autoApprove || false);
+      await executeDirectCommand(directCommand, agent, options.autoApprove || cfg.settings?.autoApprove || false, true);
       continue;
     }
 
@@ -718,7 +722,13 @@ async function createInputSession(): Promise<{
   };
 }
 
-async function executeDirectCommand(command: string, ui: UI, autoApprove: boolean): Promise<void> {
+async function executeDirectCommand(
+  command: string,
+  agent: Agent,
+  autoApprove: boolean,
+  diagnoseOnFailure = true
+): Promise<void> {
+  const ui = agent.getUI();
   const args = { command };
   const isDangerous = runCommand.isDangerous?.(args) ?? false;
   if (isDangerous && !autoApprove) {
@@ -743,6 +753,28 @@ async function executeDirectCommand(command: string, ui: UI, autoApprove: boolea
   const result = await runCommand.execute(args);
   ui.toolResult('run_command', result, Date.now() - started);
   ui.cueTTYAfterBulkOutput();
+
+  if (diagnoseOnFailure && isDirectShellFailure(result)) {
+    ui.neuralStatus('recover', 'direct shell command failed; asking agent to diagnose and continue');
+    await agent.chat([
+      '<yamx_direct_shell_failure>',
+      `command=${command}`,
+      `cwd=${process.cwd()}`,
+      'The user ran this as a direct YamX shell command. It failed.',
+      'Diagnose the failure from the output, then take the smallest useful next action inside YamX.',
+      'If a fix is safe and local, apply it and rerun the narrow verification. If the next action is destructive, privileged, or network/install related, respect tool approval policy.',
+      '',
+      'Output:',
+      result.slice(0, 24_000),
+      '</yamx_direct_shell_failure>',
+    ].join('\n'));
+  }
+}
+
+function isDirectShellFailure(result: string): boolean {
+  return /\(exit\s+[1-9]\d*|timed out after|Spawn error:|Error:|not recognized as an internal or external command|command not found|No such file or directory|cannot find the path|bad option|fatal:|Traceback|TypeError|SyntaxError|ReferenceError/i.test(
+    result
+  );
 }
 
 async function resolveSessionRef(
@@ -1016,12 +1048,12 @@ function createProvider(name: string, model: string | undefined, cfg: any): Prov
     case 'openai': {
       const key = resolveCloudApiKey(cfg, 'openai');
       if (!key) throw new Error('OpenAI API key not found. Set OPENAI_API_KEY or run: yamx --onboard');
-      return new OpenAIProvider(key, model || cfg.providers?.openai?.model || 'gpt-5.5');
+      return new OpenAIProvider(key, model || cfg.providers?.openai?.model || 'gpt-5.2');
     }
     case 'anthropic': {
       const key = resolveCloudApiKey(cfg, 'anthropic');
       if (!key) throw new Error('Anthropic API key not found. Set ANTHROPIC_API_KEY or run: yamx --onboard');
-      return new AnthropicProvider(key, model || cfg.providers?.anthropic?.model || 'claude-sonnet-4-6');
+      return new AnthropicProvider(key, model || cfg.providers?.anthropic?.model || 'claude-sonnet-4-20250514');
     }
     case 'gemini': {
       const key = resolveCloudApiKey(cfg, 'gemini');
@@ -1034,7 +1066,7 @@ function createProvider(name: string, model: string | undefined, cfg: any): Prov
         throw new Error(
           'Kimi / Moonshot API key not found. Set KIMI_API_KEY, MOONSHOT_API_KEY (see platform.kimi.ai), or run: yamx --onboard'
         );
-      return new KimiProvider(key, model || cfg.providers?.kimi?.model || 'kimi-k2.5');
+      return new KimiProvider(key, model || cfg.providers?.kimi?.model || 'kimi-k2.6');
     }
     case 'grok': {
       const key = resolveCloudApiKey(cfg, 'grok');

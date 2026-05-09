@@ -3,9 +3,18 @@
  */
 
 import { Tool } from './registry.js';
-import { ensureInsideProject, getShellDiagnostics, getSmartShell, runProcess } from './utils.js';
+import {
+  changeWorkspaceDirectory,
+  ensureInsideProject,
+  getShellDiagnostics,
+  getSmartShell,
+  getWorkspaceCwd,
+  getWorkspaceRelativeCwd,
+  runProcess,
+} from './utils.js';
 import { TaskManager } from '../tasks.js';
 import { isDangerousShellCommand } from '../tool-risk.js';
+import { recordCommandRun } from '../command-memory.js';
 
 const DEFAULT_MAX_CHARS = 100_000;
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -67,6 +76,14 @@ function boundedNumber(value: unknown, fallback: number, min: number, max: numbe
   return Math.min(Math.max(Math.trunc(n), min), max);
 }
 
+function parsePersistentCd(command: string): string | undefined {
+  const t = command.trim();
+  const match = /^(?:cd|chdir|pushd)(?:\s+(.+))?$/i.exec(t);
+  if (!match) return undefined;
+  const raw = (match[1] || '').trim();
+  return raw.replace(/^["']|["']$/g, '');
+}
+
 export const runCommand: Tool = {
   definition: {
     name: 'run_command',
@@ -98,7 +115,20 @@ export const runCommand: Tool = {
     const pseudoErr = rejectNaturalLanguagePseudoCommand(args.command);
     if (pseudoErr) return pseudoErr;
 
-    const cwd = ensureInsideProject(args.cwd || '.');
+    if (!args.cwd) {
+      const cdTarget = parsePersistentCd(args.command);
+      if (cdTarget !== undefined) {
+        if (!cdTarget) return `cwd: ${getWorkspaceRelativeCwd()}`;
+        const rel = changeWorkspaceDirectory(cdTarget);
+        return rel.startsWith('Error:')
+          ? rel
+          : `cwd: ${rel}`;
+      }
+    }
+
+    const cwd = args.cwd
+      ? ensureInsideProject(args.cwd)
+      : { ok: true as const, path: getWorkspaceCwd() };
     if (!cwd.ok) return cwd.error;
 
     const smart = getSmartShell(args.command, args.shell);
@@ -108,6 +138,13 @@ export const runCommand: Tool = {
       cwd: cwd.path,
       timeoutMs,
       maxChars,
+    });
+    await recordCommandRun({
+      command: smart.command,
+      cwd: cwd.path,
+      code,
+      timedOut,
+      output: text,
     });
 
     let body = text;
@@ -149,7 +186,9 @@ export const runCommandBackground: Tool = {
     const pseudoErr = rejectNaturalLanguagePseudoCommand(args.command);
     if (pseudoErr) return pseudoErr;
 
-    const cwd = ensureInsideProject(args.cwd || '.');
+    const cwd = args.cwd
+      ? ensureInsideProject(args.cwd)
+      : { ok: true as const, path: getWorkspaceCwd() };
     if (!cwd.ok) return cwd.error;
 
     const smart = getSmartShell(args.command, args.shell);
@@ -169,7 +208,7 @@ export const shellDiagnostics: Tool = {
     parameters: { type: 'object', properties: {} },
   },
   async execute() {
-    return getShellDiagnostics();
+    return `${getShellDiagnostics()}\nworkspace cwd ${getWorkspaceRelativeCwd()}`;
   },
 };
 

@@ -11,9 +11,20 @@ import {
 } from '../tool-detect.js';
 
 export const PROJECT_ROOT = path.resolve(process.cwd());
+let workspaceCwd = PROJECT_ROOT;
+let previousWorkspaceCwd = PROJECT_ROOT;
 
-export function resolveProjectPath(inputPath = '.'): string {
-  return path.resolve(PROJECT_ROOT, inputPath);
+export function getWorkspaceCwd(): string {
+  return workspaceCwd;
+}
+
+export function getWorkspaceRelativeCwd(): string {
+  const rel = path.relative(PROJECT_ROOT, workspaceCwd);
+  return rel || '.';
+}
+
+export function resolveProjectPath(inputPath = '.', base = PROJECT_ROOT): string {
+  return path.isAbsolute(inputPath) ? path.resolve(inputPath) : path.resolve(base, inputPath);
 }
 
 export function isWithinProjectPath(resolvedPath: string): boolean {
@@ -21,12 +32,32 @@ export function isWithinProjectPath(resolvedPath: string): boolean {
   return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-export function ensureInsideProject(inputPath = '.'): { ok: true; path: string } | { ok: false; error: string } {
-  const resolved = resolveProjectPath(inputPath);
+export function ensureInsideProject(inputPath = '.', base = PROJECT_ROOT): { ok: true; path: string } | { ok: false; error: string } {
+  const resolved = resolveProjectPath(inputPath, base);
   if (!isWithinProjectPath(resolved)) {
     return { ok: false, error: 'Error: Path outside project directory.' };
   }
   return { ok: true, path: resolved };
+}
+
+export function changeWorkspaceDirectory(inputPath = '.'): string {
+  const requested = inputPath.trim();
+  const targetPath = !requested || requested === '~'
+    ? PROJECT_ROOT
+    : requested === '-'
+      ? previousWorkspaceCwd
+      : requested;
+  const target = ensureInsideProject(targetPath, workspaceCwd);
+  if (!target.ok) return target.error;
+  try {
+    if (!fs.existsSync(target.path)) return `Error: Directory not found: ${targetPath}`;
+    if (!fs.statSync(target.path).isDirectory()) return `Error: Not a directory: ${targetPath}`;
+    previousWorkspaceCwd = workspaceCwd;
+    workspaceCwd = target.path;
+    return getWorkspaceRelativeCwd();
+  } catch (error: any) {
+    return `Error: ${error.message}`;
+  }
 }
 
 export function formatBytes(bytes: number): string {
@@ -115,6 +146,15 @@ export function getSmartShell(command: string, shellName?: string): SmartShellCo
   if (looksLikePowerShell(command)) {
     const shell = shellAvailable('pwsh') ? getShell('pwsh') : getShell('powershell');
     return { shell, command: normalizeCommandForShell(command, shell.label), reason: 'PowerShell syntax detected' };
+  }
+
+  if (isSimpleUnixInspectionForCmd(command)) {
+    const shell = getShell('cmd');
+    return {
+      shell,
+      command: normalizeCommandForShell(command, shell.label),
+      reason: 'Simple Unix-style inspection translated for cmd',
+    };
   }
 
   if (looksLikeUnixShell(command) && shellAvailable('bash')) {
@@ -245,6 +285,20 @@ function translateSimpleUnixInspectionForCmd(command: string): string {
   if (/^chmod\s+([0-7]{3,4})\s+([^\s|&<>]+)\s*$/i.test(c)) return `icacls ${c.replace(/^chmod\s+[0-7]{3,4}\s+/i, '')}`;
   if (/^clear\s*$/i.test(c)) return 'cls';
   return command;
+}
+
+function isSimpleUnixInspectionForCmd(command: string): boolean {
+  const c = command.trim();
+  return /^pwd\s*$/i.test(c)
+    || /^ls(\s+(-la|-al|-l|-a))?(\s+[^\s|&<>]+)?\s*$/i.test(c)
+    || /^ll\s*$/i.test(c)
+    || /^la\s*$/i.test(c)
+    || /^cat\s+([^\s|&<>]+)\s*$/i.test(c)
+    || /^head(\s+-n\s+\d+)?\s+([^\s|&<>]+)\s*$/i.test(c)
+    || /^tail(\s+-n\s+\d+)?\s+([^\s|&<>]+)\s*$/i.test(c)
+    || /^mkdir\s+-p\s+([^\s|&<>]+)\s*$/i.test(c)
+    || /^touch\s+([^\s|&<>]+)(\s+[^\s|&<>]+)*\s*$/i.test(c)
+    || /^clear\s*$/i.test(c);
 }
 
 function quotePowerShell(value: string): string {

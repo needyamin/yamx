@@ -26,7 +26,10 @@ It is not a general-purpose chat widget: the system behavior, defaults, and tool
 | **Fix loops** | Failures from `run_command` and similar tools are meant to drive **diagnose → change something → retry**, not copy-paste essays. |
 | **Short user-facing answers** | Prompting and UI bias toward **dense** replies. Assistant markdown is **hard-capped** per message (see Configuration) so huge generations do not flood the terminal or bloat saved history. |
 | **Local facts first** | Detected local tooling (e.g. Python, Node, ripgrep) is surfaced in context so the model reaches for **your** environment before inventing steps. |
-| **Runtime preflight** | For install/PATH/version-style asks about common runtimes **(Python, Node, Docker, Git, Rust, Java, Go, kubectl)**, YamX runs **read-only local shell probes** before the first model reply and injects a `yamx_local_preflight` block into the conversation so answers are grounded in **this machine**, not generic tutorials. |
+| **Ops preflight** | For install/PATH/version asks about runtimes, YamX injects `yamx_local_preflight`; for vague local ops asks like **“install it”** or **“diagnose it”**, it injects `yamx_project_preflight` with nearby manifests, scripts, lockfiles, git/runtime probes, local bins, and candidate commands. |
+| **One-terminal workflow** | YamX keeps a guarded shell working directory, so `cd src` affects the next command while staying inside the project. Use `/pwd` and `/cd`, or just type normal shell lines. |
+| **AI shell recovery** | If a direct shell command fails, YamX feeds the command, cwd, and output back into the agent so the model can diagnose, fix, and retry in the same terminal. |
+| **Command memory** | YamX records successful and failed project commands in `~/.yamx/command-memory.json` and feeds recent patterns into future diagnosis/setup turns. |
 | **Safe automation** | Hooks, approval modes, and optional allow/deny shell patterns support controlled automation. |
 | **Terminal-friendly output** | Wrapping respects **left and right gutters** (scrollbar/host padding) so long lines and boxed **tool/results** panels are less likely to clip at the edges. **`run_command`** panels show **much more output** before summarizing—full text still reaches the agent. |
 | **REPL readability** | After bulk output (↑/↓ **history replay** included), YamX resets ANSI styling and emits a newline **cue** so the next **`YamX ›`** prompt sits on a clean line in narrow or Windows-hosted terminals. |
@@ -101,7 +104,10 @@ If `~/.yamx/config.json` is missing—or your default cloud provider has **no** 
 ## How input is handled
 
 - **Direct shell** — Lines that look like real shell commands can execute **locally with no LLM call** (zero tokens for that line). To force shell execution and skip routing, you can use prefixes such as `$ cmd`, `! cmd`, `> cmd`, or `run: cmd`.
-- **Runtime preflight** — Phrases like **“install python”** are not valid shell lines, so they go to the agent. Before that turn’s model call, YamX may already have run **`where` / `py -0` / `python --version`** (and similar) on **your OS** and appended a synthetic user message tagged **`yamx_local_preflight`** with the captured output. The model is instructed to use that as evidence and propose **concrete `run_command` next steps** on this machine—not multi-OS Markdown guides. Disable via `settings.preflightRuntimeProbes` (see Configuration).
+- **Persistent cwd** — Direct shell commands and `run_command` share a YamX working directory. `cd src` / `/cd src` changes where later shell commands run; attempts to leave the launch project are blocked.
+- **Direct shell recovery** — If a direct command or `/run ...` fails, YamX converts that failure into an agent repair turn with the original command and output, so diagnosis and fixes continue without opening another terminal.
+- **Command memory** — YamX learns which commands worked or failed in this project/cwd and uses that evidence in later `install it`, `diagnose it`, `run it`, and fix turns.
+- **Ops preflight** — Phrases like **“install python”** are not valid shell lines, so they go to the agent. Before that turn’s model call, YamX may already have run **`where` / `py -0` / `python --version`** (and similar) on **your OS** and appended `yamx_local_preflight`. Vague project-local asks like **“install it”**, **“diagnose it”**, or **“run this project”** append `yamx_project_preflight` with nearby scripts, lockfiles, package manager, git status, local bins, runtime probes, and candidate next commands. The model is instructed to use that evidence and propose concrete `run_command` steps on this machine, not generic setup prose. Disable via `settings.preflightRuntimeProbes` (see Configuration).
 - **Agent** — Natural-language requests go to the configured model with **tool calling**: the agent is steered toward **run / inspect / fix** rather than platform-wide install guides.
 
 ---
@@ -140,7 +146,7 @@ yamx --reset-config   # reset config file to defaults (sessions kept)
 | `contextBudgetChars` | When long history triggers in-agent summarization |
 | `maxToolResultChars` | How much tool output is kept in model-visible history |
 | `maxAssistantMarkdownChars` | **Hard cap** on assistant markdown **rendered and stored** per assistant message (default **3200**). Raise in `config.json` when you need longer explanations. |
-| `preflightRuntimeProbes` | When **`true`** (default), install/PATH/version-style messages about supported runtimes trigger **automatic read-only probes** before the model reply. Set **`false`** to skip injection of `yamx_local_preflight`. |
+| `preflightRuntimeProbes` | When **`true`** (default), install/PATH/version-style runtime messages and vague local ops messages trigger **automatic read-only probes** before the model reply. Set **`false`** to skip injection of `yamx_local_preflight` / `yamx_project_preflight`. |
 | `verboseCli` | Extra status / decorative output (default off) |
 | `modelCouncil.enabled` / `.mode` | Optional hidden “council” planning pass |
 | `hooksEnabled` | Hook scripts around agent events |
@@ -167,7 +173,7 @@ If the provider rejects a request for **context limits**, YamX tries to surface 
 
 ## Slash commands (in-session)
 
-Examples: `/help`, `/exit` | `/quit`, `/clear`, `/compact`, `/undo`, `/model`, `/cost`, `/diff`, `/status`, `/log` | `/logs`, `/tools`, `/run …`, `/init`, `/remember`, `/memory`, `/skills`, `/agents`, `/agent …`, `/explore`, `/plan`, `/review`.
+Examples: `/help`, `/exit` | `/quit`, `/clear`, `/compact`, `/undo`, `/model`, `/cost`, `/diff`, `/status`, `/pwd`, `/cd …`, `/log` | `/logs`, `/tools`, `/run …`, `/init`, `/remember`, `/memory`, `/skills`, `/agents`, `/agent …`, `/explore`, `/plan`, `/review`.
 
 Use `/help` in the REPL for the authoritative list.
 
@@ -247,7 +253,7 @@ yamx config               interactive configuration
 
 **Assistant replies cut off** — Raise `settings.maxAssistantMarkdownChars` in `~/.yamx/config.json` (defaults are intentionally aggressive for CLI-style answers).
 
-**Model still writes install essays** — Confirm `settings.preflightRuntimeProbes` is not `false`; the `yamx_local_preflight` blob should appear in session history for turns like “install python.” If a model ignores it, switch model or lower temperature; YamX cannot fully control remote model behavior.
+**Model still writes install essays** — Confirm `settings.preflightRuntimeProbes` is not `false`; `yamx_local_preflight` should appear for turns like “install python,” and `yamx_project_preflight` should appear for turns like “install it.” If a model ignores it, switch model or lower temperature; YamX cannot fully control remote model behavior.
 
 **Extra user message in saved chats** — Preflight adds a second `user` role message with probe output. That is intentional so the thread stays auditable and the model stays grounded.
 

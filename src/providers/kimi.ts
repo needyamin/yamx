@@ -7,7 +7,7 @@
 import { OpenAIChatProvider } from './openai-chat.js';
 
 export class KimiProvider extends OpenAIChatProvider {
-  constructor(apiKey: string, model: string = 'kimi-k2.5') {
+  constructor(apiKey: string, model: string = 'kimi-k2.6') {
     super({
       name: 'kimi',
       apiKey,

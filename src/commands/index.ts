@@ -9,6 +9,7 @@ import { BuiltinSubagent, SubagentRunner } from '../subagents.js';
 import { printReplHistory } from '../repl-history.js';
 import { getToolsByCategory } from '../tools/registry.js';
 import { logInspect } from '../tools/logs.js';
+import { changeWorkspaceDirectory, getWorkspaceRelativeCwd } from '../tools/utils.js';
 import { UI } from '../ui.js';
 
 export type PersistCtx = { store: SessionStore; session: ChatSession; agent: Agent };
@@ -19,7 +20,7 @@ export async function handleCommand(
   provider: Provider,
   persistCtx: PersistCtx | undefined,
   cfg: any,
-  runShellCommand: (command: string, ui: UI, autoApprove: boolean) => Promise<void>
+  runShellCommand: (command: string, agent: Agent, autoApprove: boolean, diagnoseOnFailure?: boolean) => Promise<void>
 ): Promise<void> {
   const ui = agent.getUI();
   const cmd = input.split(' ')[0].toLowerCase();
@@ -61,7 +62,17 @@ export async function handleCommand(
         ui.warn('Usage: /run <command>');
         break;
       }
-      await runShellCommand(command, ui, cfg?.settings?.autoApprove || false);
+      await runShellCommand(command, agent, cfg?.settings?.autoApprove || false, true);
+      break;
+    }
+    case '/pwd':
+      ui.info(`cwd: ${getWorkspaceRelativeCwd()}`);
+      break;
+    case '/cd': {
+      const target = input.slice('/cd'.length).trim();
+      const rel = changeWorkspaceDirectory(target);
+      if (rel.startsWith('Error:')) ui.warn(rel);
+      else ui.info(`cwd: ${rel}`);
       break;
     }
     case '/init': {
@@ -142,6 +153,7 @@ async function showStatus(agent: Agent, provider: Provider, persistCtx: PersistC
   console.log([
     `Provider: ${provider.name}`,
     `Model: ${provider.modelId}`,
+    `cwd: ${getWorkspaceRelativeCwd()}`,
     `Session: ${session ? `${session.title} (${session.id.slice(0, 8)}...)` : 'not persisted'}`,
     `Messages: ${stats.historyLength}`,
     `History: ${(stats.historyChars / 1000).toFixed(0)}k chars`,

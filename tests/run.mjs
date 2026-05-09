@@ -76,6 +76,31 @@ test('smart shell normalizes package bins and obvious shell syntax', async () =>
   assert.ok(envPath.startsWith(localBins[0]));
 });
 
+test('run_command keeps a persistent YamX working directory inside the project', async () => {
+  const { runCommand } = await import('../dist/tools/shell.js');
+  const moved = await runCommand.execute({ command: 'cd src' });
+  assert.equal(moved, 'cwd: src');
+
+  const cwd = await runCommand.execute({ command: 'pwd', max_chars: 2000 });
+  assert.match(cwd.replace(/\\/g, '/'), /\/src$/);
+
+  const back = await runCommand.execute({ command: 'cd ..' });
+  assert.equal(back, 'cwd: .');
+  const blocked = await runCommand.execute({ command: 'cd ..' });
+  assert.match(blocked, /Path outside project/);
+});
+
+test('command memory records shell outcomes for project intelligence', async () => {
+  const { runCommand } = await import('../dist/tools/shell.js');
+  const { commandMemoryPath, formatCommandMemoryForPrompt } = await import('../dist/command-memory.js');
+  await fs.unlink(commandMemoryPath()).catch(() => {});
+
+  await runCommand.execute({ command: 'node -v', max_chars: 2000 });
+  const memory = await formatCommandMemoryForPrompt(process.cwd(), 5);
+  assert.match(memory, /node -v/);
+  assert.match(memory, /\[ok\]/);
+});
+
 test('direct command parser catches commands but not tasks', async () => {
   const { parseDirectCommand } = await import('../dist/direct-command.js');
   assert.equal(parseDirectCommand('whoami'), 'whoami');
@@ -350,6 +375,19 @@ test('project intel returns compact recommendations', async () => {
   assert.match(analysis, /Agentic operating plan/);
   assert.match(analysis, /Primary entry points/);
   assert.ok(analysis.length < 16000);
+});
+
+test('runtime preflight also handles vague project ops requests', async () => {
+  const { maybeRuntimePreflightMessage } = await import('../dist/runtime-preflight.js');
+  const text = await maybeRuntimePreflightMessage('install it');
+  assert.match(text, /<yamx_project_preflight>/);
+  assert.match(text, /package_manager=npm/);
+  assert.match(text, /nearby_files=.*package\.json/);
+  assert.match(text, /candidate_next_commands=.*install/);
+  assert.match(text, /### run: git status --short/);
+
+  const wrapped = await maybeRuntimePreflightMessage('<yamx_auto_project_intel>\n...\n</yamx_auto_project_intel>\n\nUser request:\nfix it');
+  assert.match(wrapped, /<yamx_project_preflight>/);
 });
 
 test('tool registry exposes codebase analysis intelligence tool', async () => {

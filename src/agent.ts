@@ -51,6 +51,8 @@ export interface AgentOptions {
   verboseCli?: boolean;
   /** Cap assistant markdown rendered and stored per message */
   maxAssistantMarkdownChars?: number;
+  /** For non-tty surfaces: decide approval-required tool calls without prompting. */
+  nonInteractiveApprovals?: 'deny' | 'allow';
   /**
    * When true (default): install/PATH-style user lines run read-only local probes first;
    * results are injected before the model as a user-role yamx_local_preflight XML-style block.
@@ -731,7 +733,20 @@ export class Agent {
       if (tool.needsApproval && policy.needsApproval) {
         const isDangerous = policy.risk === 'destructive' || (tool.isDangerous?.(args) ?? false);
 
-        this.ui.approvalNeeded(tc.function.name, args);
+        if (this.options.nonInteractiveApprovals === 'deny') {
+          const msg = `Action requires approval and was blocked in non-interactive mode: ${policy.reason}`;
+          this.ui.warn(msg);
+          this.history.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            name: tc.function.name,
+            content: msg,
+          });
+          continue;
+        }
+
+        if (this.options.nonInteractiveApprovals !== 'allow') {
+          this.ui.approvalNeeded(tc.function.name, args);
 
         const { approved } = await inquirer.prompt([
           {
@@ -744,14 +759,15 @@ export class Agent {
           },
         ]);
 
-        if (!approved) {
-          this.history.push({
-            role: 'tool',
-            tool_call_id: tc.id,
-            name: tc.function.name,
-            content: 'Action was DENIED by the user. Try a different approach or ask for clarification.',
-          });
-          continue;
+          if (!approved) {
+            this.history.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              name: tc.function.name,
+              content: 'Action was DENIED by the user. Try a different approach or ask for clarification.',
+            });
+            continue;
+          }
         }
       }
 

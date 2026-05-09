@@ -4,6 +4,8 @@
 
 **Requirements:** Node.js **18+**.
 
+The main README stays at the repository root for GitHub. Extra docs live in `docs/`; project-level config examples and compiler config live in `config/`.
+
 ---
 
 ## Purpose
@@ -97,10 +99,32 @@ Remove-Item -Recurse -Force $HOME\.yamx
 ```bash
 yamx --onboard    # provider, API key, default model, core settings
 yamx --diagnose   # config, keys (masked), connectivity, sessions
+yamx web          # local browser UI for chat + commands
 yamx              # start the REPL (sessions persist)
 ```
 
 If `~/.yamx/config.json` is missing—or your default cloud provider has **no** API key in config and no matching env var—a normal `yamx` run starts the **same onboarding flow** before the REPL. Use `yamx --onboard` anytime to change setup.
+
+---
+
+## Web UI
+
+```bash
+yamx web
+yamx web --port 8787
+yamx web --host 127.0.0.1 --port 8787
+```
+
+The web UI starts a localhost YamX console. Command-like input runs through the same cross-platform shell selection used by `run_command`; normal messages go to the configured YamX AI agent with tool access, sessions, project context, and command memory.
+
+```text
+GET  /              browser UI
+GET  /api/state     cwd/platform status
+POST /api/command   JSON body: { "command": "hi" } or { "command": "node -v" }
+POST /api/chat      JSON body: { "message": "explain this repo" }
+```
+
+Browser AI turns run non-interactively: ordinary safe/write/network tool actions can proceed according to policy, while approval-required destructive and sensitive credential-style actions are blocked by default. Start with `yamx web --allow-dangerous` only when you intentionally want that local web session to approve those actions.
 
 ---
 
@@ -133,7 +157,7 @@ Security mode avoids malware, credential theft, persistence, evasion, destructiv
 
 ## Configuration
 
-**Environment** (optional `.env` in the current working directory):
+**Environment** (optional `.env` in the current working directory; start from `config/.env.example`):
 
 | Variable | Role |
 |----------|------|
@@ -216,8 +240,13 @@ Use `/help` in the REPL for the authoritative list.
 ## Develop and contribute
 
 ```text
+config/tsconfig.json      TypeScript compiler config
+config/.env.example       Environment variable template
+README.md                 Main project documentation
+docs/publish.txt          Publish command notes
 src/index.ts               CLI entry, flags, onboarding, persistence
 src/agent.ts               Streaming, tools, compaction, approvals
+src/config/index.ts        Runtime configuration manager
 src/context.ts             Workspace scan + system prompt
 src/direct-command.ts      Shell routing vs agent
 src/intent.ts              Current-turn intent classification and metadata
@@ -227,6 +256,8 @@ src/terminal-layout.ts     Viewport widths, gutters, panel wrap math
 src/tty-repl-cue.ts        TTY reset + newline cue before prompts after output
 src/runtime-preflight.ts   Auto local probes before agent turn (install/PATH intents)
 src/tools/                 Built-in tool implementations
+src/web/                   Local web command UI and HTTP API
+src/providers/factory.ts   Shared provider creation for CLI and web
 ```
 
 ```bash
@@ -235,6 +266,7 @@ npm run build
 npm test
 npm run dev          # ts-node ESM boot
 yamx --diagnose
+yamx web --port 8765
 ```
 
 On Windows, if PowerShell execution policy blocks `npm` scripts, prefer **`npm.cmd run …`**.
@@ -262,6 +294,7 @@ yamx [options]
   --diagnose
 
 yamx config               interactive configuration
+yamx web [--host 127.0.0.1] [--port 8765] [-p provider] [-m model]
 ```
 
 ---

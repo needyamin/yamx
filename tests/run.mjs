@@ -573,6 +573,82 @@ test('runtime preflight also handles vague project ops requests', async () => {
   assert.match(wrapped, /<yamx_project_preflight>/);
 });
 
+test('web command server serves UI and executes safe commands', async () => {
+  const { startYamxWebServer } = await import('../dist/web/server.js');
+  const app = await startYamxWebServer({ host: '127.0.0.1', port: 0 });
+  try {
+    const html = await fetch(app.url).then((res) => res.text());
+    assert.match(html, /YamX Web/);
+
+    const state = await fetch(`${app.url}/api/state`).then((res) => res.json());
+    assert.equal(state.cwd, '.');
+    assert.equal(state.allowDangerous, false);
+
+    const result = await fetch(`${app.url}/api/command`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: 'node -v' }),
+    }).then((res) => res.json());
+    assert.equal(result.blocked, false);
+    assert.equal(result.code, 0);
+    assert.match(result.output, /^v?\d+\.\d+\.\d+/);
+  } finally {
+    await app.close();
+  }
+});
+
+test('web server routes natural messages to the YamX agent', async () => {
+  const { startYamxWebServer } = await import('../dist/web/server.js');
+  const provider = {
+    name: 'fake',
+    modelId: 'fake-web-model',
+    complete: async () => ({ content: 'Hello from YamX web agent.' }),
+    stream: async function* () {
+      yield { type: 'text', content: 'Hello from YamX web agent.' };
+      yield { type: 'done' };
+    },
+  };
+  const app = await startYamxWebServer({ host: '127.0.0.1', port: 0, providerOverride: provider });
+  try {
+    const result = await fetch(`${app.url}/api/command`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: 'hi' }),
+    }).then((res) => res.json());
+    assert.equal(result.kind, 'chat');
+    assert.equal(result.code, 0);
+    assert.equal(result.provider, 'fake');
+    assert.match(result.output, /Hello from YamX web agent/);
+    assert.equal(result.executedCommand, undefined);
+  } finally {
+    await app.close();
+  }
+});
+
+test('web command runner does not execute greetings or unclear text', async () => {
+  const { executeWebCommand } = await import('../dist/web/server.js');
+  const greeting = await executeWebCommand({ command: 'hi' });
+  assert.equal(greeting.code, 0);
+  assert.equal(greeting.blocked, false);
+  assert.match(greeting.output, /web panel runs local shell commands/i);
+  assert.equal(greeting.executedCommand, undefined);
+
+  const task = await executeWebCommand({ command: 'make my agent smarter' });
+  assert.equal(task.code, 0);
+  assert.match(task.output, /only executes command-like input/i);
+});
+
+test('web command runner blocks destructive and sensitive commands by default', async () => {
+  const { executeWebCommand } = await import('../dist/web/server.js');
+  const result = await executeWebCommand({ command: 'rm -rf dist' });
+  assert.equal(result.blocked, true);
+  assert.match(result.output, /Blocked:/);
+
+  const sensitive = await executeWebCommand({ command: 'cat .env' });
+  assert.equal(sensitive.blocked, true);
+  assert.equal(sensitive.risk, 'sensitive');
+});
+
 test('tool registry exposes codebase analysis intelligence tool', async () => {
   const { getTool, getToolCount, getToolsByCategory } = await import('../dist/tools/registry.js');
   assert.ok(getTool('codebase_analysis'));

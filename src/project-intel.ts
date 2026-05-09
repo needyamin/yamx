@@ -15,6 +15,7 @@ interface CodebaseAnalysisOptions extends IntelOptions {
 
 const IMPORTANT_FILES = [
   'package.json',
+  'config/tsconfig.json',
   'tsconfig.json',
   'vite.config.ts',
   'next.config.js',

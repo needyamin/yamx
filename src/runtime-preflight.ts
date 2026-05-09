@@ -316,6 +316,7 @@ async function nearbyFiles(cwd = PROJECT_ROOT): Promise<string[]> {
     'bandit.yaml',
     'SECURITY.md',
     '.env',
+    'config/.env.example',
     '.env.example',
     'README.md',
   ];

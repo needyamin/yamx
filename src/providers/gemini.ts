@@ -41,13 +41,17 @@ export class GeminiProvider implements Provider {
         if (msg.content) parts.push({ text: msg.content });
         if (msg.tool_calls) {
           for (const tc of msg.tool_calls) {
-            parts.push({
+            const part = {
               functionCall: {
                 id: tc.id,
                 name: tc.function.name,
                 args: parseToolArgs(tc.function.arguments),
               },
-            });
+            } as NonNullable<Content['parts']>[number];
+            const gemini = tc.providerMetadata?.gemini;
+            if (gemini?.thoughtSignature) part.thoughtSignature = gemini.thoughtSignature;
+            if (typeof gemini?.thought === 'boolean') part.thought = gemini.thought;
+            parts.push(part);
           }
         }
         if (parts.length > 0) contents.push({ role: 'model', parts });
@@ -114,6 +118,12 @@ export class GeminiProvider implements Provider {
               name: part.functionCall.name,
               arguments: JSON.stringify(part.functionCall.args ?? {}),
             },
+            providerMetadata: {
+              gemini: {
+                thought: part.thought,
+                thoughtSignature: part.thoughtSignature,
+              },
+            },
           });
         }
       }
@@ -161,6 +171,12 @@ export class GeminiProvider implements Provider {
             function: {
               name: part.functionCall.name,
               arguments: JSON.stringify(part.functionCall.args ?? {}),
+            },
+            providerMetadata: {
+              gemini: {
+                thought: part.thought,
+                thoughtSignature: part.thoughtSignature,
+              },
             },
           };
           yield { type: 'tool_call_start', toolCall: tc };

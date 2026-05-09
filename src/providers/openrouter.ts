@@ -8,7 +8,7 @@
  */
 
 import OpenAI from 'openai';
-import { Provider, CompletionOptions, CompletionResult, StreamChunk, ToolCall } from './base.js';
+import { Provider, CompletionOptions, CompletionResult, StreamChunk, ToolCall, toOpenAIToolCalls } from './base.js';
 
 // Popular models available on OpenRouter (shorthand → provider/model slug)
 export const OPENROUTER_MODELS: Record<string, string> = {
@@ -90,7 +90,7 @@ export class OpenRouterProvider implements Provider {
         role: m.role as any,
         content: m.content || '',
         ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-        ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+        ...(m.tool_calls ? { tool_calls: toOpenAIToolCalls(m.tool_calls) } : {}),
         ...(m.name ? { name: m.name } : {}),
       })),
       tools: this.formatTools(options.tools),
@@ -116,7 +116,7 @@ export class OpenRouterProvider implements Provider {
         role: m.role as any,
         content: m.content || '',
         ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-        ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+        ...(m.tool_calls ? { tool_calls: toOpenAIToolCalls(m.tool_calls) } : {}),
         ...(m.name ? { name: m.name } : {}),
       })),
       tools: this.formatTools(options.tools),

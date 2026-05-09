@@ -3,7 +3,7 @@
  */
 
 import OpenAI from 'openai';
-import { Provider, CompletionOptions, CompletionResult, StreamChunk, ToolCall } from './base.js';
+import { Provider, CompletionOptions, CompletionResult, StreamChunk, ToolCall, toOpenAIToolCalls } from './base.js';
 
 export interface OpenAIChatProviderOptions {
   /** YamX provider id shown in UI (`openai`, `kimi`, `grok`, …). */
@@ -63,7 +63,7 @@ export class OpenAIChatProvider implements Provider {
         role: m.role as any,
         content: m.content || '',
         ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-        ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+        ...(m.tool_calls ? { tool_calls: toOpenAIToolCalls(m.tool_calls) } : {}),
         ...(m.name ? { name: m.name } : {}),
       })),
       tools: this.formatTools(options.tools),
@@ -94,7 +94,7 @@ export class OpenAIChatProvider implements Provider {
         role: m.role as any,
         content: m.content || '',
         ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-        ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+        ...(m.tool_calls ? { tool_calls: toOpenAIToolCalls(m.tool_calls) } : {}),
         ...(m.name ? { name: m.name } : {}),
       })),
       tools: this.formatTools(options.tools),

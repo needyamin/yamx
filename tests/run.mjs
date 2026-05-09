@@ -354,6 +354,102 @@ test('agent adds failure protocol after failed command output', async () => {
   assert.ok(agent.getHistory().some((message) => String(message.content || '').includes('yamx_failure_protocol')));
 });
 
+async function runAgentWithToolStream(chunks) {
+  const { Agent } = await import('../dist/agent.js');
+  let calls = 0;
+  const provider = {
+    name: 'test',
+    modelId: 'test-model',
+    complete: async () => ({ content: 'unused' }),
+    stream: async function* () {
+      calls++;
+      if (calls > 1) {
+        yield { type: 'text', content: 'Done.' };
+        yield { type: 'done' };
+        return;
+      }
+      for (const chunk of chunks) yield chunk;
+      yield { type: 'done' };
+    },
+  };
+  const agent = new Agent(provider, 'system', { stream: true, modelCouncilEnabled: false });
+  await agent.chat('what node version?');
+  return agent.getHistory().find((message) => message.role === 'tool' && message.name === 'run_command')?.content || '';
+}
+
+function runCommandToolCall(argumentsJson = JSON.stringify({ command: 'node -v', max_chars: 2000 })) {
+  return {
+    id: 'tc1',
+    type: 'function',
+    function: { name: 'run_command', arguments: argumentsJson },
+  };
+}
+
+test('agent preserves streamed tool-call args from start chunks', async () => {
+  const toolCall = runCommandToolCall();
+  const commandResult = await runAgentWithToolStream([
+    { type: 'tool_call_start', toolCall },
+    { type: 'tool_call_end', toolCall },
+  ]);
+  assert.match(commandResult, /^v?\d+\.\d+\.\d+/);
+  assert.doesNotMatch(commandResult, /command is required/);
+});
+
+test('agent preserves streamed tool-call args from delta-only chunks', async () => {
+  const commandResult = await runAgentWithToolStream([
+    { type: 'tool_call_delta', toolCall: runCommandToolCall() },
+    { type: 'tool_call_end', toolCall: { id: 'tc1', type: 'function' } },
+  ]);
+  assert.match(commandResult, /^v?\d+\.\d+\.\d+/);
+  assert.doesNotMatch(commandResult, /command is required/);
+});
+
+test('agent preserves streamed tool-call args from end-only chunks', async () => {
+  const commandResult = await runAgentWithToolStream([
+    { type: 'tool_call_end', toolCall: runCommandToolCall() },
+  ]);
+  assert.match(commandResult, /^v?\d+\.\d+\.\d+/);
+  assert.doesNotMatch(commandResult, /command is required/);
+});
+
+test('OpenAI-compatible tool-call serialization strips provider metadata', async () => {
+  const { toOpenAIToolCalls } = await import('../dist/providers/base.js');
+  const [toolCall] = toOpenAIToolCalls([{
+    id: 'call-1',
+    type: 'function',
+    function: { name: 'run_command', arguments: JSON.stringify({ command: 'node -v' }) },
+    providerMetadata: { gemini: { thought: true, thoughtSignature: 'opaque-signature' } },
+  }]);
+  assert.deepEqual(toolCall, {
+    id: 'call-1',
+    type: 'function',
+    function: { name: 'run_command', arguments: JSON.stringify({ command: 'node -v' }) },
+  });
+});
+
+test('gemini provider round-trips function-call thought signatures', async () => {
+  const { GeminiProvider } = await import('../dist/providers/gemini.js');
+  const provider = new GeminiProvider('test-key', 'gemini-test');
+  const built = provider.buildContents([
+    { role: 'system', content: 'system' },
+    { role: 'user', content: 'my ip?' },
+    {
+      role: 'assistant',
+      content: null,
+      tool_calls: [{
+        id: 'call-1',
+        type: 'function',
+        function: { name: 'run_command', arguments: JSON.stringify({ command: 'ipconfig' }) },
+        providerMetadata: { gemini: { thought: true, thoughtSignature: 'opaque-signature' } },
+      }],
+    },
+  ]);
+  const functionCallPart = built.contents[1].parts[0];
+  assert.equal(functionCallPart.thought, true);
+  assert.equal(functionCallPart.thoughtSignature, 'opaque-signature');
+  assert.equal(functionCallPart.functionCall.name, 'run_command');
+});
+
 test('project intel returns compact recommendations', async () => {
   const { buildAgentInputWithProjectIntel, buildCodebaseAnalysis, buildProjectIntel, shouldAttachProjectIntel } = await import('../dist/project-intel.js');
   const text = await buildProjectIntel({ cwd: process.cwd(), goal: 'fix cross platform command bug', maxFiles: 20 });

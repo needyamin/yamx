@@ -18,6 +18,12 @@ export interface ToolCall {
     name: string;
     arguments: string;
   };
+  providerMetadata?: {
+    gemini?: {
+      thought?: boolean;
+      thoughtSignature?: string;
+    };
+  };
 }
 
 export interface ToolDefinition {
@@ -46,6 +52,18 @@ export interface StreamChunk {
   type: 'text' | 'tool_call_start' | 'tool_call_delta' | 'tool_call_end' | 'done';
   content?: string;
   toolCall?: Partial<ToolCall>;
+}
+
+export function toOpenAIToolCalls(toolCalls?: ToolCall[]): ToolCall[] | undefined {
+  if (!toolCalls) return undefined;
+  return toolCalls.map((tc) => ({
+    id: tc.id,
+    type: tc.type,
+    function: {
+      name: tc.function.name,
+      arguments: tc.function.arguments,
+    },
+  }));
 }
 
 export interface Provider {

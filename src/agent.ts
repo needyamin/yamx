@@ -414,7 +414,7 @@ export class Agent {
     try {
       let fullContent = '';
       const toolCalls: ToolCall[] = [];
-      const toolCallBuffers: Record<string, { id: string; name: string; args: string }> = {};
+      const toolCallBuffers: Record<string, { id: string; name: string; args: string; providerMetadata?: ToolCall['providerMetadata'] }> = {};
       let firstText = true;
 
       const stream = this.provider.stream({
@@ -441,18 +441,27 @@ export class Agent {
               toolCallBuffers[chunk.toolCall.id] = {
                 id: chunk.toolCall.id,
                 name: chunk.toolCall.function?.name || '',
-                args: '',
+                args: chunk.toolCall.function?.arguments || '',
+                providerMetadata: chunk.toolCall.providerMetadata,
               };
             }
             break;
 
           case 'tool_call_delta':
-            if (chunk.toolCall?.id && toolCallBuffers[chunk.toolCall.id]) {
+            if (chunk.toolCall?.id) {
+              toolCallBuffers[chunk.toolCall.id] ??= {
+                id: chunk.toolCall.id,
+                name: '',
+                args: '',
+              };
               if (chunk.toolCall.function?.name) {
                 toolCallBuffers[chunk.toolCall.id].name = chunk.toolCall.function.name;
               }
               if (chunk.toolCall.function?.arguments) {
                 toolCallBuffers[chunk.toolCall.id].args += chunk.toolCall.function.arguments;
+              }
+              if (chunk.toolCall.providerMetadata) {
+                toolCallBuffers[chunk.toolCall.id].providerMetadata = chunk.toolCall.providerMetadata;
               }
             }
             break;
@@ -461,10 +470,20 @@ export class Agent {
             if (chunk.toolCall?.id) {
               const buf = toolCallBuffers[chunk.toolCall.id];
               if (buf) {
+                if (!buf.name && chunk.toolCall.function?.name) {
+                  buf.name = chunk.toolCall.function.name;
+                }
+                if (!buf.args && chunk.toolCall.function?.arguments) {
+                  buf.args = chunk.toolCall.function.arguments;
+                }
+                if (chunk.toolCall.providerMetadata) {
+                  buf.providerMetadata = chunk.toolCall.providerMetadata;
+                }
                 toolCalls.push({
                   id: buf.id,
                   type: 'function',
                   function: { name: buf.name, arguments: buf.args },
+                  providerMetadata: buf.providerMetadata,
                 });
               } else if (chunk.toolCall.function) {
                 toolCalls.push(chunk.toolCall as ToolCall);

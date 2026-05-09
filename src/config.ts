@@ -40,6 +40,10 @@ export interface YamConfig {
     };
     /** When true: neural-status lines, fancy tool banners, turn timing. Default off = quieter CLI. */
     verboseCli?: boolean;
+    /** Max assistant markdown chars shown and persisted per reply (hard UX/token guard). */
+    maxAssistantMarkdownChars?: number;
+    /** Read-only runtime probes auto-run before agent turn for install/PATH-style asks (default on). */
+    preflightRuntimeProbes?: boolean;
   };
 }
 
@@ -67,6 +71,8 @@ const DEFAULT_CONFIG: YamConfig = {
       enabled: true,
     },
     verboseCli: false,
+    maxAssistantMarkdownChars: 3200,
+    preflightRuntimeProbes: true,
   },
 };
 

@@ -240,8 +240,8 @@ test('policy auto-approves safe shell but still asks for risky shell', async () 
 test('context prompt includes operating loop and memory section', async () => {
   const { ContextEngine } = await import('../dist/context.js');
   const prompt = await new ContextEngine(process.cwd()).buildSystemPrompt();
-  assert.match(prompt, /Core Operating Loop/);
-  assert.match(prompt, /Internal Model Council/);
+  assert.match(prompt, /Workflow \(short\)/);
+  assert.match(prompt, /Hidden planning/);
   assert.match(prompt, /Loaded Memory/);
   assert.match(prompt, /project_intel/);
   assert.match(prompt, /codebase_analysis/);

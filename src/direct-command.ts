@@ -1,3 +1,5 @@
+import { isPseudoEnglishShellIntent } from './tools/shell.js';
+
 const DIRECT_COMMANDS = new Set([
   // identity/env/process
   'whoami', 'hostname', 'id', 'uname', 'ver', 'date', 'time', 'where', 'which', 'whereis',
@@ -178,9 +180,13 @@ export function parseDirectCommand(input: string): string | null {
   if (!trimmed) return null;
 
   const explicit = parseExplicitCommand(trimmed);
-  if (explicit) return explicit;
+  if (explicit) {
+    if (isPseudoEnglishShellIntent(explicit)) return null;
+    return explicit;
+  }
 
   if (looksLikeQuestionOrTask(trimmed)) return null;
+  if (isPseudoEnglishShellIntent(trimmed)) return null;
   if (looksLikePowerShellCommand(trimmed)) return trimmed;
   if (looksLikeScriptInvocation(trimmed)) return trimmed;
   if (looksLikeAssignmentCommand(trimmed)) return trimmed;

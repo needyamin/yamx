@@ -5,19 +5,50 @@
 import chalk from 'chalk';
 import ora, { Ora } from 'ora';
 import boxen from 'boxen';
+import stripAnsi from 'strip-ansi';
+import wrapAnsi from 'wrap-ansi';
 import { marked } from 'marked';
 import { markedTerminal } from 'marked-terminal';
 import { summarizeApiFailure } from './provider-error-format.js';
+import {
+  capAssistantMarkdownSource,
+  DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS,
+} from './assistant-output-cap.js';
+import {
+  BODY_LEFT_GUTTER,
+  terminalBodyWidthChars,
+  wrapIndentedBodyBlock,
+} from './terminal-layout.js';
 
-// Configure marked with terminal renderer for rich markdown output
-marked.use(markedTerminal({
-  reflowText: true,
-  width: Math.min(process.stdout.columns || 100, 120),
-  tab: 2,
-}) as any);
+const DIM = chalk.dim;
+
+/** YamX-aligned terminal Markdown (streaming & static render share this preset). */
+function yamxMarkedTerminal() {
+  return markedTerminal({
+    reflowText: false,
+    width: Math.max(42, terminalBodyWidthChars()),
+    tab: 2,
+    showSectionPrefix: false,
+    emoji: false,
+    paragraph: chalk.reset,
+    heading: chalk.hex('#6EE89F').bold,
+    firstHeading: chalk.hex('#00FF41').bold,
+    hr: (line: string) => DIM(typeof line === 'string' ? line.trimEnd() : line),
+    blockquote: chalk.hex('#93C5FD').italic,
+    html: DIM,
+    link: chalk.cyan,
+    href: chalk.cyan.underline,
+    strong: chalk.white.bold,
+    em: chalk.italic.hex('#C7F9D8'),
+    codespan: chalk.hex('#FDE047'),
+    code: chalk.hex('#FACC15'),
+    listitem: chalk.hex('#DCFCE7'),
+  }) as any;
+}
+
+marked.use(yamxMarkedTerminal());
 
 const GOLD = chalk.hex('#E8C547');
-const DIM = chalk.dim;
 const SUCCESS = chalk.green;
 const ERROR = chalk.red;
 const WARNING = chalk.yellow;
@@ -30,44 +61,174 @@ const MX = chalk.hex('#00FF41');
 const MX_DIM = chalk.hex('#008F11');
 const MX_CORE = chalk.hex('#41FF70');
 
-export type UIOptions = { verbose?: boolean };
+function visLen(s: string): number {
+  return stripAnsi(s).length;
+}
+
+/** Right-pad ANSI string to a visible width (no truncation here — clip inputs beforehand). */
+function padVis(ans: string, w: number): string {
+  const n = visLen(ans);
+  if (n >= w) return ans;
+  return ans + ' '.repeat(w - n);
+}
+
+function clipField(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, Math.max(0, max - 1)) + '…';
+}
+
+export type UIOptions = { verbose?: boolean; maxAssistantMarkdownChars?: number };
 
 export class UI {
   private spinner: Ora | null = null;
   private streamBuffer = '';
   private verbose = false;
+  /** Accumulated assistant Markdown while streaming (rendered once on finalize). */
+  private assistantMarkdownDraft = '';
+  /** Subtle spinner while streamed tokens arrive before Markdown is painted. */
+  private assistantStreamOra: Ora | null = null;
+  /** Hard cap on assistant markdown source characters (terminal + session alignment). */
+  private assistantMarkdownCap: number;
 
   constructor(opts?: UIOptions) {
     this.verbose = opts?.verbose === true;
+    this.assistantMarkdownCap = Math.max(
+      400,
+      opts?.maxAssistantMarkdownChars ?? DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS
+    );
+  }
+
+  /** Discard partial streamed assistant output (API error mid-stream). */
+  cancelAssistantMarkdownStream() {
+    if (this.assistantStreamOra) {
+      this.assistantStreamOra.stop();
+      this.assistantStreamOra = null;
+    }
+    this.assistantMarkdownDraft = '';
+  }
+
+  private printPanel(titleStrip: string, body: string, borderColor: string) {
+    const innerW = Math.max(26, terminalBodyWidthChars() - 8);
+    const wrapped = wrapAnsi(body.trimEnd(), innerW, { trim: false, wordWrap: true });
+    console.log(
+      '\n' +
+        boxen(wrapped, {
+          title: titleStrip,
+          titleAlignment: 'left',
+          padding: { top: 0, bottom: 0, left: 1, right: 1 },
+          margin: { top: 0, bottom: 0, left: BODY_LEFT_GUTTER, right: 2 },
+          borderStyle: 'round',
+          borderColor,
+          dimBorder: true,
+        }) +
+        '\n'
+    );
   }
 
   banner(provider: string, model: string, session?: { title?: string; id?: string }, toolCount = 0, version = 'dev', councilOn = false) {
     if (process.stdout.isTTY) console.clear();
 
-    const threadTitle = session?.title ?? 'untitled';
+    const cols =
+      typeof process.stdout.columns === 'number' && process.stdout.columns >= 48 ? process.stdout.columns : 80;
+    const pad = BODY_LEFT_GUTTER;
+    const boxInner = Math.min(Math.max(cols - pad - 4, 52), 78);
+
+    const threadTitleRaw = clipField(session?.title ?? 'untitled', Math.max(28, Math.floor(boxInner * 0.48)));
     const threadId = session?.id?.slice(0, 8) ?? '--------';
+    const tc = `${toolCount || '?'}`;
+    const provClip = clipField(provider, Math.max(14, Math.floor(boxInner * 0.32)));
+    const modelClip = clipField(model, Math.max(14, Math.floor(boxInner * 0.38)));
 
-    const inner = [
-      ` ${MX_CORE('+')}${MX('==============[')} ${MX.bold('NEURAL LINK')} ${MX(']==============')}${MX_CORE('+')}`,
-      ` ${MX_CORE('|')}  ${MX.bold('Y A M X')}  ${chalk.hex('#00FF41').dim(`v${version}`)}  ${MX_DIM('coding agent')}               ${MX_CORE('|')}`,
-      ` ${MX_CORE('|')}  ${MX_DIM('encrypted session')} ${MX_DIM('|')} ${MX_DIM(`${toolCount || '?'} tools`)} ${MX_DIM('|')} ${MX_DIM('local-first powerhouse')} ${MX_CORE('|')}`,
-      ` ${MX_CORE('+')}${MX('--------------')} ${MX_DIM('------------')} ${MX('--------------')}${MX_CORE('+')}`,
-      '',
-      `   ${MX_DIM('provider')} ${MX(provider)} ${MX_DIM('|')} ${MX_DIM('model')} ${MX(model)}`,
-      `   ${MX_DIM('thread')} ${MX(threadTitle)} ${MX_DIM('|')} ${MX_DIM(threadId)}...`,
-      `   ${MX_DIM('signal')} ${MX('online')} ${MX_DIM('|')} ${MX_DIM('council')} ${MX(councilOn ? 'on' : 'off')} ${MX_DIM('|')} ${MX_DIM('logs')} ${MX('ready')}`,
-    ].join('\n');
+    const labelPlain = '[ NEURAL LINK ]';
+    const eqSlot = Math.max(6, boxInner - labelPlain.length - 2);
+    const a = Math.floor(eqSlot / 2);
+    const b = eqSlot - a;
+    const ribbon =
+      MX_CORE('+') +
+      MX('='.repeat(a)) +
+      MX('[') +
+      MX.bold(' NEURAL LINK ') +
+      MX(']') +
+      MX('='.repeat(b)) +
+      MX_CORE('+');
 
-    console.log('');
-    console.log(
-      boxen(inner, {
-        padding: { top: 0, bottom: 0, left: 0, right: 0 },
-        margin: { top: 0, bottom: 1 },
-        borderStyle: 'single',
-        borderColor: '#00FF41',
-      })
+    const sep = MX_CORE('+') + MX_DIM('─'.repeat(Math.max(4, boxInner - 2))) + MX_CORE('+');
+
+    /** Inner-matrix pipe deco (inside the outer Unicode frame). */
+    const deco = MX('|') + '  ';
+    const footPad = '   ';
+
+    const line1 = padVis(ribbon, boxInner);
+    const line2 = padVis(
+      `${deco}${MX.bold('Y A M X')}  ${MX_DIM(`v${version}`)}  ${MX_DIM('coding agent')}`,
+      boxInner
     );
-    console.log();
+    const triple =
+      MX_DIM('encrypted session') +
+      ' ' +
+      MX_DIM('|') +
+      ' ' +
+      MX_DIM(`${tc} tools`) +
+      ' ' +
+      MX_DIM('|') +
+      ' ' +
+      MX_DIM('local-first powerhouse');
+    const line3 = padVis(`${deco}${triple}`, boxInner);
+    const line4 = padVis(sep, boxInner);
+
+    const provLine =
+      MX_DIM('provider') +
+      ' ' +
+      MX(provClip) +
+      ' ' +
+      MX_DIM('|') +
+      ' ' +
+      MX_DIM('model') +
+      ' ' +
+      MX(modelClip);
+    const thrLine =
+      MX_DIM('thread') + ' ' + MX(threadTitleRaw) + ' ' + MX_DIM('|') + ' ' + MX_DIM(`${threadId}…`);
+    const sigLine =
+      MX_DIM('signal') +
+      ' ' +
+      MX('online') +
+      ' ' +
+      MX_DIM('|') +
+      ' ' +
+      MX_DIM('council') +
+      ' ' +
+      MX(councilOn ? 'on' : 'off') +
+      ' ' +
+      MX_DIM('|') +
+      ' ' +
+      MX_DIM('logs') +
+      ' ' +
+      MX('ready');
+
+    const line5 = padVis('', boxInner);
+    const line6 = padVis(`${footPad}${provLine}`, boxInner);
+    const line7 = padVis(`${footPad}${thrLine}`, boxInner);
+    const line8 = padVis(`${footPad}${sigLine}`, boxInner);
+
+    const hz = MX_DIM('─'.repeat(boxInner + 2));
+    const indent = ' '.repeat(pad);
+    const mxFrame = chalk.hex('#00FF41');
+
+    const rows = [
+      '',
+      `${indent}${mxFrame('┌')}${hz}${mxFrame('┐')}`,
+      `${indent}${mxFrame('│')} ${line1} ${mxFrame('│')}`,
+      `${indent}${mxFrame('│')} ${line2} ${mxFrame('│')}`,
+      `${indent}${mxFrame('│')} ${line3} ${mxFrame('│')}`,
+      `${indent}${mxFrame('│')} ${line4} ${mxFrame('│')}`,
+      `${indent}${mxFrame('│')} ${line5} ${mxFrame('│')}`,
+      `${indent}${mxFrame('│')} ${line6} ${mxFrame('│')}`,
+      `${indent}${mxFrame('│')} ${line7} ${mxFrame('│')}`,
+      `${indent}${mxFrame('│')} ${line8} ${mxFrame('│')}`,
+      `${indent}${mxFrame('└')}${hz}${mxFrame('┘')}`,
+      '',
+    ];
+    console.log(rows.join('\n'));
   }
 
   neuralStatus(stage: string, detail: string) {
@@ -80,6 +241,7 @@ export class UI {
       ['Session', [
         ['/clear', 'Clear chat history'],
         ['/compact', 'Compress old context'],
+        ['/history [n]', 'Numbered YamX prompts (~/.yamx/history); last n lines'],
         ['/exit', 'Save and quit'],
       ]],
       ['Memory', [
@@ -142,6 +304,57 @@ export class UI {
     }
   }
 
+  /** Start assistant markdown stream with optional blank line above first token. */
+  beginAssistantMarkdownStream(withLeadingNl: boolean) {
+    this.cancelAssistantMarkdownStream(); // clears draft + stray stream spinner
+    if (withLeadingNl) console.log('');
+  }
+
+  /** Stream one Markdown chunk — buffered until finalize (so headings/lists/code fences render). */
+  appendAssistantMarkdownChunk(fragment: string) {
+    const f = fragment ?? '';
+    if (!f.length) return;
+    this.assistantMarkdownDraft += f;
+
+    const ttyOut = typeof process.stdout.isTTY === 'boolean' ? process.stdout.isTTY : true;
+    if (ttyOut && !this.assistantStreamOra) {
+      this.assistantStreamOra = ora({
+        text: DIM('Receiving reply…'),
+        color: 'green',
+      }).start();
+    }
+  }
+
+  /** Emit any leftover text after chunks end (no trailing newline assumed). */
+  finalizeAssistantMarkdownStream() {
+    if (this.assistantStreamOra) {
+      this.assistantStreamOra.stop();
+      this.assistantStreamOra = null;
+    }
+    const draftRaw = this.assistantMarkdownDraft.replace(/\s+$/, '');
+    this.assistantMarkdownDraft = '';
+    if (!draftRaw.length) return;
+
+    const capped = capAssistantMarkdownSource(draftRaw, this.assistantMarkdownCap);
+    const draft = capped.text;
+    if (capped.truncated) {
+      console.log(
+        DIM(
+          `[yamx] Reply truncated (${capped.text.length}/${capped.originalLength} chars). Raise settings.maxAssistantMarkdownChars in ~/.yamx/config.json.`
+        )
+      );
+    }
+
+    try {
+      const rendered = marked.parse(draft);
+      const ansi = typeof rendered === 'string' ? rendered.trimEnd() : draft;
+      const block = wrapIndentedBodyBlock(ansi);
+      if (block.trim().length) console.log(block + '\n');
+    } catch {
+      console.log(wrapIndentedBodyBlock(draft) + '\n');
+    }
+  }
+
   streamText(text: string) {
     this.stopSpinner();
     process.stdout.write(text);
@@ -156,12 +369,27 @@ export class UI {
   }
 
   /** Render markdown content to the terminal with rich formatting */
-  renderMarkdown(text: string): string {
+  renderMarkdown(text: string, opts?: { bypassCap?: boolean }): string {
     try {
-      const rendered = marked.parse(text);
-      return typeof rendered === 'string' ? rendered.trimEnd() : text;
+      terminalBodyWidthChars();
+      let src = text;
+      if (!opts?.bypassCap) {
+        const c = capAssistantMarkdownSource(src, this.assistantMarkdownCap);
+        src = c.text;
+        if (c.truncated) {
+          console.log(
+            DIM(
+              `[yamx] Output truncated (${c.text.length}/${c.originalLength} chars). Raise settings.maxAssistantMarkdownChars in ~/.yamx/config.json.`
+            )
+          );
+        }
+      }
+      const rendered = marked.parse(src);
+      const ansi = typeof rendered === 'string' ? rendered.trimEnd() : src;
+      return wrapIndentedBodyBlock(ansi);
     } catch {
-      return text;
+      const fallback = opts?.bypassCap ? text : capAssistantMarkdownSource(text, this.assistantMarkdownCap).text;
+      return wrapIndentedBodyBlock(String(fallback).trimEnd());
     }
   }
 
@@ -174,11 +402,11 @@ export class UI {
         return `${DIM(k)}=${chalk.white(JSON.stringify(val))}`;
       })
       .join(' ');
-    if (!this.verbose) {
-      console.log(`${DIM(`  › ${name}`)} ${argsStr}`.slice(0, (process.stdout.columns || 120) - 2));
-      return;
+    const innerBody = this.verbose ? argsStr : `${TOOL_COLOR.bold(name)}\n${argsStr}`;
+    if (this.verbose) {
+      console.log(`\n  ${MX('◈')} ${MX_DIM('[TOOL LINK]')} ${TOOL_COLOR.bold(name)}`);
     }
-    console.log(`\n  ${MX('◈')} ${MX_DIM('[TOOL LINK]')} ${TOOL_COLOR.bold(name)} ${argsStr}`);
+    this.printPanel(DIM(' tool '), innerBody, '#2563EB');
   }
 
   toolResult(name: string, result: string, duration: number) {
@@ -191,21 +419,27 @@ export class UI {
         ? [...lines.slice(0, headLines), DIM(`  … ${lines.length - headLines} more lines`)]
         : lines;
 
-    if (!this.verbose) {
-      if (preview.trim()) {
-        console.log(DIM(`  (${name} · ${duration}ms)`));
-        for (const line of displayLines) {
-          console.log(`    ${DIM(line)}`);
-        }
-      } else {
-        console.log(DIM(`  (${name} · ${duration}ms · ok)`));
-      }
-      return;
-    }
+    const indentStr = '\n'; // intra-panel body stacks from top
+    const lineW = Math.max(28, terminalBodyWidthChars() - BODY_LEFT_GUTTER - 6);
 
-    console.log(`  ${SUCCESS('✓')} ${DIM(`[TOOL OK] ${name} · ${duration}ms`)}`);
-    for (const line of displayLines) {
-      console.log(`    ${DIM(line)}`);
+    const foldToolLines = (ls: typeof displayLines) =>
+      ls
+        .map((line) =>
+          wrapAnsi(typeof line === 'string' ? DIM(line).toString() : String(line), lineW, {
+            trim: false,
+            wordWrap: true,
+          })
+        )
+        .join('\n');
+
+    const metaStripe = DIM(`${SUCCESS('✓')} ${name} · ${duration}ms`);
+
+    if (preview.trim()) {
+      const body = `${metaStripe}${indentStr}${foldToolLines(displayLines)}`;
+      this.printPanel(DIM(' result '), body, '#059669');
+    } else {
+      const body = DIM(`✓ ${name} · ${duration}ms — empty output`);
+      this.printPanel(DIM(' result '), body, '#047857');
     }
   }
 
@@ -227,7 +461,14 @@ export class UI {
 
   error(msg: string) {
     this.stopSpinner();
-    console.log(`\n  ${ERROR('✗')} ${ERROR(msg)}`);
+    const w = Math.max(28, terminalBodyWidthChars() - BODY_LEFT_GUTTER - 2);
+    const head = `${ERROR('✗')} ${ERROR(msg)}`;
+    const folded = wrapAnsi(head, w, { trim: false, wordWrap: true });
+    const text = `\n${folded
+      .split('\n')
+      .map((l) => `${' '.repeat(BODY_LEFT_GUTTER)}${l}`)
+      .join('\n')}\n`;
+    console.log(text);
   }
 
   /**
@@ -252,7 +493,7 @@ export class UI {
       '\n' +
         boxen(inner, {
           padding: { top: 0, bottom: 0, left: 1, right: 1 },
-          margin: { top: 0, bottom: 1, left: 0, right: 0 },
+          margin: { top: 0, bottom: 1, left: 2, right: 2 },
           borderStyle: 'round',
           borderColor: '#FF4136',
           dimBorder: true,
@@ -268,11 +509,27 @@ export class UI {
   }
 
   info(msg: string) {
-    console.log(`  ${INFO('○')} ${DIM(msg)}`);
+    terminalBodyWidthChars();
+    const w = Math.max(28, terminalBodyWidthChars() - BODY_LEFT_GUTTER - 2);
+    const line = `${INFO('○')} ${DIM(msg)}`;
+    console.log(
+      wrapAnsi(line, w, { trim: false, wordWrap: true })
+        .split('\n')
+        .map((l) => `${' '.repeat(BODY_LEFT_GUTTER)}${l}`)
+        .join('\n')
+    );
   }
 
   warn(msg: string) {
-    console.log(`  ${WARNING('⚠')} ${WARNING(msg)}`);
+    terminalBodyWidthChars();
+    const w = Math.max(28, terminalBodyWidthChars() - BODY_LEFT_GUTTER - 2);
+    const line = `${WARNING('⚠')} ${WARNING(msg)}`;
+    console.log(
+      wrapAnsi(line, w, { trim: false, wordWrap: true })
+        .split('\n')
+        .map((l) => `${' '.repeat(BODY_LEFT_GUTTER)}${l}`)
+        .join('\n')
+    );
   }
 
   separator() {

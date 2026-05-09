@@ -6,6 +6,7 @@ import { Provider } from '../providers/base.js';
 import { SessionStore, type ChatSession } from '../session-store.js';
 import { SkillManager } from '../skills.js';
 import { BuiltinSubagent, SubagentRunner } from '../subagents.js';
+import { printReplHistory } from '../repl-history.js';
 import { getToolsByCategory } from '../tools/registry.js';
 import { logInspect } from '../tools/logs.js';
 import { UI } from '../ui.js';
@@ -42,6 +43,12 @@ export async function handleCommand(
     case '/clear':
       agent.clearHistory();
       break;
+    case '/history': {
+      const rest = input.replace(/^\s*\/history\b/i, '').trim();
+      const n = rest ? parseInt(rest, 10) : NaN;
+      await printReplHistory(Number.isFinite(n) && n > 0 ? n : undefined);
+      break;
+    }
     case '/compact':
       await agent.compact();
       break;
@@ -147,7 +154,7 @@ async function inspectLogCommand(input: string, cmd: string, ui: UI): Promise<vo
   const { path, mode, lines, pattern } = parseLogArgs(rest);
   ui.neuralStatus('logs', path ? `inspecting ${path}` : 'discovering log files');
   const result = await logInspect.execute({ path, mode, lines, pattern });
-  console.log('\n' + ui.renderMarkdown(`\`\`\`text\n${result}\n\`\`\``));
+  console.log('\n' + ui.renderMarkdown(`\`\`\`text\n${result}\n\`\`\``, { bypassCap: true }));
 }
 
 function parseLogArgs(input: string): {
@@ -202,7 +209,7 @@ async function runSubagent(name: string, task: string, provider: Provider, ui: U
   try {
     const result = await new SubagentRunner(provider).run(name, task);
     ui.stopSpinner();
-    console.log('\n' + ui.renderMarkdown(result));
+    console.log('\n' + ui.renderMarkdown(result, { bypassCap: true }));
   } catch (error: any) {
     ui.stopSpinner();
     ui.error(`Subagent failed: ${error.message}`);

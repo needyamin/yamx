@@ -10,6 +10,57 @@ import { isDangerousShellCommand } from '../tool-risk.js';
 const DEFAULT_MAX_CHARS = 100_000;
 const DEFAULT_TIMEOUT_MS = 120_000;
 
+/**
+ * Reject obvious English intent passed as a shell line (e.g. "install python").
+ * Real CLIs put the program first: winget install …, pip install …, py -0, etc.
+ */
+function rejectNaturalLanguagePseudoCommand(command: string): string | null {
+  const t = command.trim();
+  if (!t) return null;
+  if (/[|&;<>]/.test(t)) return null;
+  if (/^["'].*["']$/.test(t) && t.split(/\s+/).length === 1) return null;
+
+  const words = t.split(/\s+/).filter(Boolean);
+  /** English "verb + target" mistakes are typically 2–3 tokens; skip longer lines (posix `install`, scripts). */
+  if (words.length < 2 || words.length > 3) return null;
+
+  const first = words[0].toLowerCase();
+  const naiveVerbs = new Set([
+    'install',
+    'uninstall',
+    'setup',
+    'configure',
+    'upgrade',
+    'update',
+    'download',
+    'get',
+    'want',
+    'need',
+  ]);
+  if (!naiveVerbs.has(first)) return null;
+
+  const rest = words.slice(1);
+  if (rest.some((w) => /^-/.test(w) || /[/\\]/.test(w) || /^["']/.test(w))) return null;
+
+  const os = process.platform === 'win32' ? 'Windows' : process.platform;
+  return (
+    `Error: Not a valid shell command: ${JSON.stringify(t)}\n` +
+    `You passed plain English ("${t}") to run_command. The first token must be a real program (winget, choco, scoop, py, python, pip, brew, apt, …), not a verb like "${first}".\n` +
+    `Examples (${os}): check \`py -0\` / \`python --version\`; install with \`winget search Python\` then \`winget install Python.Python.3.12\`, or python.org installer; use \`pip install <pkg>\` only after Python works.\n` +
+    `Fix the command and retry — do not repeat this exact phrase.`
+  );
+}
+
+/** True when the phrase should be routed through model-assisted normalization before executing. */
+export function isPseudoEnglishShellIntent(command: string): boolean {
+  return rejectNaturalLanguagePseudoCommand(command) !== null;
+}
+
+/** Guidance when normalization fails (same body as execution guard returns). */
+export function pseudoShellAdviceMessage(command: string): string | null {
+  return rejectNaturalLanguagePseudoCommand(command);
+}
+
 function boundedNumber(value: unknown, fallback: number, min: number, max: number): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -20,11 +71,15 @@ export const runCommand: Tool = {
   definition: {
     name: 'run_command',
     description:
-      'Run a shell command in the project directory. In auto mode, YamX chooses cmd, PowerShell, pwsh, bash, or sh from command syntax and platform.',
+      'Execute one shell line in the project cwd. System/runtime tooling (Python, Node, Docker, …): YamX prompts require PATH/version probes first, then installers if missing. YamX may normalize one mistaken English-shaped line via the backend before executing.',
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', description: 'Full command line, e.g. npm test, dir, ls -la, ./script.sh' },
+        command: {
+          type: 'string',
+          description:
+            'Executable-first: where/python --version BEFORE winget/apt install … for system installs. Prefer npm/cmd/pnpm per project docs for repo deps.',
+        },
         cwd: { type: 'string', description: 'Subdirectory relative to project root (default ".")' },
         shell: { type: 'string', description: 'Shell to use: auto, cmd, powershell, pwsh, bash, or sh (default auto)' },
         timeout_ms: { type: 'number', description: 'Timeout in milliseconds (default 120000, max 600000)' },
@@ -39,6 +94,9 @@ export const runCommand: Tool = {
   },
   async execute(args: { command: string; cwd?: string; shell?: string; timeout_ms?: number; max_chars?: number }) {
     if (!args.command?.trim()) return 'Error: command is required.';
+
+    const pseudoErr = rejectNaturalLanguagePseudoCommand(args.command);
+    if (pseudoErr) return pseudoErr;
 
     const cwd = ensureInsideProject(args.cwd || '.');
     if (!cwd.ok) return cwd.error;
@@ -70,7 +128,11 @@ export const runCommandBackground: Tool = {
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', description: 'Command to run' },
+        command: {
+          type: 'string',
+          description:
+            'Executable-first shell line (same rules as run_command): e.g. npm run dev, not bare English like "install python".',
+        },
         cwd: { type: 'string', description: 'Working directory relative to project root (default ".")' },
         shell: { type: 'string', description: 'Shell to use: auto, cmd, powershell, pwsh, bash, or sh (default auto)' },
       },
@@ -83,6 +145,9 @@ export const runCommandBackground: Tool = {
   },
   async execute(args: { command: string; cwd?: string; shell?: string }) {
     if (!args.command?.trim()) return 'Error: command is required.';
+
+    const pseudoErr = rejectNaturalLanguagePseudoCommand(args.command);
+    if (pseudoErr) return pseudoErr;
 
     const cwd = ensureInsideProject(args.cwd || '.');
     if (!cwd.ok) return cwd.error;

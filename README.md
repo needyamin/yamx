@@ -1,10 +1,48 @@
 # YamX
 
-**YamX** is a terminal assistant centered on **shell commands**, **packages and scripts**, **git**, **logs**, and fast local facts. Matching input runs **directly on your machine** with **no LLM call**. Natural-language prompts use a connected model plus **29 built-in tools**; replies are biased toward **short answers**, **few questions**, and **run / fix / retry** on errors.
+**YamX** is a **terminal-first coding and ops agent**: it is built to help you run and fix things **from the command line**—scripts, package managers, installs, git, builds, logs, and local diagnostics—without turning every answer into a tutorial.
 
-Requires **Node.js 18+**.
+**Requirements:** Node.js **18+**.
 
-**Providers:** OpenAI, Anthropic, Google Gemini, OpenRouter (wide model choice), Ollama (local).
+---
+
+## Purpose
+
+YamX exists to be the **fast path between your intent and your machine**:
+
+- **Concrete work** (run this, read that log, fix this error) should move through **commands and tools**, not long prose.
+- **Repeated work** should land in **persisted sessions** so you can resume the same thread instead of re-explaining context.
+- **Risky actions** should respect **permissions and policy**, not run silently.
+
+It is not a general-purpose chat widget: the system behavior, defaults, and tooling are aligned with **developers and operators who live in a shell**.
+
+---
+
+## Goals (what “good” looks like)
+
+| Goal | What YamX does toward it |
+|------|---------------------------|
+| **CLI-native** | Plain shell-like input can run **without an LLM round-trip** when it is clearly a command. |
+| **Fix loops** | Failures from `run_command` and similar tools are meant to drive **diagnose → change something → retry**, not copy-paste essays. |
+| **Short user-facing answers** | Prompting and UI bias toward **dense** replies. Assistant markdown is **hard-capped** per message (see Configuration) so huge generations do not flood the terminal or bloat saved history. |
+| **Local facts first** | Detected local tooling (e.g. Python, Node, ripgrep) is surfaced in context so the model reaches for **your** environment before inventing steps. |
+| **Runtime preflight** | For install/PATH/version-style asks about common runtimes **(Python, Node, Docker, Git, Rust, Java, Go, kubectl)**, YamX runs **read-only local shell probes** before the first model reply and injects a `yamx_local_preflight` block into the conversation so answers are grounded in **this machine**, not generic tutorials. |
+| **Safe automation** | Hooks, approval modes, and optional allow/deny shell patterns support controlled automation. |
+
+---
+
+## What it is (and is not)
+
+**It is**
+
+- A REPL-style **agent** with **built-in tools** (files, shell, git, logs, light web fetch, project intelligence).
+- **Multi-provider**: OpenAI, Anthropic, Gemini, OpenRouter, Ollama (local).
+- **Session-based**: config and chat snapshots under `~/.yamx` (on Windows, `%USERPROFILE%\.yamx`).
+
+**It is not**
+
+- A guarantee that the remote model will never *attempt* a long reply—it can still stream tokens—but YamX **clips** what is shown and what is **persisted** beyond a configurable limit.
+- A replacement for your IDE’s refactor engine; it is optimized for **terminal workflows** and **repository + shell** tasks.
 
 ---
 
@@ -15,7 +53,7 @@ npm install -g @needyamin/yamx@latest
 yamx
 ```
 
-**From Git**
+**From this repository**
 
 ```bash
 git clone https://github.com/needyamin/yamx.git && cd yamx
@@ -34,7 +72,7 @@ npx @needyamin/yamx
 npm uninstall -g @needyamin/yamx
 ```
 
-Config and chats live under `~/.yamx` (`%USERPROFILE%\.yamx` on Windows). To remove everything:
+Remove all YamX data:
 
 ```bash
 # macOS / Linux
@@ -50,83 +88,90 @@ Remove-Item -Recurse -Force $HOME\.yamx
 
 ```bash
 yamx --onboard    # provider, API key, default model, core settings
-yamx --diagnose   # Node, registry, keys (mask), git, Ollama, sessions, probes
-yamx              # REPL (sessions persist under ~/.yamx/sessions/)
+yamx --diagnose   # config, keys (masked), connectivity, sessions
+yamx              # start the REPL (sessions persist)
 ```
 
-If **`~/.yamx/config.json`** is missing, or your **default (or `-p`) cloud provider** has **no API key** in config and no matching env var (`OPENROUTER_API_KEY`, etc.), a normal **`yamx`** run starts **the same interactive flow as `yamx --onboard`** before the REPL. Use **`yamx --onboard`** anytime to redo setup explicitly.
+If `~/.yamx/config.json` is missing—or your default cloud provider has **no** API key in config and no matching env var—a normal `yamx` run starts the **same onboarding flow** before the REPL. Use `yamx --onboard` anytime to change setup.
 
 ---
 
-## Highlights
+## How input is handled
 
-| Topic | Behavior |
-|--------|-----------|
-| **Local first** | Lines that look like shell commands bypass the API (zero tokens). |
-| **CLI detection** | Common tools (`python`, `node`, `jq`, `rg`, …) are probed per OS and surfaced in context. |
-| **Quiet UI** | `verboseCli` defaults to `false`. Model council defaults to **off**. |
-| **Provider errors** | Many API/stream failures are shown in a **boxed**, readable summary plus suggested next steps (e.g. context too large → `/compact` or `--new-chat`). |
-| **Safety** | Risky tooling can require confirmation; destructive patterns can be blocked. |
-
-Forced shell prefixes when you want to avoid the router: `$ cmd`, `! cmd`, `> cmd`, or `run: cmd`.
+- **Direct shell** — Lines that look like real shell commands can execute **locally with no LLM call** (zero tokens for that line). To force shell execution and skip routing, you can use prefixes such as `$ cmd`, `! cmd`, `> cmd`, or `run: cmd`.
+- **Runtime preflight** — Phrases like **“install python”** are not valid shell lines, so they go to the agent. Before that turn’s model call, YamX may already have run **`where` / `py -0` / `python --version`** (and similar) on **your OS** and appended a synthetic user message tagged **`yamx_local_preflight`** with the captured output. The model is instructed to use that as evidence and propose **concrete `run_command` next steps** on this machine—not multi-OS Markdown guides. Disable via `settings.preflightRuntimeProbes` (see Configuration).
+- **Agent** — Natural-language requests go to the configured model with **tool calling**: the agent is steered toward **run / inspect / fix** rather than platform-wide install guides.
 
 ---
 
 ## Configuration
 
-Environment (optional `.env` in cwd):
+**Environment** (optional `.env` in the current working directory):
 
-| Variable | Purpose |
-|-----------|---------|
+| Variable | Role |
+|----------|------|
 | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` | Provider secrets |
 | `DEFAULT_PROVIDER`, `DEFAULT_MODEL` | Defaults |
 
-Filesystem:
+**Filesystem layout:**
 
-| Path | Purpose |
-|------|---------|
-| `~/.yamx/config.json` | Providers, keys, `settings.*` |
+| Path | Role |
+|------|------|
+| `~/.yamx/config.json` | Providers, keys, `settings` |
 | `~/.yamx/state.json` | Active session id |
 | `~/.yamx/sessions/*.json` | Chat history |
 
+Interactive editor:
+
 ```bash
-yamx config         # wizard and toggles
-yamx --reset-config # wipe config defaults only (sessions kept)
+yamx config
+yamx --reset-config   # reset config file to defaults (sessions kept)
 ```
 
-Important **`settings`** keys: `verboseCli`, `modelCouncil.enabled` / `.mode`, `streamOutput`, `maxTokens`, `temperature`, `autoApprove`, `permissionMode`, `contextBudgetChars`, `maxToolResultChars`, `hooksEnabled`, `subagents.enabled`.
+**Notable `settings` keys:**
+
+| Key | Role |
+|-----|------|
+| `streamOutput` | Streaming vs batched model output |
+| `maxTokens`, `temperature` | Generation limits |
+| `autoApprove`, `permissionMode` | Tool execution policy |
+| `contextBudgetChars` | When long history triggers in-agent summarization |
+| `maxToolResultChars` | How much tool output is kept in model-visible history |
+| `maxAssistantMarkdownChars` | **Hard cap** on assistant markdown **rendered and stored** per assistant message (default **3200**). Raise in `config.json` when you need longer explanations. |
+| `preflightRuntimeProbes` | When **`true`** (default), install/PATH/version-style messages about supported runtimes trigger **automatic read-only probes** before the model reply. Set **`false`** to skip injection of `yamx_local_preflight`. |
+| `verboseCli` | Extra status / decorative output (default off) |
+| `modelCouncil.enabled` / `.mode` | Optional hidden “council” planning pass |
+| `hooksEnabled` | Hook scripts around agent events |
+| `subagents.enabled` | Built-in subagent slash commands |
 
 ---
 
-## Sessions & context
+## Sessions and context
 
-If the combined **system prompt + chat** exceeds what the provider allows, YamX tries to summarize that failure clearly. To avoid it proactively:
+Histories autosave while you work.
 
-| Action | Effect |
-|---------|--------|
-| `/compact` | Summarize older turns in-session |
-| `yamx --new-chat` | New thread (smaller history) |
+| Need | Command / flag |
+|------|----------------|
+| Shrink this conversation in place | `/compact` |
+| New thread | `yamx --new-chat` |
+| List saved threads | `yamx --history` |
+| Resume a thread | `yamx --resume <id>` |
+| Clear active thread to bootstrap, exit | `yamx --clear-chat` |
+| Delete one snapshot | `yamx --delete-chat <id>` |
 
-| Flag | Effect |
-|------|--------|
-| `yamx` | Resume latest / active chat |
-| `yamx --new-chat` | New session file |
-| `yamx --history` | List saved threads |
-| `yamx --resume <id>` | UUID or prefix |
-| `yamx --clear-chat` | Trim active thread to bootstrap, exit |
-| `yamx --delete-chat <id>` | Drop one snapshot |
-
-Histories autosave during use. Long threads align with **`contextBudgetChars`** (internal summarization).
+If the provider rejects a request for **context limits**, YamX tries to surface a readable error; proactively use **`/compact`**, **`--new-chat`**, or a larger-context **model**.
 
 ---
 
 ## Slash commands (in-session)
 
-`/help`, `/exit` | `/quit`, `/clear`, `/compact`, `/undo`, `/model`, `/cost`, `/diff`, `/status`, `/log` | `/logs`, `/tools`, `/run ...`, `/init`, `/remember`, `/memory`, `/skills`, `/agents`, `/agent ...`, `/explore`, `/plan`, `/review`.
+Examples: `/help`, `/exit` | `/quit`, `/clear`, `/compact`, `/undo`, `/model`, `/cost`, `/diff`, `/status`, `/log` | `/logs`, `/tools`, `/run …`, `/init`, `/remember`, `/memory`, `/skills`, `/agents`, `/agent …`, `/explore`, `/plan`, `/review`.
+
+Use `/help` in the REPL for the authoritative list.
 
 ---
 
-## Agent tools (29)
+## Built-in tools (29)
 
 **Files:** `read_file`, `write_file`, `edit_file`, `list_files`, `search_files`, `delete_file`, `multi_edit`, `copy_file`, `move_file`, `file_info`, `grep_search`, `directory_tree`, `patch_file`.
 
@@ -140,26 +185,28 @@ Histories autosave during use. Long threads align with **`contextBudgetChars`** 
 
 ---
 
-## Contribute / build
+## Develop and contribute
 
 ```text
-src/index.ts               CLI flags, onboarding, persistence
-src/agent.ts               Stream, tools, compaction, approvals
-src/context.ts             Project scan + system prompt
-src/provider-error-format.ts
-src/direct-command.ts      Shell vs routed input
-src/tools/                  Built-in tooling
+src/index.ts               CLI entry, flags, onboarding, persistence
+src/agent.ts               Streaming, tools, compaction, approvals
+src/context.ts             Workspace scan + system prompt
+src/direct-command.ts      Shell routing vs agent
+src/ui.ts                  Terminal Markdown and layout
+src/assistant-output-cap.ts Limits on assistant markdown
+src/runtime-preflight.ts   Auto local probes before agent turn (install/PATH intents)
+src/tools/                 Built-in tool implementations
 ```
 
 ```bash
 npm install
 npm run build
 npm test
-npm run dev               # TS dev boot
+npm run dev          # ts-node ESM boot
 yamx --diagnose
 ```
 
-PowerShell blocking `npm` scripts → use **`npm.cmd run ...`**.
+On Windows, if PowerShell execution policy blocks `npm` scripts, prefer **`npm.cmd run …`**.
 
 ---
 
@@ -168,42 +215,47 @@ PowerShell blocking `npm` scripts → use **`npm.cmd run ...`**.
 ```text
 yamx [options]
 
--p, --provider <name>     openai | anthropic | gemini | openrouter | ollama
--m, --model <name>
--t, --temperature <n>
---max-tokens <n>
---auto-approve
---no-stream
---new-chat, --resume, --history, --clear-chat, --delete-chat
---onboard, --reset-config, --diagnose
+  -p, --provider <name>     openai | anthropic | gemini | openrouter | ollama
+  -m, --model <name>
+  -t, --temperature <n>
+  --max-tokens <n>
+  --auto-approve
+  --no-stream
+  --new-chat
+  --resume <id>
+  --history
+  --clear-chat
+  --delete-chat <id>
+  --onboard
+  --reset-config
+  --diagnose
 
-yamx config              interactive configurator
+yamx config               interactive configuration
 ```
 
 ---
 
 ## Troubleshooting
 
-**`yamx`: command not found** — Put npm’s global `bin` on `PATH`; open a fresh terminal after `npm install -g`.
+**`yamx`: command not found** — Ensure npm’s global `bin` directory is on `PATH`; open a new terminal after `npm install -g`.
 
-**Diagnose glyphs look wrong on Windows** — Prefer **Windows Terminal**, or run **`chcp 65001`** before YamX so UTF‑8 glyphs render; alternatively ignore cosmetic markers-only lines.
+**Box drawing / glyphs look wrong on Windows** — Prefer **Windows Terminal**, or run `chcp 65001` for UTF‑8 code page before starting YamX.
 
-**`npm whoami` → 401 Unauthorized** — Not logged in or token expired:
+**Assistant replies cut off** — Raise `settings.maxAssistantMarkdownChars` in `~/.yamx/config.json` (defaults are intentionally aggressive for CLI-style answers).
 
-```bash
-npm login
-npm whoami
-```
+**Model still writes install essays** — Confirm `settings.preflightRuntimeProbes` is not `false`; the `yamx_local_preflight` blob should appear in session history for turns like “install python.” If a model ignores it, switch model or lower temperature; YamX cannot fully control remote model behavior.
 
-Check `~/.npmrc` for an old `_authToken` and redo login if publishing fails.
+**Extra user message in saved chats** — Preflight adds a second `user` role message with probe output. That is intentional so the thread stays auditable and the model stays grounded.
 
-**`npm publish` → 404 for `@scope/name`** — The logged-in **`npm`** user must **own that scope**. For **`@needyamin/yamx`**, `npm whoami` should be **`needyamin`** (or you must be an org **`@needyamin`** publisher). Otherwise rename `package.json` **`name`** to `@yourusername/yamx` and publish with **`"publishConfig": { "access": "public" }`**.
+**`npm whoami` → 401** — Run `npm login` and verify `npm whoami`.
 
-**Context / token limit errors from the provider** — Use **`/compact`**, **`--new-chat`**, or a larger-context **model**.
+**Publishing scope errors** — The logged-in npm user must be allowed to publish the package **`name`** in `package.json` (see npm docs for scopes and org publishing).
 
-**Stale banner version** — Reinstall globals: **`npm uninstall -g @needyamin/yamx && npm install -g @needyamin/yamx@latest`**.
+**Provider context / token limit errors** — Use `/compact`, `yamx --new-chat`, or a model with a larger context window.
 
-**Git scan `EPERM` under Windows user profile folders** — Use YamX **1.0.4+** when scanning noisy home dirs.
+**Stale global version** — `npm uninstall -g @needyamin/yamx && npm install -g @needyamin/yamx@latest`.
+
+**Git scan `EPERM` under Windows profile folders** — Prefer recent YamX versions when scanning permissive directories.
 
 ---
 

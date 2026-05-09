@@ -31,6 +31,8 @@ import { parseDirectCommand } from './direct-command.js';
 import { runCommand } from './tools/shell.js';
 import { handleCommand } from './commands/index.js';
 import { buildAgentInputWithProjectIntel, shouldAttachProjectIntel } from './project-intel.js';
+import { REPL_HISTORY_PATH, printReplHistory } from './repl-history.js';
+import { DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS } from './assistant-output-cap.js';
 
 dotenv.config();
 
@@ -286,7 +288,9 @@ program.action(async (options) => {
   const cfg = await config.load();
   const verboseCli = cfg.settings?.verboseCli === true;
   const councilOn = cfg.settings?.modelCouncil?.enabled === true;
-  const ui = new UI({ verbose: verboseCli });
+  const assistantMdCap =
+    cfg.settings?.maxAssistantMarkdownChars ?? DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS;
+  const ui = new UI({ verbose: verboseCli, maxAssistantMarkdownChars: assistantMdCap });
   const store = new SessionStore();
   await store.init();
 
@@ -538,6 +542,8 @@ program.action(async (options) => {
     modelCouncilMode: cfg.settings?.modelCouncil?.mode ?? 'adaptive',
     maxToolResultChars: cfg.settings?.maxToolResultChars ?? 24_000,
     verboseCli,
+    maxAssistantMarkdownChars: assistantMdCap,
+    preflightRuntimeProbes: cfg.settings?.preflightRuntimeProbes !== false,
   });
 
   ui.banner(provider.name, provider.modelId, {
@@ -546,7 +552,7 @@ program.action(async (options) => {
   }, getToolCount(), VERSION, councilOn);
 
   if (currentSession.messages.length === 1) {
-    console.log(chalk.dim('  /help - slash commands | type a shell or project question anytime\n'));
+    console.log(chalk.dim('  /help — slash commands | history or /history [n] — ~/.yamx/history\n'));
   } else {
     console.log(); // Just a spacer if resuming chat
   }
@@ -583,6 +589,13 @@ program.action(async (options) => {
       continue;
     }
 
+    const histExec = /^history(?:\s+(\d+))?\s*$/i.exec(input);
+    if (histExec) {
+      const cap = histExec[1] ? parseInt(histExec[1], 10) : NaN;
+      await printReplHistory(Number.isFinite(cap) && cap > 0 ? cap : undefined);
+      continue;
+    }
+
     const directCommand = parseDirectCommand(input);
     if (directCommand) {
       await executeDirectCommand(directCommand, agent.getUI(), options.autoApprove || cfg.settings?.autoApprove || false);
@@ -605,7 +618,7 @@ async function createInputSession(): Promise<{
   save(line: string): Promise<void>;
   close(): void;
 }> {
-  const historyPath = nodePath.join(os.homedir(), '.yamx', 'history');
+  const historyPath = REPL_HISTORY_PATH;
   await fs.ensureDir(nodePath.dirname(historyPath));
   const history = await fs.readFile(historyPath, 'utf-8')
     .then((s) => s.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))

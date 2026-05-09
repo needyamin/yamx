@@ -7,9 +7,19 @@
 import { Provider, Message, ToolCall, CompletionResult } from './providers/base.js';
 import { allTools, getToolDefinitions, getTool } from './tools/registry.js';
 import { ensureInsideProject } from './tools/utils.js';
+import {
+  isPseudoEnglishShellIntent,
+  pseudoShellAdviceMessage,
+} from './tools/shell.js';
 import { evaluateToolCall, PermissionMode } from './policy.js';
 import { HookManager } from './hooks.js';
 import { UI } from './ui.js';
+import {
+  ASSISTANT_TRUNCATION_HISTORY_NOTE,
+  capAssistantMarkdownSource,
+  DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS,
+} from './assistant-output-cap.js';
+import { maybeRuntimePreflightMessage } from './runtime-preflight.js';
 import inquirer from 'inquirer';
 
 const MAX_TOOL_ITERATIONS = 40; // Safety: prevent infinite loops
@@ -38,6 +48,13 @@ export interface AgentOptions {
   maxToolResultChars?: number;
   /** Neural-status noise, fancy tool banners, turn timing footer */
   verboseCli?: boolean;
+  /** Cap assistant markdown rendered and stored per message */
+  maxAssistantMarkdownChars?: number;
+  /**
+   * When true (default): install/PATH-style user lines run read-only local probes first;
+   * results are injected before the model as a user-role yamx_local_preflight XML-style block.
+   */
+  preflightRuntimeProbes?: boolean;
 }
 
 export class Agent {
@@ -93,9 +110,14 @@ export class Agent {
       modelCouncilMode: 'adaptive' as const,
       maxToolResultChars: 24_000,
       verboseCli: false,
+      maxAssistantMarkdownChars: DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS,
+      preflightRuntimeProbes: true,
       ...options,
     };
-    this.ui = new UI({ verbose: merged.verboseCli === true });
+    this.ui = new UI({
+      verbose: merged.verboseCli === true,
+      maxAssistantMarkdownChars: merged.maxAssistantMarkdownChars,
+    });
     this.options = merged;
     if (this.options.initialHistory && this.options.initialHistory.length > 0) {
       this.history = JSON.parse(JSON.stringify(this.options.initialHistory)) as Message[];
@@ -194,6 +216,15 @@ export class Agent {
   async chat(userInput: string): Promise<void> {
     await this.ensureContextBudget();
     this.history.push({ role: 'user', content: userInput });
+
+    if (this.options.preflightRuntimeProbes !== false) {
+      const preflightBlob = await maybeRuntimePreflightMessage(userInput);
+      if (preflightBlob) {
+        this.ui.neuralStatus('preflight', 'attached read-only local probes to context');
+        this.history.push({ role: 'user', content: preflightBlob });
+      }
+    }
+
     this.fileChanges = []; // Reset undo buffer per turn
     this.toolCallCounts.clear();
     this.turnStartTime = Date.now();
@@ -336,17 +367,30 @@ export class Agent {
         this.totalOutputTokens += result.usage.outputTokens;
       }
 
-      // Add assistant message to history
+      const assistantBody = result.content ?? '';
+      let storedAssistantText: string | null | undefined = result.content;
+      const maxMd = this.options.maxAssistantMarkdownChars ?? DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS;
+
+      let capResult: ReturnType<typeof capAssistantMarkdownSource> | null = null;
+      if (assistantBody.length) {
+        capResult = capAssistantMarkdownSource(assistantBody, maxMd);
+        if (capResult.truncated) {
+          storedAssistantText = capResult.text + ASSISTANT_TRUNCATION_HISTORY_NOTE;
+          this.ui.info(
+            `Reply truncated (${capResult.text.length}/${capResult.originalLength} chars). Raise settings.maxAssistantMarkdownChars in ~/.yamx/config.json.`
+          );
+        }
+      }
+
       const assistantMsg: Message = {
         role: 'assistant',
-        content: result.content,
+        content: storedAssistantText,
         tool_calls: result.tool_calls,
       };
       this.history.push(assistantMsg);
 
-      if (result.content) {
-        // Render markdown
-        const rendered = this.ui.renderMarkdown(result.content);
+      if (capResult) {
+        const rendered = this.ui.renderMarkdown(capResult.text, { bypassCap: true });
         console.log('\n' + rendered);
       }
 
@@ -381,10 +425,10 @@ export class Agent {
           case 'text':
             if (firstText) {
               this.ui.stopSpinner();
-              process.stdout.write('\n');
+              this.ui.beginAssistantMarkdownStream(true);
               firstText = false;
             }
-            process.stdout.write(chunk.content || '');
+            this.ui.appendAssistantMarkdownChunk(chunk.content || '');
             fullContent += chunk.content || '';
             break;
 
@@ -429,16 +473,27 @@ export class Agent {
         }
       }
 
-      if (fullContent) {
-        console.log(); // newline after stream
-      }
+      this.ui.finalizeAssistantMarkdownStream();
 
       this.ui.stopSpinner();
+
+      let storedStreamText: string | null =
+        fullContent.length > 0 ? fullContent.replace(/\s+$/, '') : null;
+
+      if (storedStreamText?.length) {
+        const cap = capAssistantMarkdownSource(
+          storedStreamText,
+          this.options.maxAssistantMarkdownChars ?? DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS
+        );
+        if (cap.truncated) {
+          storedStreamText = cap.text + ASSISTANT_TRUNCATION_HISTORY_NOTE;
+        }
+      }
 
       // Add assistant message to history
       const assistantMsg: Message = {
         role: 'assistant',
-        content: fullContent || null,
+        content: storedStreamText,
         tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
       };
       this.history.push(assistantMsg);
@@ -448,9 +503,76 @@ export class Agent {
         tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
       };
     } catch (error: any) {
+      this.ui.cancelAssistantMarkdownStream();
       this.ui.stopSpinner();
       this.ui.apiFailure('stream', error);
       return { content: null };
+    }
+  }
+
+  /** Parse a single shell line from a small completion (fences, bullets, $ stripped). */
+  private stripOneShellLineFromCompletion(raw: string): string | null {
+    let t = (raw || '').trim();
+    if (!t) return null;
+    const fenced = /^```(?:[a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)```/;
+    const fm = t.match(fenced);
+    if (fm) t = fm[1].trim();
+
+    const lines = t
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !/^#{1,6}\s/.test(l));
+    if (!lines.length) return null;
+
+    let line = lines[0];
+    if (/^NONE\.?$/i.test(line)) return null;
+    line = line.replace(/^[-*•]\s+/, '').trim();
+    line = line.replace(/^(?:CMD|Command)\s*:\s*/i, '').trim();
+    line = line.replace(/^\$\s+/, '').trim();
+    line = line.replace(/^>\s*/, '').trim();
+    line = line.replace(/^["']|["']$/g, '').trim();
+    if (!line || /^NONE\.?$/i.test(line)) return null;
+    if (line.length > 4096) return null;
+    return line;
+  }
+
+  /** Ask the active model for one executable-first substitution; null if unsafe or unparseable. */
+  private async resolvePseudoShellCommand(command: string): Promise<string | null> {
+    const platform = `${process.platform} ${process.arch}`;
+    const osHint =
+      process.platform === 'win32'
+        ? 'Windows: first choice is often read-only probes (where, py -0, winget search); then winget/choco/scoop installers — never naked "install foo".'
+        : 'Unix/macOS: use command -v / --version probes first; then apt/brew/dnf-native install lines.';
+
+    type Opt = Parameters<Provider['complete']>[0];
+    const opts: Opt = {
+      messages: [
+        {
+          role: 'system',
+            content:
+              `You fix invalid shell one-liners proposed for YamX (English verbs first, like "install python"). ` +
+              `Return ONE corrected executable-first shell line for this OS (${osHint}). ` +
+              `Prefer harmless probes where appropriate; otherwise one concrete installer/package-manager command. Reply NONE only if ambiguous. ` +
+              `Single line only; no markdown fences; no explanation.`,
+        },
+        {
+          role: 'user',
+          content: `Invalid or vague shell line:\n${command}\n\nPlatform: ${platform}\nEmit one replacement command or NONE.`,
+        },
+      ],
+      maxTokens: 220,
+      temperature: 0.05,
+    };
+
+    try {
+      const result = await this.withRetry(() => this.provider.complete(opts), 'Shell intent');
+      const line = this.stripOneShellLineFromCompletion(result.content || '');
+      if (!line) return null;
+      if (line === command.trim()) return null;
+      if (isPseudoEnglishShellIntent(line)) return null;
+      return line;
+    } catch {
+      return null;
     }
   }
 
@@ -483,6 +605,38 @@ export class Agent {
           args = JSON.parse(fixed);
         } catch {
           args = {};
+        }
+      }
+
+      // Model-assisted normalization for English-as-shell mistakes (before repeat key / approvals)
+      if (
+        (tc.function.name === 'run_command' || tc.function.name === 'run_command_background') &&
+        typeof args.command === 'string' &&
+        isPseudoEnglishShellIntent(args.command)
+      ) {
+        this.ui.startThinking('Finding a concrete shell command…');
+        let normalized: string | null = null;
+        try {
+          normalized = await this.resolvePseudoShellCommand(args.command.trim());
+        } finally {
+          this.ui.stopSpinner();
+        }
+
+        if (normalized) {
+          this.ui.info(`Shell intent corrected: "${args.command}" → "${normalized}"`);
+          args.command = normalized;
+        } else {
+          const advice =
+            pseudoShellAdviceMessage(args.command) ||
+            `Unable to derive a runnable command from ${JSON.stringify(args.command)}`;
+          this.ui.warn(`Could not normalize vague shell wording (no confident match from model).`);
+          this.history.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            name: tc.function.name,
+            content: `${advice}\n(yamx: model-assisted normalization returned no safe substitution; pick an explicit installer binary first, e.g. winget/py/pip/apt/brew.)`,
+          });
+          continue;
         }
       }
 

@@ -77,6 +77,25 @@ function clipField(s: string, max: number): string {
   return s.slice(0, Math.max(0, max - 1)) + '…';
 }
 
+/** Show large command output (e.g. ipconfig) without chopping mid-line; model still receives full text. */
+const TOOL_RESULT_DISPLAY_MAX_CHARS = 48_000;
+const TOOL_RESULT_MAX_LINES_NORMAL = 250;
+const TOOL_RESULT_MAX_LINES_VERBOSE = 500;
+
+/** Prefer cutting at newline so boxed panels stay readable */
+function truncateToolTextAtNewline(raw: string, maxChars: number): { text: string; truncatedChars: boolean } {
+  if (raw.length <= maxChars) return { text: raw, truncatedChars: false };
+  let head = raw.slice(0, maxChars);
+  const nl = head.lastIndexOf('\n');
+  if (nl > maxChars * 0.35) head = head.slice(0, nl);
+  return {
+    text:
+      head +
+      `\n[yamx] …preview truncated (${raw.length.toLocaleString()} chars; full tool output is still sent to the agent.)`,
+    truncatedChars: true,
+  };
+}
+
 export type UIOptions = { verbose?: boolean; maxAssistantMarkdownChars?: number };
 
 export class UI {
@@ -410,36 +429,39 @@ export class UI {
   }
 
   toolResult(name: string, result: string, duration: number) {
-    const preview = result.length > 500 ? `${result.slice(0, 497)}…` : result;
-    const lines = preview.split('\n');
-    const maxLines = this.verbose ? 15 : 8;
-    const headLines = this.verbose ? 12 : 6;
-    const displayLines =
-      lines.length > maxLines
-        ? [...lines.slice(0, headLines), DIM(`  … ${lines.length - headLines} more lines`)]
-        : lines;
+    const normalized = String(result ?? '').replace(/\r\n/g, '\n');
+    const maxLines = this.verbose ? TOOL_RESULT_MAX_LINES_VERBOSE : TOOL_RESULT_MAX_LINES_NORMAL;
 
-    const indentStr = '\n'; // intra-panel body stacks from top
-    const lineW = Math.max(28, terminalBodyWidthChars() - BODY_LEFT_GUTTER - 6);
+    const { text: capped, truncatedChars } = truncateToolTextAtNewline(normalized, TOOL_RESULT_DISPLAY_MAX_CHARS);
+    const lines = capped.split('\n');
 
-    const foldToolLines = (ls: typeof displayLines) =>
-      ls
-        .map((line) =>
-          wrapAnsi(typeof line === 'string' ? DIM(line).toString() : String(line), lineW, {
-            trim: false,
-            wordWrap: true,
-          })
-        )
-        .join('\n');
-
-    const metaStripe = DIM(`${SUCCESS('✓')} ${name} · ${duration}ms`);
-
-    if (preview.trim()) {
-      const body = `${metaStripe}${indentStr}${foldToolLines(displayLines)}`;
-      this.printPanel(DIM(' result '), body, '#059669');
+    let lineTrunc = false;
+    let displayLines: string[];
+    if (lines.length > maxLines) {
+      const kept = Math.max(4, maxLines - 2);
+      displayLines = [
+        ...lines.slice(0, kept),
+        DIM(
+          `  … ${lines.length - kept} more lines (preview limit; full output is still sent to the agent.)`
+        ) as string,
+      ];
+      lineTrunc = true;
     } else {
-      const body = DIM(`✓ ${name} · ${duration}ms — empty output`);
-      this.printPanel(DIM(' result '), body, '#047857');
+      displayLines = lines;
+    }
+
+    const header = `${SUCCESS('✓')} ${name} · ${duration}ms`;
+    const dimBody = displayLines.map((ln) => DIM(ln)).join('\n');
+    const hints: string[] = [];
+    if (truncatedChars || lineTrunc) {
+      hints.push(DIM('  (panel preview limited; full tool output is still in agent context)'));
+    }
+    const bodyForBox = [header, dimBody, ...hints].filter(Boolean).join('\n').trimEnd();
+
+    if (normalized.trim()) {
+      this.printPanel(DIM(' result '), bodyForBox, '#059669');
+    } else {
+      this.printPanel(DIM(' result '), DIM(`✓ ${name} · ${duration}ms — empty output`), '#047857');
     }
   }
 

@@ -20,6 +20,7 @@ import {
   DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS,
 } from './assistant-output-cap.js';
 import { maybeRuntimePreflightMessage } from './runtime-preflight.js';
+import { buildCurrentIntentMessage, classifyUserIntent } from './intent.js';
 import inquirer from 'inquirer';
 
 const MAX_TOOL_ITERATIONS = 40; // Safety: prevent infinite loops
@@ -216,9 +217,11 @@ export class Agent {
   async chat(userInput: string): Promise<void> {
     try {
       await this.ensureContextBudget();
+      const latestIntent = classifyUserIntent(userInput);
       this.history.push({ role: 'user', content: userInput });
+      this.history.push({ role: 'user', content: buildCurrentIntentMessage(latestIntent) });
 
-      if (this.options.preflightRuntimeProbes !== false) {
+      if (this.options.preflightRuntimeProbes !== false && latestIntent.kind !== 'conversation') {
         const preflightBlob = await maybeRuntimePreflightMessage(userInput);
         if (preflightBlob) {
           this.ui.neuralStatus('preflight', 'attached read-only local probes to context');
@@ -231,7 +234,7 @@ export class Agent {
       this.turnStartTime = Date.now();
 
       this.ui.neuralStatus('input', 'request received; preparing model context');
-      await this.runModelCouncil(userInput);
+      await this.runModelCouncil(userInput, latestIntent.kind);
 
       let iterations = 0;
 
@@ -273,8 +276,12 @@ export class Agent {
     }
   }
 
-  private async runModelCouncil(userInput: string): Promise<void> {
+  private async runModelCouncil(userInput: string, intentKind = classifyUserIntent(userInput).kind): Promise<void> {
     if (this.options.modelCouncilEnabled === false || this.options.modelCouncilMode === 'off') return;
+    if (intentKind === 'conversation' || intentKind === 'empty') {
+      this.ui.neuralStatus('council', 'skipped council for non-task turn');
+      return;
+    }
     if (this.options.modelCouncilMode !== 'always' && !this.shouldRunModelCouncil(userInput)) {
       this.ui.neuralStatus('council', 'adaptive token saver skipped council for this simple turn');
       return;

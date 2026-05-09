@@ -46,6 +46,11 @@ export interface YamConfig {
     maxAssistantMarkdownChars?: number;
     /** Read-only runtime/project ops probes auto-run before agent turn for install/PATH/diagnose asks (default on). */
     preflightRuntimeProbes?: boolean;
+    /**
+     * When true: before each session (throttled), check npm for a newer @needyamin/yamx and prompt to upgrade.
+     * Disable with env YAMX_SKIP_UPDATE_CHECK=1 or in CI.
+     */
+    checkForUpdates?: boolean;
   };
 }
 
@@ -75,6 +80,7 @@ const DEFAULT_CONFIG: YamConfig = {
     verboseCli: false,
     maxAssistantMarkdownChars: 3200,
     preflightRuntimeProbes: true,
+    checkForUpdates: false,
   },
 };
 

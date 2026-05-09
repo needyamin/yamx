@@ -15,6 +15,30 @@ test('project path guard rejects parent traversal', async () => {
   assert.equal(ensureInsideProject('../package.json').ok, false);
 });
 
+test('cli update check compares semver-ish versions', async () => {
+  const { compareSemver } = await import('../dist/cli-update-check.js');
+  assert.equal(compareSemver('1.0.9', '1.0.10'), -1);
+  assert.equal(compareSemver('1.0.10', '1.0.9'), 1);
+  assert.equal(compareSemver('1.0.0', '1.0.0'), 0);
+});
+
+test('intent classifier separates conversation, unclear follow-ups, and tasks', async () => {
+  const { buildCurrentIntentMessage, classifyUserIntent, extractCurrentUserRequest, isClearlyActionableInput } = await import('../dist/intent.js');
+  assert.equal(classifyUserIntent('hi').kind, 'conversation');
+  assert.equal(classifyUserIntent('thanks').kind, 'conversation');
+  assert.equal(classifyUserIntent('more').kind, 'clarification');
+  assert.equal(classifyUserIntent('fix the failing build').kind, 'task');
+  assert.equal(classifyUserIntent('npm run build').kind, 'direct-command');
+  const wrapped = '<yamx_auto_project_intel>\nold\n</yamx_auto_project_intel>\n\nUser request:\nhello';
+  assert.equal(extractCurrentUserRequest(wrapped), 'hello');
+  assert.equal(classifyUserIntent(wrapped).kind, 'conversation');
+  assert.equal(classifyUserIntent('<yamx_direct_shell_failure>\nfailed\n</yamx_direct_shell_failure>').kind, 'task');
+  assert.match(buildCurrentIntentMessage(classifyUserIntent('hello')), /Do not use tools/);
+  assert.match(buildCurrentIntentMessage(classifyUserIntent('more')), /Ask one short clarification question/);
+  assert.equal(isClearlyActionableInput('ok'), false);
+  assert.equal(isClearlyActionableInput('diagnose docker networking'), true);
+});
+
 test('shell selection supports explicit Windows and Unix shells', async () => {
   const { getShell } = await import('../dist/tools/utils.js');
   assert.equal(getShell('cmd').label, 'cmd');
@@ -36,6 +60,8 @@ test('smart shell normalizes package bins and obvious shell syntax', async () =>
   const ps = getSmartShell('Get-ChildItem -Force', 'auto');
   if (process.platform === 'win32') {
     assert.match(ps.shell.label, /powershell|pwsh/);
+  } else if (process.env.PATH && process.env.PATH.includes('pwsh')) {
+    assert.equal(ps.shell.label, 'pwsh');
   }
 
   const pwd = getSmartShell('pwd', 'cmd');
@@ -74,6 +100,35 @@ test('smart shell normalizes package bins and obvious shell syntax', async () =>
   const env = buildLocalFirstEnv(dir, { PATH: 'GLOBAL_PATH' });
   const envPath = env.PATH || env.Path;
   assert.ok(envPath.startsWith(localBins[0]));
+});
+
+test('smart shell translates simple platform inspection commands both ways', async () => {
+  const { getSmartShell } = await import('../dist/tools/utils.js');
+
+  if (process.platform === 'win32') {
+    assert.equal(getSmartShell('ls', 'auto').command, 'dir');
+    assert.equal(getSmartShell('cat package.json', 'auto').command, 'type package.json');
+    assert.equal(getSmartShell('command -v node', 'auto').command, 'where node');
+    assert.equal(getSmartShell('which node', 'auto').command, 'where node');
+    assert.equal(getSmartShell('uname -a', 'auto').command, 'ver');
+    assert.equal(getSmartShell('ifconfig', 'auto').command, 'ipconfig');
+    assert.equal(getSmartShell('ip addr', 'auto').command, 'ipconfig');
+    assert.equal(getSmartShell('ip route', 'auto').command, 'route print');
+    assert.equal(getSmartShell('traceroute example.com', 'auto').command, 'tracert example.com');
+    assert.equal(getSmartShell('ss -tulpen', 'auto').command, 'netstat -ano');
+    assert.equal(getSmartShell('ps aux', 'auto').command, 'tasklist');
+  } else {
+    assert.equal(getSmartShell('dir', 'auto').command, 'ls');
+    assert.equal(getSmartShell('type package.json', 'auto').command, 'cat package.json');
+    assert.equal(getSmartShell('where node', 'auto').command, 'command -v node');
+    assert.equal(getSmartShell('ver', 'auto').command, 'uname -a');
+    assert.equal(getSmartShell('systeminfo', 'auto').command, 'uname -a');
+    assert.equal(getSmartShell('ipconfig', 'auto').command, 'ifconfig');
+    assert.equal(getSmartShell('route print', 'auto').command, 'ip route');
+    assert.equal(getSmartShell('tracert example.com', 'auto').command, 'traceroute example.com');
+    assert.equal(getSmartShell('netstat -ano', 'auto').command, 'ss -tulpen');
+    assert.equal(getSmartShell('tasklist', 'auto').command, 'ps aux');
+  }
 });
 
 test('run_command keeps a persistent YamX working directory inside the project', async () => {
@@ -267,6 +322,9 @@ test('context prompt includes operating loop and memory section', async () => {
   const prompt = await new ContextEngine(process.cwd()).buildSystemPrompt();
   assert.match(prompt, /Workflow \(short\)/);
   assert.match(prompt, /Hidden planning/);
+  assert.match(prompt, /Current intent first/);
+  assert.match(prompt, /If the latest request is not clearly related to the previous task, treat it as a new task/);
+  assert.match(prompt, /For unclear requests, ask exactly one short clarification question/);
   assert.match(prompt, /Loaded Memory/);
   assert.match(prompt, /project_intel/);
   assert.match(prompt, /codebase_analysis/);
@@ -276,6 +334,12 @@ test('context prompt includes operating loop and memory section', async () => {
   assert.match(prompt, /jq /);
   assert.match(prompt, /Detected Local Tooling/);
   assert.match(prompt, /Auto-detected helpers on this machine/);
+  assert.match(prompt, /DevOps \/ Full-Stack Operations Mode/);
+  assert.match(prompt, /terraform validate/);
+  assert.match(prompt, /Network Engineering Mode/);
+  assert.match(prompt, /ipconfig \/all/);
+  assert.match(prompt, /Cybersecurity Engineering Mode/);
+  assert.match(prompt, /gitleaks detect --source \./);
 });
 
 test('local tool detector finds at least one runtime', async () => {
@@ -325,6 +389,8 @@ test('agent skips hidden model council for simple turns in adaptive mode', async
   await agent.chat('hi');
   assert.equal(calls, 1);
   assert.equal(agent.getHistory().some((message) => String(message.content || '').includes('yamx_internal_model_council')), false);
+  assert.ok(agent.getHistory().some((message) => String(message.content || '').includes('<yamx_current_intent>')));
+  assert.ok(agent.getHistory().some((message) => String(message.content || '').includes('kind=conversation')));
 });
 
 test('agent adds failure protocol after failed command output', async () => {
@@ -460,6 +526,12 @@ test('project intel returns compact recommendations', async () => {
   assert.ok(text.length < 12000);
   assert.equal(shouldAttachProjectIntel('fix command cross platform bugs'), true);
   assert.equal(shouldAttachProjectIntel('make my agent smarter'), true);
+  assert.equal(shouldAttachProjectIntel('diagnose docker compose deploy issue'), true);
+  assert.equal(shouldAttachProjectIntel('fix kubernetes helm terraform pipeline'), true);
+  assert.equal(shouldAttachProjectIntel('diagnose DNS route latency network issue'), true);
+  assert.equal(shouldAttachProjectIntel('run defensive cybersecurity audit for secrets and CVEs'), true);
+  assert.equal(shouldAttachProjectIntel('hello'), false);
+  assert.equal(shouldAttachProjectIntel('more'), false);
   assert.equal(shouldAttachProjectIntel('what is the capital of France?'), false);
   const wrapped = await buildAgentInputWithProjectIntel('fix shell commands', process.cwd());
   assert.match(wrapped, /<yamx_auto_project_intel>/);
@@ -471,10 +543,25 @@ test('project intel returns compact recommendations', async () => {
   assert.match(analysis, /Agentic operating plan/);
   assert.match(analysis, /Primary entry points/);
   assert.ok(analysis.length < 16000);
+
+  const devops = await buildProjectIntel({ cwd: process.cwd(), goal: 'fix devops docker terraform deploy pipeline', maxFiles: 20 });
+  assert.match(devops, /DevOps path/);
+  assert.match(devops, /docker --version/);
+  assert.match(devops, /terraform validate/);
+
+  const network = await buildProjectIntel({ cwd: process.cwd(), goal: 'fix dns route latency network issue', maxFiles: 20 });
+  assert.match(network, /Network path/);
+  assert.match(network, /Network diagnostics/);
+
+  const security = await buildProjectIntel({ cwd: process.cwd(), goal: 'defensive cybersecurity secrets cve audit', maxFiles: 20 });
+  assert.match(security, /Security path/);
+  assert.match(security, /Security audits/);
 });
 
 test('runtime preflight also handles vague project ops requests', async () => {
   const { maybeRuntimePreflightMessage } = await import('../dist/runtime-preflight.js');
+  assert.equal(await maybeRuntimePreflightMessage('hello'), null);
+  assert.equal(await maybeRuntimePreflightMessage('thanks'), null);
   const text = await maybeRuntimePreflightMessage('install it');
   assert.match(text, /<yamx_project_preflight>/);
   assert.match(text, /package_manager=npm/);

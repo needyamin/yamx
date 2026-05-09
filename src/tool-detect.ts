@@ -16,6 +16,7 @@ export type ToolGroup =
   | 'archive'
   | 'crypto'
   | 'network'
+  | 'security'
   | 'database'
   | 'build'
   | 'container'
@@ -114,6 +115,51 @@ const TOOL_CATALOG: ToolEntry[] = [
   { name: 'http', group: 'network' },
   { name: 'httpie', group: 'network' },
   { name: 'xh', group: 'network' },
+  { name: 'ping', group: 'network' },
+  { name: 'tracert', group: 'network' },
+  { name: 'traceroute', group: 'network' },
+  { name: 'pathping', group: 'network' },
+  { name: 'nslookup', group: 'network' },
+  { name: 'dig', group: 'network' },
+  { name: 'host', group: 'network' },
+  { name: 'ipconfig', group: 'network' },
+  { name: 'ifconfig', group: 'network' },
+  { name: 'ip', group: 'network' },
+  { name: 'route', group: 'network' },
+  { name: 'netstat', group: 'network' },
+  { name: 'ss', group: 'network' },
+  { name: 'arp', group: 'network' },
+  { name: 'nc', group: 'network' },
+  { name: 'ncat', group: 'network' },
+  { name: 'telnet', group: 'network' },
+  { name: 'nmap', group: 'network' },
+  { name: 'tcpdump', group: 'network' },
+  { name: 'tshark', group: 'network' },
+  { name: 'netsh', group: 'network' },
+  { name: 'Get-NetIPConfiguration', group: 'network' },
+
+  // security / audit
+  { name: 'gitleaks', group: 'security' },
+  { name: 'trufflehog', group: 'security' },
+  { name: 'semgrep', group: 'security' },
+  { name: 'trivy', group: 'security' },
+  { name: 'grype', group: 'security' },
+  { name: 'snyk', group: 'security' },
+  { name: 'osv-scanner', group: 'security' },
+  { name: 'npm-audit', group: 'security' },
+  { name: 'pip-audit', group: 'security' },
+  { name: 'bandit', group: 'security' },
+  { name: 'safety', group: 'security' },
+  { name: 'cargo-audit', group: 'security' },
+  { name: 'govulncheck', group: 'security' },
+  { name: 'composer', group: 'security' },
+  { name: 'shellcheck', group: 'security' },
+  { name: 'hadolint', group: 'security' },
+  { name: 'checkov', group: 'security' },
+  { name: 'tfsec', group: 'security' },
+  { name: 'kube-score', group: 'security' },
+  { name: 'kube-linter', group: 'security' },
+  { name: 'kubescape', group: 'security' },
 
   // database clients
   { name: 'psql', group: 'database' },
@@ -128,8 +174,13 @@ const TOOL_CATALOG: ToolEntry[] = [
 
   // container / runtime
   { name: 'docker', group: 'container' },
+  { name: 'docker-compose', group: 'container' },
   { name: 'podman', group: 'container' },
+  { name: 'podman-compose', group: 'container' },
   { name: 'kubectl', group: 'container' },
+  { name: 'kustomize', group: 'container' },
+  { name: 'minikube', group: 'container' },
+  { name: 'kind', group: 'container' },
   { name: 'helm', group: 'container' },
 
   // cloud
@@ -137,7 +188,16 @@ const TOOL_CATALOG: ToolEntry[] = [
   { name: 'gcloud', group: 'cloud' },
   { name: 'az', group: 'cloud' },
   { name: 'gh', group: 'cloud' },
+  { name: 'glab', group: 'cloud' },
   { name: 'terraform', group: 'cloud' },
+  { name: 'tofu', group: 'cloud' },
+  { name: 'ansible', group: 'cloud' },
+  { name: 'ansible-playbook', group: 'cloud' },
+  { name: 'pulumi', group: 'cloud' },
+  { name: 'vercel', group: 'cloud' },
+  { name: 'netlify', group: 'cloud' },
+  { name: 'flyctl', group: 'cloud' },
+  { name: 'wrangler', group: 'cloud' },
 
   // shells
   { name: 'bash', group: 'shells' },
@@ -238,7 +298,7 @@ export function formatLocalToolsForPrompt(maxPerLine = 8): string {
     grouped.set(probe.group, list);
   }
 
-  const order: ToolGroup[] = ['runtimes', 'data', 'search', 'text', 'archive', 'crypto', 'network', 'database', 'build', 'container', 'cloud', 'shells'];
+  const order: ToolGroup[] = ['runtimes', 'data', 'search', 'text', 'archive', 'crypto', 'network', 'security', 'database', 'build', 'container', 'cloud', 'shells'];
   const lines: string[] = [];
   for (const group of order) {
     const items = grouped.get(group);
@@ -259,7 +319,37 @@ export function formatLocalToolsForPrompt(maxPerLine = 8): string {
   return lines.join('\n') || '- no analysis tools probed';
 }
 
-const IMPORTANT_FOR_HINT = new Set(['python', 'python3', 'node', 'jq', 'yq', 'awk', 'sed', 'rg', 'grep', 'curl', 'base64', 'sha256sum', 'sqlite3']);
+const IMPORTANT_FOR_HINT = new Set([
+  'python',
+  'python3',
+  'node',
+  'jq',
+  'yq',
+  'awk',
+  'sed',
+  'rg',
+  'grep',
+  'curl',
+  'base64',
+  'sha256sum',
+  'sqlite3',
+  'ping',
+  'nslookup',
+  'netstat',
+  'curl',
+  'gitleaks',
+  'semgrep',
+  'trivy',
+  'pip-audit',
+  'bandit',
+  'hadolint',
+  'checkov',
+  'docker',
+  'kubectl',
+  'helm',
+  'terraform',
+  'ansible-playbook',
+]);
 
 export function preferredAnalysisRunner(): { name: string; path: string } | null {
   return pickFirstAvailable('python', 'python3', 'py', 'node', 'deno', 'bun');

@@ -1,6 +1,7 @@
 import fs from 'fs-extra';
 import path from 'node:path';
 import fg from 'fast-glob';
+import { classifyUserIntent } from './intent.js';
 
 interface IntelOptions {
   cwd?: string;
@@ -29,7 +30,43 @@ const IMPORTANT_FILES = [
   'go.mod',
   'Makefile',
   'Dockerfile',
+  '.dockerignore',
   'docker-compose.yml',
+  'docker-compose.yaml',
+  'compose.yml',
+  'compose.yaml',
+  'Chart.yaml',
+  'values.yaml',
+  'kustomization.yaml',
+  'terraform.tf',
+  'main.tf',
+  'variables.tf',
+  'outputs.tf',
+  'terraform.tfvars',
+  'ansible.cfg',
+  'playbook.yml',
+  'playbook.yaml',
+  '.github/workflows',
+  '.gitlab-ci.yml',
+  'Jenkinsfile',
+  'vercel.json',
+  'netlify.toml',
+  'wrangler.toml',
+  'fly.toml',
+  'nginx.conf',
+  'Caddyfile',
+  'haproxy.cfg',
+  'traefik.yml',
+  'traefik.yaml',
+  'SECURITY.md',
+  '.gitleaks.toml',
+  '.semgrep.yml',
+  '.semgrep.yaml',
+  '.trivyignore',
+  '.snyk',
+  'osv-scanner.toml',
+  'bandit.yml',
+  'bandit.yaml',
 ];
 
 const SOURCE_GLOBS = [
@@ -37,6 +74,24 @@ const SOURCE_GLOBS = [
   'app/**/*.{ts,tsx,js,jsx,py}',
   'lib/**/*.{ts,tsx,js,jsx,py,go,rs}',
   'packages/**/*.{ts,tsx,js,jsx,py,go,rs}',
+  '.github/workflows/*.{yml,yaml}',
+  'deploy/**/*.{yml,yaml,json,toml,tf,sh,ps1}',
+  'infra/**/*.{yml,yaml,json,toml,tf,sh,ps1}',
+  'ops/**/*.{yml,yaml,json,toml,tf,sh,ps1}',
+  'k8s/**/*.{yml,yaml,json}',
+  'kubernetes/**/*.{yml,yaml,json}',
+  'helm/**/*.{yml,yaml,tpl}',
+  'charts/**/*.{yml,yaml,tpl}',
+  'terraform/**/*.tf',
+  'ansible/**/*.{yml,yaml,ini,cfg}',
+  'network/**/*.{conf,cfg,yml,yaml,json,toml}',
+  'nginx/**/*.{conf}',
+  'caddy/**/*',
+  'haproxy/**/*.{cfg}',
+  'traefik/**/*.{yml,yaml,toml}',
+  'security/**/*.{md,json,yml,yaml,toml,txt}',
+  'audit/**/*.{md,json,yml,yaml,toml,txt}',
+  'policies/**/*.{rego,yml,yaml,json}',
   'tests/**/*.{ts,tsx,js,jsx,py,go,rs}',
   'test/**/*.{ts,tsx,js,jsx,py,go,rs}',
   '*.{ts,tsx,js,jsx,py,go,rs}',
@@ -146,6 +201,9 @@ export async function buildCodebaseAnalysis(options: CodebaseAnalysisOptions = {
 }
 
 export function shouldAttachProjectIntel(input: string): boolean {
+  const intent = classifyUserIntent(input);
+  if (intent.kind !== 'task' && intent.kind !== 'direct-command') return false;
+
   const text = input.trim();
   if (!text || text.startsWith('/')) return false;
   if (text.length < 12) return false;
@@ -155,7 +213,7 @@ export function shouldAttachProjectIntel(input: string): boolean {
     return false;
   }
 
-  return /\b(fix|bug|error|fail|crash|issue|problem|implement|add|create|build|refactor|improve|advance|smart|agent|tool|command|shell|cross.?platform|windows|linux|mac|bash|cmd|powershell|test|lint|typecheck|review|analy[sz]e|codebase|repo)\b/.test(lower);
+  return /\b(fix|bug|error|fail|crash|issue|problem|implement|add|create|build|refactor|improve|advance|smart|agent|tool|command|shell|cross.?platform|windows|linux|mac|bash|cmd|powershell|test|lint|typecheck|review|analy[sz]e|codebase|repo|devops|deploy|release|rollback|docker|compose|container|k8s|kubernetes|kubectl|helm|terraform|tofu|iac|ansible|ci|pipeline|cloud|aws|gcloud|azure|vercel|netlify|wrangler|network|internet|wifi|ethernet|dns|dhcp|gateway|route|routing|latency|packet|port|socket|firewall|proxy|vpn|tcp|udp|http|tls|ssl|ping|traceroute|tracert|nslookup|dig|netstat|ss|ipconfig|ifconfig|netsh|nmap|tcpdump|tshark|cyber|cybersecurity|security|infosec|ethical\s+hacking|pentest|penetration|vulnerab|cves?|cwe|exploit|hardening|threat|forensic|incident|malware|secrets?|credential|token|sast|dast|sbom|gitleaks|trivy|semgrep|bandit|pip-audit|cargo-audit|govulncheck|osv|snyk|checkov|tfsec|hadolint|kube-linter|kubescape)\b/.test(lower);
 }
 
 export async function buildAgentInputWithProjectIntel(input: string, cwd = process.cwd()): Promise<string> {
@@ -212,6 +270,24 @@ async function listImportantFiles(cwd: string, maxFiles: number): Promise<string
     'src/**/*.{ts,tsx,js,jsx,py,go,rs}',
     'app/**/*.{ts,tsx,js,jsx}',
     'lib/**/*.{ts,tsx,js,jsx,py}',
+    '.github/workflows/*.{yml,yaml}',
+    'deploy/**/*.{yml,yaml,json,toml,tf,sh,ps1}',
+    'infra/**/*.{yml,yaml,json,toml,tf,sh,ps1}',
+    'ops/**/*.{yml,yaml,json,toml,tf,sh,ps1}',
+    'k8s/**/*.{yml,yaml,json}',
+    'kubernetes/**/*.{yml,yaml,json}',
+    'helm/**/*.{yml,yaml,tpl}',
+    'charts/**/*.{yml,yaml,tpl}',
+    'terraform/**/*.tf',
+    'ansible/**/*.{yml,yaml,ini,cfg}',
+    'network/**/*.{conf,cfg,yml,yaml,json,toml}',
+    'nginx/**/*.{conf}',
+    'caddy/**/*',
+    'haproxy/**/*.{cfg}',
+    'traefik/**/*.{yml,yaml,toml}',
+    'security/**/*.{md,json,yml,yaml,toml,txt}',
+    'audit/**/*.{md,json,yml,yaml,toml,txt}',
+    'policies/**/*.{rego,yml,yaml,json}',
     'tests/**/*.{ts,tsx,js,jsx,py}',
     'test/**/*.{ts,tsx,js,jsx,py}',
   ], {
@@ -243,7 +319,7 @@ async function listSourceFiles(cwd: string, maxFiles: number): Promise<string[]>
 
 function scoreFile(file: string): number {
   let score = 0;
-  if (/(index|main|app|server|cli|config|route|controller|service|agent|context|registry|tool)/i.test(file)) score += 4;
+  if (/(index|main|app|server|cli|config|route|controller|service|agent|context|registry|tool|docker|compose|deploy|workflow|terraform|k8s|kubernetes|helm|ansible|playbook|network|nginx|caddy|haproxy|traefik|dns|proxy|gateway|firewall|security|audit|gitleaks|semgrep|trivy|snyk|bandit|policy|secret)/i.test(file)) score += 4;
   if (/test|spec/i.test(file)) score += 2;
   if (file.startsWith('src/')) score += 2;
   score -= file.split('/').length * 0.1;
@@ -261,6 +337,14 @@ function recommendCommands(pkg: Awaited<ReturnType<typeof readPackageInfo>>): st
   for (const name of ['typecheck', 'check', 'lint', 'test', 'build']) {
     if (scripts[name]) out.push(`${run} ${name}`);
   }
+  for (const name of ['doctor', 'diagnose', 'deploy', 'release']) {
+    if (scripts[name]) out.push(`${run} ${name}`);
+  }
+  out.push('docker --version / docker compose config when Docker or compose files are involved');
+  out.push('kubectl version --client / helm version for Kubernetes or Helm work; never mutate clusters without explicit user approval');
+  out.push('terraform validate (or tofu validate) for IaC changes before plan/apply');
+  out.push('Network diagnostics: ipconfig /all or ip addr, route print or ip route, nslookup, netstat/ss; never change firewall/routes/DNS without approval');
+  out.push('Security audits: gitleaks detect, npm audit, semgrep scan, trivy fs, checkov/tfsec/hadolint when relevant; keep scans scoped to authorized local assets');
   if (!scripts.test) out.push('No test script detected; use the narrowest available build/typecheck/readback verification.');
   if (!scripts.build) out.push('No build script detected; verify with targeted command or code inspection.');
   return [...new Set(out)];
@@ -407,8 +491,17 @@ function inferFocus(goal: string): string[] {
   if (/command|shell|cross.?platform|windows|linux|mac|bash|cmd|powershell/.test(lower)) {
     hints.push('Command path: inspect shell utilities, command parser, policy/risk, and tests around platform syntax.');
   }
-  if (/test|build|lint|type/.test(lower)) {
+  if (/test|build|lint|type|verify|check/.test(lower)) {
     hints.push('Verification path: run the smallest named script first; avoid full test suites until needed.');
+  }
+  if (/devops|deploy|release|rollback|docker|compose|container|k8s|kubernetes|kubectl|helm|terraform|tofu|iac|ansible|ci|pipeline|cloud|aws|gcloud|azure|vercel|netlify|wrangler/.test(lower)) {
+    hints.push('DevOps path: inspect manifests and local CLI versions first; prefer validate/config/dry-run/client-version commands before any apply/deploy/push.');
+  }
+  if (/network|internet|wifi|ethernet|dns|dhcp|gateway|route|routing|latency|packet|port|socket|firewall|proxy|vpn|tcp|udp|http|tls|ssl|ping|traceroute|tracert|nslookup|dig|netstat|ss|ipconfig|ifconfig|netsh|nmap|tcpdump|tshark/.test(lower)) {
+    hints.push('Network path: inspect interfaces, routes, DNS, listening sockets, and targeted reachability first; avoid firewall/route/DNS changes without explicit approval.');
+  }
+  if (/cyber|cybersecurity|security|infosec|ethical\s+hacking|pentest|penetration|vulnerab|cves?|cwe|exploit|hardening|threat|forensic|incident|malware|secrets?|credential|token|sast|dast|sbom|gitleaks|trivy|semgrep|bandit|pip-audit|cargo-audit|govulncheck|osv|snyk|checkov|tfsec|hadolint|kube-linter|kubescape/.test(lower)) {
+    hints.push('Security path: confirm authorized scope, inspect local code/config/deps/secrets safely, run scoped audit tools, then propose remediation without exploit/persistence steps.');
   }
   if (/feature|add|implement|make|create/.test(lower)) {
     hints.push('Feature path: find existing pattern, edit the closest owning module, add focused tests.');

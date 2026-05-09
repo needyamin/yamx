@@ -6,14 +6,28 @@
 import { isPseudoEnglishShellIntent } from './tools/shell.js';
 import { getLocalFirstPathEntries, getSmartShell, getWorkspaceCwd, PROJECT_ROOT, runProcess } from './tools/utils.js';
 import { formatCommandMemoryForPrompt } from './command-memory.js';
+import { classifyUserIntent } from './intent.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-type RuntimeTopic = 'python' | 'node' | 'docker' | 'git' | 'rust' | 'java' | 'go' | 'kubectl';
+type RuntimeTopic =
+  | 'python'
+  | 'node'
+  | 'docker'
+  | 'git'
+  | 'rust'
+  | 'java'
+  | 'go'
+  | 'kubectl'
+  | 'terraform'
+  | 'ansible'
+  | 'cloud'
+  | 'network'
+  | 'security';
 
 const SKIP_TUTORIAL = /\b(tutorial|essay|explain\s+(everything|step|how)|documentation\s+for\s+every|all\s+platforms)\b|^explain\b/i;
 
-const ACTIONISH = /\b(install|uninstall|reinstall|setup|set\s*up|configure|upgrade\b|missing|don'?t have|do i have|which\b|where is|need\b|have to\b|want to\b|PATH|path\b|environment variable|broken|won'?t run|won'?t work|detect|probe|verify|check\b|debug|fix\b|venv|conda\b|pypi|npm i\b|pnpm|cargo\b|rustc\b|javac\b|jdk|sdkman)\b/i;
+const ACTIONISH = /\b(install|uninstall|reinstall|setup|set\s*up|configure|upgrade\b|missing|don'?t have|do i have|which\b|where is|need\b|have to\b|want to\b|PATH|path\b|environment variable|broken|won'?t run|won'?t work|detect|probe|verify|check\b|debug|fix\b|deploy|release|rollback|logs?|status|doctor|diagnose|trace|resolve|dns|latency|packet|port|socket|route|audit|scan|secrets?|vulnerab|cve|cwe|sast|dast|sbom|threat|hardening|forensic|incident|venv|conda\b|pypi|npm i\b|pnpm|cargo\b|rustc\b|javac\b|jdk|sdkman)\b/i;
 
 const PER_CMD_TIMEOUT_MS = 18_000;
 const PER_CMD_MAX_CHARS = 3_600;
@@ -53,7 +67,17 @@ function inferRuntimeTopic(text: string): RuntimeTopic | null {
                 ? 'go'
                 : /\bkubectl\b|kubernetes|\bk8s\b|\bhelm\b/.test(lower)
                   ? 'kubectl'
-                  : null;
+                  : /\b(terraform|tfvars|tofu|opentofu)\b/.test(lower)
+                    ? 'terraform'
+                    : /\b(ansible|ansible-playbook|playbook\.ya?ml|inventory)\b/.test(lower)
+                      ? 'ansible'
+                      : /\b(aws|gcloud|azure|az\s+|cloudflare|wrangler|vercel|netlify|flyctl|pulumi)\b/.test(lower)
+                        ? 'cloud'
+                        : /\b(network|internet|wifi|ethernet|dns|dhcp|gateway|route|routing|latency|packet|port|socket|firewall|proxy|vpn|tcp|udp|http|tls|ssl|ping|traceroute|tracert|nslookup|dig|netstat|ss|ipconfig|ifconfig|netsh|nmap|tcpdump|tshark)\b/.test(lower)
+                          ? 'network'
+                          : /\b(cyber|cybersecurity|security|infosec|ethical\s+hacking|pentest|penetration|vulnerab|cves?|cwe|exploit|hardening|threat|forensic|incident|malware|secrets?|credential|token|sast|dast|sbom|gitleaks|trivy|semgrep|bandit|pip-audit|cargo-audit|govulncheck|osv|snyk|checkov|tfsec|hadolint|kube-linter|kubescape)\b/.test(lower)
+                            ? 'security'
+                            : null;
 
   if (!topic) return null;
   if (ACTIONISH.test(lower) || isPseudoEnglishShellIntent(lower)) return topic;
@@ -71,7 +95,7 @@ function inferProjectOpsPreflight(text: string): boolean {
 
   const lower = t.toLowerCase();
   const action =
-    /\b(install|setup|set\s*up|bootstrap|init|diagnose|doctor|debug|fix|repair|run|start|serve|build|test|lint|check|verify|deploy)\b/.test(
+    /\b(install|setup|set\s*up|bootstrap|init|diagnose|doctor|debug|fix|repair|run|start|serve|build|test|lint|check|verify|deploy|release|rollback|logs?|status)\b/.test(
       lower
     );
   if (!action) return false;
@@ -83,7 +107,7 @@ function inferProjectOpsPreflight(text: string): boolean {
   const vagueAction = /^(install|setup|set\s*up|diagnose|doctor|fix|run|start|build|test|check|verify)\s+(it|this|that|here|repo|project|app|agent|tool)\b/.test(
     lower
   );
-  const packageAction = /\b(npm|pnpm|yarn|bun|pip|poetry|composer|cargo|go|make|docker|compose)\b/.test(lower);
+  const packageAction = /\b(npm|pnpm|yarn|bun|pip|poetry|composer|cargo|go|make|docker|compose|kubectl|helm|terraform|tofu|ansible|aws|gcloud|az|wrangler|vercel|netlify|flyctl|ping|tracert|traceroute|nslookup|dig|netstat|ss|ipconfig|ifconfig|netsh|nmap|tcpdump|tshark|gitleaks|trivy|semgrep|bandit|pip-audit|cargo-audit|govulncheck|osv-scanner|snyk|checkov|tfsec|hadolint|kube-linter|kubescape)\b/.test(lower);
 
   return localTarget || vagueAction || packageAction;
 }
@@ -134,7 +158,7 @@ function probeCommandsFor(topic: RuntimeTopic): string[] {
       extra = ['command -v node || true', 'node -v', 'command -v npm || true', 'npm -v'];
     }
   } else if (topic === 'docker') {
-    extra = plat === 'win32' ? ['where docker', 'docker version'] : ['command -v docker || true', 'docker version'];
+    extra = plat === 'win32' ? ['where docker', 'docker --version', 'docker compose version'] : ['command -v docker || true', 'docker --version', 'docker compose version'];
   } else if (topic === 'git') {
     extra = plat === 'win32' ? ['where git', 'git --version'] : ['command -v git || true', 'git --version'];
   } else if (topic === 'rust') {
@@ -152,6 +176,31 @@ function probeCommandsFor(topic: RuntimeTopic): string[] {
   } else if (topic === 'kubectl') {
     extra =
       plat === 'win32' ? ['where kubectl', 'kubectl version --client'] : ['command -v kubectl || true', 'kubectl version --client'];
+  } else if (topic === 'terraform') {
+    extra =
+      plat === 'win32'
+        ? ['where terraform', 'where tofu', 'terraform version', 'tofu version']
+        : ['command -v terraform || true', 'terraform version', 'command -v tofu || true', 'tofu version'];
+  } else if (topic === 'ansible') {
+    extra =
+      plat === 'win32'
+        ? ['where ansible', 'where ansible-playbook', 'ansible --version', 'ansible-playbook --version']
+        : ['command -v ansible || true', 'ansible --version', 'command -v ansible-playbook || true', 'ansible-playbook --version'];
+  } else if (topic === 'cloud') {
+    extra =
+      plat === 'win32'
+        ? ['where aws', 'where gcloud', 'where az', 'where gh', 'where wrangler', 'aws --version', 'gcloud --version', 'az version']
+        : ['command -v aws || true', 'aws --version', 'command -v gcloud || true', 'gcloud --version', 'command -v az || true', 'az version', 'command -v gh || true'];
+  } else if (topic === 'network') {
+    extra =
+      plat === 'win32'
+        ? ['ipconfig /all', 'route print', 'nslookup localhost', 'netstat -ano', 'where ping', 'where tracert', 'where curl']
+        : ['ip addr || ifconfig', 'ip route || netstat -rn', 'cat /etc/resolv.conf', 'nslookup localhost || true', 'ss -tulpen || netstat -tulpen || true', 'command -v ping || true', 'command -v traceroute || true', 'command -v curl || true'];
+  } else if (topic === 'security') {
+    extra =
+      plat === 'win32'
+        ? ['where git', 'where gitleaks', 'where trivy', 'where semgrep', 'where bandit', 'where pip-audit', 'where npm', 'npm audit --version']
+        : ['command -v git || true', 'command -v gitleaks || true', 'command -v trivy || true', 'command -v semgrep || true', 'command -v bandit || true', 'command -v pip-audit || true', 'command -v npm || true', 'npm audit --version'];
   }
 
   const ordered: string[] = [];
@@ -225,8 +274,47 @@ async function nearbyFiles(cwd = PROJECT_ROOT): Promise<string[]> {
     'composer.json',
     'Makefile',
     'Dockerfile',
+    '.dockerignore',
     'docker-compose.yml',
+    'docker-compose.yaml',
     'compose.yml',
+    'compose.yaml',
+    'kubernetes.yaml',
+    'k8s.yaml',
+    'helmfile.yaml',
+    'Chart.yaml',
+    'values.yaml',
+    'terraform.tf',
+    'main.tf',
+    'variables.tf',
+    'outputs.tf',
+    'terraform.tfvars',
+    'ansible.cfg',
+    'playbook.yml',
+    'playbook.yaml',
+    '.github/workflows',
+    '.gitlab-ci.yml',
+    'Jenkinsfile',
+    'Procfile',
+    'vercel.json',
+    'netlify.toml',
+    'wrangler.toml',
+    'fly.toml',
+    'nginx.conf',
+    'Caddyfile',
+    'haproxy.cfg',
+    'traefik.yml',
+    'traefik.yaml',
+    'hosts',
+    '.gitleaks.toml',
+    '.semgrep.yml',
+    '.semgrep.yaml',
+    '.trivyignore',
+    '.snyk',
+    'osv-scanner.toml',
+    'bandit.yml',
+    'bandit.yaml',
+    'SECURITY.md',
     '.env',
     '.env.example',
     'README.md',
@@ -265,13 +353,36 @@ function commandCandidates(manager: string, scripts: Record<string, string>, use
 
   const candidates: string[] = [];
   if (/\b(install|setup|bootstrap|deps?|dependencies)\b/.test(lower)) candidates.push(install);
-  for (const name of ['doctor', 'diagnose', 'check', 'typecheck', 'lint', 'test', 'build', 'dev', 'start']) {
+  for (const name of ['doctor', 'diagnose', 'check', 'typecheck', 'lint', 'test', 'build', 'dev', 'start', 'deploy', 'release']) {
     if (scripts[name]) candidates.push(`${run} ${name}`);
   }
   if (/\b(run|start|serve)\b/.test(lower) && scripts.dev && !candidates.includes(`${run} dev`)) candidates.push(`${run} dev`);
   if (/\b(build|verify|check)\b/.test(lower) && scripts.build && !candidates.includes(`${run} build`)) candidates.push(`${run} build`);
   if (/\b(test|fix|bug|repair)\b/.test(lower) && scripts.test && !candidates.includes(`${run} test`)) candidates.push(`${run} test`);
+  if (/\b(deploy|release)\b/.test(lower) && scripts.deploy && !candidates.includes(`${run} deploy`)) candidates.push(`${run} deploy`);
   if (manager === 'make') candidates.push('make help', 'make test');
+  if (/\bdocker|compose|container\b/.test(lower)) candidates.push('docker --version', 'docker compose config');
+  if (/\bkubectl|k8s|kubernetes\b/.test(lower)) candidates.push('kubectl version --client', 'kubectl config current-context');
+  if (/\bhelm\b/.test(lower)) candidates.push('helm version');
+  if (/\bterraform|tofu|iac\b/.test(lower)) candidates.push('terraform version', 'terraform validate');
+  if (/\bansible\b/.test(lower)) candidates.push('ansible --version', 'ansible-playbook --syntax-check playbook.yml');
+  if (/\b(network|dns|route|gateway|latency|packet|port|socket|firewall|proxy|vpn|tcp|udp|http|tls|ssl|ping|traceroute|tracert|nslookup|dig|netstat|ss|ipconfig|ifconfig|netsh)\b/.test(lower)) {
+    candidates.push(
+      process.platform === 'win32' ? 'ipconfig /all' : 'ip addr || ifconfig',
+      process.platform === 'win32' ? 'route print' : 'ip route || netstat -rn',
+      'nslookup localhost',
+      process.platform === 'win32' ? 'netstat -ano' : 'ss -tulpen || netstat -tulpen'
+    );
+  }
+  if (/\b(cyber|cybersecurity|security|infosec|audit|scan|secrets?|vulnerab|cves?|cwe|sast|sbom|hardening|gitleaks|trivy|semgrep|bandit|pip-audit|cargo-audit|govulncheck|osv|checkov|tfsec|hadolint)\b/.test(lower)) {
+    candidates.push(
+      'git status --short',
+      process.platform === 'win32' ? 'where gitleaks' : 'command -v gitleaks || true',
+      process.platform === 'win32' ? 'where trivy' : 'command -v trivy || true',
+      process.platform === 'win32' ? 'where semgrep' : 'command -v semgrep || true',
+      'npm audit --audit-level=moderate'
+    );
+  }
   return [...new Set(candidates)].slice(0, 10);
 }
 
@@ -289,6 +400,18 @@ function opsProbeCommands(manager: string): string[] {
   if (manager === 'cargo') extra.push(process.platform === 'win32' ? 'where cargo' : 'command -v cargo || true', 'cargo --version');
   if (manager === 'go') extra.push(process.platform === 'win32' ? 'where go' : 'command -v go || true', 'go version');
   if (manager === 'make') extra.push(process.platform === 'win32' ? 'where make' : 'command -v make || true', 'make --version');
+  extra.push(
+    process.platform === 'win32' ? 'where docker' : 'command -v docker || true',
+    'docker --version',
+    process.platform === 'win32' ? 'where kubectl' : 'command -v kubectl || true',
+    process.platform === 'win32' ? 'where terraform' : 'command -v terraform || true',
+    process.platform === 'win32' ? 'ipconfig /all' : 'ip addr || ifconfig',
+    process.platform === 'win32' ? 'route print' : 'ip route || netstat -rn',
+    'nslookup localhost',
+    process.platform === 'win32' ? 'where gitleaks' : 'command -v gitleaks || true',
+    process.platform === 'win32' ? 'where trivy' : 'command -v trivy || true',
+    process.platform === 'win32' ? 'where semgrep' : 'command -v semgrep || true'
+  );
   return [...new Set([...base, ...extra])];
 }
 
@@ -344,6 +467,8 @@ async function projectOpsPreflightMessage(userInput: string): Promise<string> {
 /** Returns an extra user-role message blob, or null when no probes ran. */
 export async function maybeRuntimePreflightMessage(userInput: string): Promise<string | null> {
   const intentText = preflightIntentText(userInput);
+  const intent = classifyUserIntent(intentText);
+  if (intent.kind === 'conversation' || intent.kind === 'empty') return null;
   const topic = inferRuntimeTopic(intentText);
   if (!topic) {
     if (!inferProjectOpsPreflight(intentText)) return null;

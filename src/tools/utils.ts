@@ -138,9 +138,20 @@ export function getSmartShell(command: string, shellName?: string): SmartShellCo
     };
   }
 
+  if (looksLikePowerShell(command) && shellAvailable('pwsh')) {
+    const shell = getShell('pwsh');
+    return { shell, command: normalizeCommandForShell(command, shell.label), reason: 'PowerShell syntax detected and pwsh is available' };
+  }
+
   if (process.platform !== 'win32') {
     const shell = getDefaultShell();
-    return { shell, command, reason: `default shell: ${shell.label}` };
+    return {
+      shell,
+      command: normalizeCommandForShell(command, shell.label),
+      reason: looksLikeWindowsShell(command)
+        ? `Windows-style command translated for ${shell.label}`
+        : `default shell: ${shell.label}`,
+    };
   }
 
   if (looksLikePowerShell(command)) {
@@ -245,6 +256,9 @@ function normalizeCommandForShell(command: string, shellLabel: string): string {
     out = normalizePackageBinsForWindows(out);
     if (shellLabel === 'cmd') out = translateSimpleUnixInspectionForCmd(out);
   }
+  if (process.platform !== 'win32' && !['powershell', 'pwsh'].includes(shellLabel)) {
+    out = translateSimpleWindowsInspectionForPosix(out);
+  }
   return out;
 }
 
@@ -262,6 +276,15 @@ function translateSimpleUnixInspectionForCmd(command: string): string {
   if (/^ls\s+([^\s|&<>]+)\s*$/i.test(c)) return `dir ${c.replace(/^ls\s+/i, '')}`;
   if (/^ll\s*$/i.test(c) || /^la\s*$/i.test(c)) return 'dir';
   if (/^cat\s+([^\s|&<>]+)\s*$/i.test(c)) return `type ${c.replace(/^cat\s+/i, '')}`;
+  if (/^(command\s+-v|which)\s+([^\s|&<>]+)\s*$/i.test(c)) return `where ${c.replace(/^(command\s+-v|which)\s+/i, '')}`;
+  if (/^uname(\s+-[a-z]+)?\s*$/i.test(c)) return 'ver';
+  if (/^ifconfig\s*$/i.test(c)) return 'ipconfig';
+  if (/^ip\s+addr\s*$/i.test(c)) return 'ipconfig';
+  if (/^ip\s+route\s*$/i.test(c)) return 'route print';
+  if (/^traceroute\b/i.test(c)) return c.replace(/^traceroute\b/i, 'tracert');
+  if (/^ss\s+-[a-z]+\s*$/i.test(c)) return 'netstat -ano';
+  if (/^netstat\s+-tulpen\s*$/i.test(c)) return 'netstat -ano';
+  if (/^ps\s+(aux|-ef)\s*$/i.test(c)) return 'tasklist';
   if (/^head(\s+-n\s+\d+)?\s+([^\s|&<>]+)\s*$/i.test(c)) {
     const n = c.match(/\s+-n\s+(\d+)/i)?.[1] || '10';
     const file = c.replace(/^head(\s+-n\s+\d+)?\s+/i, '');
@@ -287,6 +310,29 @@ function translateSimpleUnixInspectionForCmd(command: string): string {
   return command;
 }
 
+function translateSimpleWindowsInspectionForPosix(command: string): string {
+  const c = command.trim();
+  if (/^cd\s*$/i.test(c)) return 'pwd';
+  if (/^dir(\s+\/[a-z]+)?\s*$/i.test(c)) return 'ls';
+  if (/^dir\s+([^\s|&<>]+)\s*$/i.test(c)) return `ls ${c.replace(/^dir\s+/i, '')}`;
+  if (/^type\s+([^\s|&<>]+)\s*$/i.test(c)) return `cat ${c.replace(/^type\s+/i, '')}`;
+  if (/^where\s+([^\s|&<>]+)\s*$/i.test(c)) return `command -v ${c.replace(/^where\s+/i, '')}`;
+  if (/^cls\s*$/i.test(c)) return 'clear';
+  if (/^ver\s*$/i.test(c)) return 'uname -a';
+  if (/^systeminfo\s*$/i.test(c)) return 'uname -a';
+  if (/^copy\s+([^\s|&<>]+)\s+([^\s|&<>]+)\s*$/i.test(c)) return c.replace(/^copy\s+/i, 'cp ');
+  if (/^move\s+([^\s|&<>]+)\s+([^\s|&<>]+)\s*$/i.test(c)) return c.replace(/^move\s+/i, 'mv ');
+  if (/^del\s+([^\s|&<>]+)\s*$/i.test(c)) return `rm ${c.replace(/^del\s+/i, '')}`;
+  if (/^rmdir\s+([^\s|&<>]+)\s*$/i.test(c)) return `rmdir ${c.replace(/^rmdir\s+/i, '')}`;
+  if (/^ipconfig(\s+\/all)?\s*$/i.test(c)) return 'ifconfig';
+  if (/^route\s+print\s*$/i.test(c)) return 'ip route';
+  if (/^tracert\b/i.test(c)) return c.replace(/^tracert\b/i, 'traceroute');
+  if (/^netstat\s+-ano\s*$/i.test(c)) return 'ss -tulpen';
+  if (/^pathping\b/i.test(c)) return c.replace(/^pathping\b/i, 'traceroute');
+  if (/^tasklist\s*$/i.test(c)) return 'ps aux';
+  return command;
+}
+
 function isSimpleUnixInspectionForCmd(command: string): boolean {
   const c = command.trim();
   return /^pwd\s*$/i.test(c)
@@ -294,6 +340,14 @@ function isSimpleUnixInspectionForCmd(command: string): boolean {
     || /^ll\s*$/i.test(c)
     || /^la\s*$/i.test(c)
     || /^cat\s+([^\s|&<>]+)\s*$/i.test(c)
+    || /^(command\s+-v|which)\s+([^\s|&<>]+)\s*$/i.test(c)
+    || /^uname(\s+-[a-z]+)?\s*$/i.test(c)
+    || /^ifconfig\s*$/i.test(c)
+    || /^ip\s+(addr|route)\s*$/i.test(c)
+    || /^traceroute\b/i.test(c)
+    || /^ss\s+-[a-z]+\s*$/i.test(c)
+    || /^netstat\s+-tulpen\s*$/i.test(c)
+    || /^ps\s+(aux|-ef)\s*$/i.test(c)
     || /^head(\s+-n\s+\d+)?\s+([^\s|&<>]+)\s*$/i.test(c)
     || /^tail(\s+-n\s+\d+)?\s+([^\s|&<>]+)\s*$/i.test(c)
     || /^mkdir\s+-p\s+([^\s|&<>]+)\s*$/i.test(c)
@@ -313,13 +367,17 @@ function looksLikePowerShell(command: string): boolean {
 }
 
 function looksLikeUnixShell(command: string): boolean {
-  return /^\s*(export|source|sudo|chmod|chown|grep|egrep|fgrep|sed|awk|cat|ls|ll|la|pwd|touch|mkdir\s+-p|rm\s+-|cp\s+-|mv\s+-|find\s+.*\s-name|brew|apt|apt-get|dnf|yum|pacman|zypper|apk|systemctl|journalctl|open|launchctl|defaults|sw_vers|wsl)\b/i.test(command)
+  return /^\s*(export|source|sudo|chmod|chown|grep|egrep|fgrep|sed|awk|cat|ls|ll|la|pwd|touch|mkdir\s+-p|rm\s+-|cp\s+-|mv\s+-|find\s+.*\s-name|command\s+-v|which|uname|ifconfig|ip\s+(addr|route)|traceroute|ss|netstat\s+-tulpen|ps\s+(aux|-ef)|brew|apt|apt-get|dnf|yum|pacman|zypper|apk|systemctl|journalctl|open|launchctl|defaults|sw_vers|wsl)\b/i.test(command)
     || /^\s*(\.\/|~\/|bash\s+|sh\s+|zsh\s+|fish\s+|wsl\s+)/i.test(command)
     || /^\s*(env\s+)?[A-Za-z_][A-Za-z0-9_]*=.*\s+\S+/.test(command)
     || /\$\(|`[^`]+`|\${[^}]+}|\$[A-Za-z_][A-Za-z0-9_]*/.test(command)
     || /\|\s*(grep|sed|awk|xargs|tee|head|tail|sort|uniq|wc|cut|tr)\b/i.test(command)
     || /\s(&&|\|\||;)\s/.test(command)
     || /\s(2>|1>|>>|<)\s*\S+/.test(command);
+}
+
+function looksLikeWindowsShell(command: string): boolean {
+  return /^\s*(dir|type|where|cls|ver|copy|move|del|ipconfig|tasklist|systeminfo|whoami|route\s+print|tracert|pathping|netstat\s+-ano|netsh)\b/i.test(command);
 }
 
 function shellAvailable(shellName: string): boolean {

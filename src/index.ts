@@ -36,6 +36,7 @@ import { buildAgentInputWithProjectIntel, shouldAttachProjectIntel } from './pro
 import { REPL_HISTORY_PATH, printReplHistory } from './repl-history.js';
 import { DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS } from './assistant-output-cap.js';
 import { ttyResetBeforeReplPrompt } from './tty-repl-cue.js';
+import { maybePromptCliUpdate } from './cli-update-check.js';
 
 dotenv.config();
 
@@ -236,6 +237,7 @@ program
           { name: 'Set max tool-result history size', value: 'toolresults' },
           { name: 'Toggle Auto-Approve', value: 'autoapprove' },
           { name: 'Toggle Model Council', value: 'council' },
+          { name: 'Toggle npm update check (new YamX versions)', value: 'updates' },
           { name: 'View Current Config', value: 'view' },
         ],
       },
@@ -337,6 +339,20 @@ program
       config.set('settings.modelCouncil.mode', enabled ? mode : 'off');
       await config.save();
       console.log(chalk.green(`[+] Model council set to ${enabled ? mode : 'off'}.`));
+    } else if (action === 'updates') {
+      const current = config.get().settings.checkForUpdates === true;
+      const { enabled } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'enabled',
+          message:
+            'When enabled, YamX checks npm for a newer release (at most once per 24h) and asks before running npm install -g.',
+          default: current,
+        },
+      ]);
+      config.set('settings.checkForUpdates', enabled);
+      await config.save();
+      console.log(chalk.green(`[+] checkForUpdates = ${enabled}`));
     } else if (action === 'view') {
       const cfg = config.get();
       const safe = JSON.parse(JSON.stringify(cfg));
@@ -520,6 +536,10 @@ program.action(async (options) => {
       ui.error(error.message);
       process.exit(1);
     }
+  }
+
+  if (cfg.settings?.checkForUpdates === true) {
+    await maybePromptCliUpdate(VERSION);
   }
 
   const contextEngine = new ContextEngine();
@@ -883,6 +903,7 @@ async function configureRuntimeSettings(config: Config, firstRun: boolean): Prom
     modelCouncil: boolean;
     councilMode: 'adaptive' | 'always' | 'off';
     maxToolResultChars: string;
+    checkForUpdates: boolean;
   }>([
     {
       type: 'confirm',
@@ -923,6 +944,13 @@ async function configureRuntimeSettings(config: Config, firstRun: boolean): Prom
         return (Number.isFinite(n) && n >= 4000 && n <= 100000) || 'Use a number between 4000 and 100000';
       },
     },
+    {
+      type: 'confirm',
+      name: 'checkForUpdates',
+      message:
+        'Prompt to upgrade when a newer YamX is on npm? (checks at most once per 24h; uses npm install -g if you agree)',
+      default: current.checkForUpdates === true,
+    },
   ]);
 
   config.set('settings.autoApprove', answers.autoApprove);
@@ -930,6 +958,7 @@ async function configureRuntimeSettings(config: Config, firstRun: boolean): Prom
   config.set('settings.modelCouncil.enabled', answers.modelCouncil);
   config.set('settings.modelCouncil.mode', answers.councilMode);
   config.set('settings.maxToolResultChars', Number(answers.maxToolResultChars));
+  config.set('settings.checkForUpdates', answers.checkForUpdates);
 }
 
 async function runOnboard(config: Config, options: { title?: string; firstRun?: boolean } = {}) {

@@ -23,13 +23,16 @@ It is not a general-purpose chat widget: the system behavior, defaults, and tool
 | Goal | What YamX does toward it |
 |------|---------------------------|
 | **CLI-native** | Plain shell-like input can run **without an LLM round-trip** when it is clearly a command. |
+| **Current intent first** | Each turn is classified as conversation, unclear follow-up, direct command, or task. YamX does not blindly continue old work when the user greets, changes topic, or sends small talk. |
 | **Fix loops** | Failures from `run_command` and similar tools are meant to drive **diagnose → change something → retry**, not copy-paste essays. |
 | **Short user-facing answers** | Prompting and UI bias toward **dense** replies. Assistant markdown is **hard-capped** per message (see Configuration) so huge generations do not flood the terminal or bloat saved history. |
 | **Local facts first** | Detected local tooling (e.g. Python, Node, ripgrep) is surfaced in context so the model reaches for **your** environment before inventing steps. |
 | **Ops preflight** | For install/PATH/version asks about runtimes, YamX injects `yamx_local_preflight`; for vague local ops asks like **“install it”** or **“diagnose it”**, it injects `yamx_project_preflight` with nearby manifests, scripts, lockfiles, git/runtime probes, local bins, and candidate commands. |
+| **Cross-platform shell intelligence** | `auto` shell mode detects and translates common Windows/Unix/PowerShell command shapes for local inspection, diagnostics, package scripts, and network probes. |
+| **Senior ops domains** | Built-in context modes guide DevOps/full-stack operations, network engineering, and defensive cybersecurity work with read-only probes first and explicit approval for risky mutation. |
 | **One-terminal workflow** | YamX keeps a guarded shell working directory, so `cd src` affects the next command while staying inside the project. Use `/pwd` and `/cd`, or just type normal shell lines. |
 | **AI shell recovery** | If a direct shell command fails, YamX feeds the command, cwd, and output back into the agent so the model can diagnose, fix, and retry in the same terminal. |
-| **Command memory** | YamX records successful and failed project commands in `~/.yamx/command-memory.json` and feeds recent patterns into future diagnosis/setup turns. |
+| **Command memory** | YamX records successful and failed project commands in project-local `.yamx/command-memory.json` by default (override with `YAMX_HOME`) and feeds recent patterns into future diagnosis/setup turns. |
 | **Safe automation** | Hooks, approval modes, and optional allow/deny shell patterns support controlled automation. |
 | **Terminal-friendly output** | Wrapping respects **left and right gutters** (scrollbar/host padding) so long lines and boxed **tool/results** panels are less likely to clip at the edges. **`run_command`** panels show **much more output** before summarizing—full text still reaches the agent. |
 | **REPL readability** | After bulk output (↑/↓ **history replay** included), YamX resets ANSI styling and emits a newline **cue** so the next **`YamX ›`** prompt sits on a clean line in narrow or Windows-hosted terminals. |
@@ -103,12 +106,28 @@ If `~/.yamx/config.json` is missing—or your default cloud provider has **no** 
 
 ## How input is handled
 
+- **Current intent guard** — Every agent turn gets a `yamx_current_intent` block: `conversation`, `clarification`, `direct-command`, or `task`. Greetings and acknowledgements stay brief and do **not** trigger preflight, project intel, model council, old task output, or commands. Unclear follow-ups like **"more"** or **"do it"** ask one short clarification instead of guessing from stale context.
 - **Direct shell** — Lines that look like real shell commands can execute **locally with no LLM call** (zero tokens for that line). To force shell execution and skip routing, you can use prefixes such as `$ cmd`, `! cmd`, `> cmd`, or `run: cmd`.
 - **Persistent cwd** — Direct shell commands and `run_command` share a YamX working directory. `cd src` / `/cd src` changes where later shell commands run; attempts to leave the launch project are blocked.
 - **Direct shell recovery** — If a direct command or `/run ...` fails, YamX converts that failure into an agent repair turn with the original command and output, so diagnosis and fixes continue without opening another terminal.
 - **Command memory** — YamX learns which commands worked or failed in this project/cwd and uses that evidence in later `install it`, `diagnose it`, `run it`, and fix turns.
 - **Ops preflight** — Phrases like **“install python”** are not valid shell lines, so they go to the agent. Before that turn’s model call, YamX may already have run **`where` / `py -0` / `python --version`** (and similar) on **your OS** and appended `yamx_local_preflight`. Vague project-local asks like **“install it”**, **“diagnose it”**, or **“run this project”** append `yamx_project_preflight` with nearby scripts, lockfiles, package manager, git status, local bins, runtime probes, and candidate next commands. The model is instructed to use that evidence and propose concrete `run_command` steps on this machine, not generic setup prose. Disable via `settings.preflightRuntimeProbes` (see Configuration).
 - **Agent** — Natural-language requests go to the configured model with **tool calling**: the agent is steered toward **run / inspect / fix** rather than platform-wide install guides.
+
+---
+
+## Domain intelligence
+
+YamX is tuned for terminal-heavy engineering domains, but it still starts with local evidence and policy checks.
+
+| Domain | Safe default behavior |
+|--------|------------------------|
+| **Software development** | Inspect manifests/code/logs, run existing scripts, patch narrowly, and verify with the cheapest useful command before broad builds. |
+| **DevOps / full-stack operations** | Prefer `docker --version`, `docker compose config`, `kubectl version --client`, `helm lint`, `terraform validate`, `ansible-playbook --syntax-check`, and dry-run/status/plan-style commands before mutation. |
+| **Network engineering** | Inspect interfaces, routes, DNS, listeners, targeted reachability, and HTTP/TLS layers first. Avoid route/firewall/DNS/VPN/interface changes unless explicitly requested and approved. |
+| **Defensive cybersecurity** | Support secure code review, dependency/CVE triage, secrets detection, SAST, container/IaC/Kubernetes hardening, and incident/log triage. Authorized local scope is assumed; active probing outside local/owned scope requires explicit authorization. |
+
+Security mode avoids malware, credential theft, persistence, evasion, destructive payloads, unauthorized scanning, exploit chaining, and bypass instructions. Secret findings should be redacted to path/type/fingerprint and followed by rotation/removal guidance.
 
 ---
 
@@ -128,6 +147,7 @@ If `~/.yamx/config.json` is missing—or your default cloud provider has **no** 
 | `~/.yamx/config.json` | Providers, keys, `settings` |
 | `~/.yamx/state.json` | Active session id |
 | `~/.yamx/sessions/*.json` | Chat history |
+| `.yamx/command-memory.json` | Project-local command outcomes (override base directory with `YAMX_HOME`) |
 
 Interactive editor:
 
@@ -200,6 +220,7 @@ src/index.ts               CLI entry, flags, onboarding, persistence
 src/agent.ts               Streaming, tools, compaction, approvals
 src/context.ts             Workspace scan + system prompt
 src/direct-command.ts      Shell routing vs agent
+src/intent.ts              Current-turn intent classification and metadata
 src/ui.ts                  Terminal Markdown and layout
 src/assistant-output-cap.ts Limits on assistant markdown
 src/terminal-layout.ts     Viewport widths, gutters, panel wrap math
@@ -256,6 +277,8 @@ yamx config               interactive configuration
 **Model still writes install essays** — Confirm `settings.preflightRuntimeProbes` is not `false`; `yamx_local_preflight` should appear for turns like “install python,” and `yamx_project_preflight` should appear for turns like “install it.” If a model ignores it, switch model or lower temperature; YamX cannot fully control remote model behavior.
 
 **Extra user message in saved chats** — Preflight adds a second `user` role message with probe output. That is intentional so the thread stays auditable and the model stays grounded.
+
+**YamX continues old work after small talk** — Recent versions inject `yamx_current_intent` and skip project intel/preflight/model council for greetings and acknowledgements. Run `yamx --diagnose` to confirm version, then start a new chat with `yamx --new-chat` if an old session is polluted.
 
 **`npm whoami` → 401** — Run `npm login` and verify `npm whoami`.
 

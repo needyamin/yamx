@@ -1,5 +1,4 @@
 import fs from 'fs-extra';
-import os from 'node:os';
 import path from 'node:path';
 import { PROJECT_ROOT } from './tools/utils.js';
 
@@ -19,7 +18,7 @@ interface CommandMemoryFile {
   projects: Record<string, CommandRecord[]>;
 }
 
-const MEMORY_PATH = path.join(os.homedir(), '.yamx', 'command-memory.json');
+const MEMORY_PATH = path.join(process.env.YAMX_HOME || path.join(PROJECT_ROOT, '.yamx'), 'command-memory.json');
 const MAX_PROJECT_RECORDS = 160;
 
 export function commandMemoryPath(): string {

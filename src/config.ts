@@ -38,6 +38,8 @@ export interface YamConfig {
       enabled: boolean;
       defaultModel?: string;
     };
+    /** When true: neural-status lines, fancy tool banners, turn timing. Default off = quieter CLI. */
+    verboseCli?: boolean;
   };
 }
 
@@ -57,13 +59,14 @@ const DEFAULT_CONFIG: YamConfig = {
     deniedShellPatterns: [],
     hooksEnabled: true,
     modelCouncil: {
-      enabled: true,
+      enabled: false,
       mode: 'adaptive',
     },
     maxToolResultChars: 24_000,
     subagents: {
       enabled: true,
     },
+    verboseCli: false,
   },
 };
 

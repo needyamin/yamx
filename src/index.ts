@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * YamX CLI v1.0.0 â€” coding agent with persistent sessions
+ * YamX CLI v1.0.0 - coding agent with persistent sessions
  */
 
 import { Command } from 'commander';
@@ -38,6 +38,14 @@ const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version?: string };
 const VERSION = packageJson.version || '0.0.0';
 const program = new Command();
+
+/** Bracket glyphs: readable on legacy Windows consoles that are not UTF-8 (code page issues). */
+const TERM = {
+  ok: chalk.green('[+]'),
+  idle: chalk.dim('[-]'),
+  bad: chalk.red('[x]'),
+  warn: chalk.yellow('[!]'),
+} as const;
 
 type ProviderName = 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'ollama';
 const PROVIDER_NAMES = new Set<ProviderName>(['openai', 'anthropic', 'gemini', 'openrouter', 'ollama']);
@@ -97,7 +105,7 @@ function normalizeProviderName(value: unknown): ProviderName {
 
 program
   .name('yamx')
-  .description('YamX â€” agent CLI with persistent chat sessions')
+  .description('YamX - agent CLI with persistent chat sessions')
   .version(VERSION)
   .option('-p, --provider <provider>', 'LLM provider (openai, anthropic, gemini, openrouter, ollama)', '')
   .option('-m, --model <model>', 'Model name')
@@ -153,7 +161,7 @@ program
       ]);
       await configureProviderAccess(config, normalizeProviderName(provider));
       await config.save();
-      console.log(chalk.green(`✓ ${provider} API key saved.`));
+      console.log(chalk.green(`[+] ${provider} API key saved.`));
     } else if (action === 'provider') {
       const { provider } = await inquirer.prompt([
         {
@@ -166,14 +174,14 @@ program
       ]);
       config.set('defaultProvider', normalizeProviderName(provider));
       await config.save();
-      console.log(chalk.green(`✓ Default provider set to ${normalizeProviderName(provider)}.`));
+      console.log(chalk.green(`[+] Default provider set to ${normalizeProviderName(provider)}.`));
     } else if (action === 'model') {
       const provider = (config.get().defaultProvider || 'openrouter') as ProviderName;
       const model = await chooseModel(provider, config.get().defaultModel || (provider === 'openrouter' ? 'deepseek-chat' : undefined));
       config.set('defaultModel', model);
       config.set(`providers.${provider}.model`, model);
       await config.save();
-      console.log(chalk.green(`✓ Default model set to ${model}.`));
+      console.log(chalk.green(`[+] Default model set to ${model}.`));
     } else if (action === 'budget') {
       const { n } = await inquirer.prompt([
         {
@@ -187,7 +195,7 @@ program
       if (v > 10_000) {
         config.set('settings.contextBudgetChars', v);
         await config.save();
-        console.log(chalk.green(`âœ“ contextBudgetChars = ${v}`));
+        console.log(chalk.green(`[+] contextBudgetChars = ${v}`));
       } else {
         console.log(chalk.yellow('Value too small; unchanged.'));
       }
@@ -204,7 +212,7 @@ program
       if (v >= 4000 && v <= 100_000) {
         config.set('settings.maxToolResultChars', v);
         await config.save();
-        console.log(chalk.green(`✓ maxToolResultChars = ${v}`));
+        console.log(chalk.green(`[+] maxToolResultChars = ${v}`));
       } else {
         console.log(chalk.yellow('Use a value between 4000 and 100000; unchanged.'));
       }
@@ -215,9 +223,9 @@ program
       ]);
       config.set('settings.autoApprove', approve);
       await config.save();
-      console.log(chalk.green(`âœ“ Auto-approve set to ${approve}.`));
+      console.log(chalk.green(`[+] Auto-approve set to ${approve}.`));
     } else if (action === 'council') {
-      const current = config.get().settings.modelCouncil?.enabled !== false;
+      const current = config.get().settings.modelCouncil?.enabled === true;
       const { enabled, mode } = await inquirer.prompt([
         { type: 'confirm', name: 'enabled', message: `Enable hidden model council before agent replies? (Currently: ${current})`, default: current },
         {
@@ -235,7 +243,7 @@ program
       config.set('settings.modelCouncil.enabled', enabled);
       config.set('settings.modelCouncil.mode', enabled ? mode : 'off');
       await config.save();
-      console.log(chalk.green(`✓ Model council set to ${enabled ? mode : 'off'}.`));
+      console.log(chalk.green(`[+] Model council set to ${enabled ? mode : 'off'}.`));
     } else if (action === 'view') {
       const cfg = config.get();
       const safe = JSON.parse(JSON.stringify(cfg));
@@ -243,7 +251,7 @@ program
       for (const p of Object.values(safe.providers || {})) {
         if (p && typeof p === 'object' && 'apiKey' in p) {
           const k = (p as any).apiKey as string;
-          (p as any).apiKey = k ? `${k.slice(0, 8)}â€¦${k.slice(-4)}` : '(not set)';
+          (p as any).apiKey = k ? `${k.slice(0, 8)}...${k.slice(-4)}` : '(not set)';
         }
       }
       console.log(JSON.stringify(safe, null, 2));
@@ -253,7 +261,9 @@ program
 program.action(async (options) => {
   const config = new Config();
   const cfg = await config.load();
-  const ui = new UI();
+  const verboseCli = cfg.settings?.verboseCli === true;
+  const councilOn = cfg.settings?.modelCouncil?.enabled === true;
+  const ui = new UI({ verbose: verboseCli });
   const store = new SessionStore();
   await store.init();
 
@@ -352,7 +362,7 @@ program.action(async (options) => {
     provider = createProvider(providerName, modelName, cfg);
   } catch (error: any) {
     if (error.message.includes('API key not found')) {
-      console.log(chalk.hex('#FF4136').bold(`\n  âš  ${error.message.split('.')[0]}`)); // Just the first sentence
+      console.log(chalk.hex('#FF4136').bold(`\n  ${TERM.warn} ${error.message.split('.')[0]}`)); // Just the first sentence
 
       const { choice } = await inquirer.prompt([
         {
@@ -392,7 +402,7 @@ program.action(async (options) => {
         }
         envContent += `${pName}_API_KEY=${key}\n`;
         await fs.writeFile(envPath, envContent, 'utf-8');
-        console.log(chalk.green(`\n  âœ“ Saved to ${envPath}`));
+        console.log(chalk.green(`\n  [+] Saved to ${envPath}`));
 
         // Inject into process.env so it works immediately
         process.env[`${pName}_API_KEY`] = key;
@@ -408,10 +418,10 @@ program.action(async (options) => {
   }
 
   const contextEngine = new ContextEngine();
-  ui.startThinking('Scanning projectâ€¦');
+  ui.startThinking('Scanning project...');
   const systemPrompt = await contextEngine.buildSystemPrompt();
   ui.stopSpinner();
-  ui.info(`Project scanned Â· ${getToolCount()} tools loaded Â· ~/.yamx/sessions/\n`);
+  ui.info(`Project scanned | ${getToolCount()} tools loaded | ~/.yamx/sessions/\n`);
 
   let currentSession: ChatSession;
 
@@ -490,21 +500,19 @@ program.action(async (options) => {
     allowedShellCommands: cfg.settings?.allowedShellCommands ?? [],
     deniedShellPatterns: cfg.settings?.deniedShellPatterns ?? [],
     hooksEnabled: cfg.settings?.hooksEnabled !== false,
-    modelCouncilEnabled: cfg.settings?.modelCouncil?.enabled !== false,
+    modelCouncilEnabled: councilOn,
     modelCouncilMode: cfg.settings?.modelCouncil?.mode ?? 'adaptive',
     maxToolResultChars: cfg.settings?.maxToolResultChars ?? 24_000,
+    verboseCli,
   });
 
   ui.banner(provider.name, provider.modelId, {
     title: currentSession.title,
     id: currentSession.id,
-  }, getToolCount(), VERSION);
+  }, getToolCount(), VERSION, councilOn);
 
   if (currentSession.messages.length === 1) {
-    console.log(chalk.dim('\n  ðŸ’¡ Need ideas? Try:'));
-    console.log(chalk.dim('  - "Create a new react app" or "Find all console.logs"'));
-    console.log(chalk.dim('  - Type /tools to see what actions I can perform'));
-    console.log(chalk.dim('  - Type /help for a list of all commands\n'));
+    console.log(chalk.dim('  /help - slash commands | type a shell or project question anytime\n'));
   } else {
     console.log(); // Just a spacer if resuming chat
   }
@@ -635,7 +643,7 @@ async function resolveSessionRef(
   return null;
 }
 
-// â”€â”€â”€ Onboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Onboard ---
 
 async function chooseModel(provider: ProviderName, currentModel?: string): Promise<string> {
   const safeProvider = normalizeProviderName(provider);
@@ -743,7 +751,7 @@ async function configureRuntimeSettings(config: Config, firstRun: boolean): Prom
       type: 'confirm',
       name: 'modelCouncil',
       message: 'Enable hidden model council before agent replies?',
-      default: current.modelCouncil?.enabled !== false,
+      default: current.modelCouncil?.enabled === true,
     },
     {
       type: 'rawlist',
@@ -808,13 +816,13 @@ async function runOnboard(config: Config, options: { title?: string; firstRun?: 
   config.set(`providers.${provider}.model`, model);
   await config.save();
 
-  console.log(chalk.green('\n  ✓ Configuration saved to ~/.yamx/config.json'));
-  console.log(chalk.dim(`  Provider: ${provider} · Model: ${model}`));
-  console.log(chalk.dim(`  Tools: ${getToolCount()} · Streaming: ${config.get().settings.streamOutput} · Model council: ${config.get().settings.modelCouncil?.mode || 'adaptive'}`));
+  console.log(chalk.green('\n  [+] Configuration saved to ~/.yamx/config.json'));
+  console.log(chalk.dim(`  Provider: ${provider} | Model: ${model}`));
+  console.log(chalk.dim(`  Tools: ${getToolCount()} | Streaming: ${config.get().settings.streamOutput} | Model council: ${config.get().settings.modelCouncil?.mode || 'adaptive'}`));
   console.log(chalk.hex('#00FF41')('\n  Run `yamx` to start coding.\n'));
 }
 
-// â”€â”€â”€ Diagnose â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Diagnose ---
 
 async function runDiagnose(config: Config, cfg: any) {
   console.log(chalk.bold('\n  YamX Diagnostic Report\n'));
@@ -832,15 +840,15 @@ async function runDiagnose(config: Config, cfg: any) {
   const os = await import('os');
   const configPath = path.default.join(os.default.homedir(), '.yamx', 'config.json');
   const configExists = await fs.default.pathExists(configPath);
-  console.log(`  ${configExists ? chalk.green('âœ“') : chalk.red('âœ—')} Config file ${configExists ? 'exists' : 'missing'}: ${configPath}`);
+  console.log(`  ${configExists ? TERM.ok : TERM.bad} Config file ${configExists ? 'exists' : 'missing'}: ${configPath}`);
 
   // Provider keys
   const providers = ['openai', 'anthropic', 'gemini', 'openrouter'] as const;
   for (const p of providers) {
     const key = (cfg.providers as any)?.[p]?.apiKey || process.env[`${p.toUpperCase()}_API_KEY`];
     const has = !!key;
-    const mark = has ? chalk.green('âœ“') : chalk.dim('â—‹');
-    console.log(`  ${mark} ${p.padEnd(12)} ${has ? `key: ${key.slice(0, 6)}â€¦` : chalk.dim('not configured')}`);
+    const mark = has ? TERM.ok : TERM.idle;
+    console.log(`  ${mark} ${p.padEnd(12)} ${has ? `key: ${key.slice(0, 6)}...` : chalk.dim('not configured')}`);
   }
 
   // Ollama
@@ -855,17 +863,17 @@ async function runDiagnose(config: Config, cfg: any) {
       req.on('error', reject);
       req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
     });
-    console.log(`  ${chalk.green('âœ“')} ollama       reachable at ${ollamaUrl}`);
+    console.log(`  ${TERM.ok} ollama       reachable at ${ollamaUrl}`);
   } catch {
-    console.log(`  ${chalk.dim('â—‹')} ollama       ${chalk.dim(`not reachable at ${ollamaUrl}`)}`);
+    console.log(`  ${TERM.idle} ollama       ${chalk.dim(`not reachable at ${ollamaUrl}`)}`);
   }
 
   // Git
   try {
     const gitVer = execSync('git --version', { encoding: 'utf-8' }).trim();
-    console.log(`  ${chalk.green('âœ“')} git          ${gitVer}`);
+    console.log(`  ${TERM.ok} git          ${gitVer}`);
   } catch {
-    console.log(`  ${chalk.red('âœ—')} git          not found`);
+    console.log(`  ${TERM.bad} git          not found`);
   }
 
   // Sessions
@@ -877,7 +885,7 @@ async function runDiagnose(config: Config, cfg: any) {
   console.log();
 }
 
-// â”€â”€â”€ Commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- createProvider ---
 
 function createProvider(name: string, model: string | undefined, cfg: any): Provider {
   switch (name) {

@@ -36,6 +36,8 @@ export interface AgentOptions {
   modelCouncilMode?: 'adaptive' | 'always' | 'off';
   /** Maximum tool-result characters kept in model history */
   maxToolResultChars?: number;
+  /** Neural-status noise, fancy tool banners, turn timing footer */
+  verboseCli?: boolean;
 }
 
 export class Agent {
@@ -82,17 +84,19 @@ export class Agent {
 
   constructor(provider: Provider, systemPrompt: string, options: AgentOptions = {}) {
     this.provider = provider;
-    this.ui = new UI();
-    this.options = {
+    const merged = {
       autoApprove: false,
       stream: true,
       maxTokens: 16384,
       temperature: 0.1,
-      modelCouncilEnabled: true,
-      modelCouncilMode: 'adaptive',
+      modelCouncilEnabled: false,
+      modelCouncilMode: 'adaptive' as const,
       maxToolResultChars: 24_000,
+      verboseCli: false,
       ...options,
     };
+    this.ui = new UI({ verbose: merged.verboseCli === true });
+    this.options = merged;
     if (this.options.initialHistory && this.options.initialHistory.length > 0) {
       this.history = JSON.parse(JSON.stringify(this.options.initialHistory)) as Message[];
     } else {
@@ -226,9 +230,10 @@ export class Agent {
       this.ui.warn(`Reached maximum tool iterations (${MAX_TOOL_ITERATIONS}). Stopping.`);
     }
 
-    // Show turn timing
-    const elapsed = ((Date.now() - this.turnStartTime) / 1000).toFixed(1);
-    this.ui.info(`Turn completed in ${elapsed}s · ${iterations} iteration${iterations > 1 ? 's' : ''}`);
+    if (this.options.verboseCli) {
+      const elapsed = ((Date.now() - this.turnStartTime) / 1000).toFixed(1);
+      this.ui.info(`Turn completed in ${elapsed}s · ${iterations} iteration${iterations > 1 ? 's' : ''}`);
+    }
 
     await Promise.resolve(this.options.onPersist?.());
   }
@@ -314,7 +319,7 @@ export class Agent {
   /** Non-streaming completion */
   private async completeResponse(): Promise<CompletionResult> {
     this.ui.neuralStatus('model', 'sending context and tools to provider');
-    this.ui.startThinking('Waiting for model response...');
+    this.ui.startThinking('Calling model API…');
 
     try {
       const result = await this.withRetry(() => this.provider.complete({
@@ -348,7 +353,7 @@ export class Agent {
       return result;
     } catch (error: any) {
       this.ui.stopSpinner();
-      this.ui.error(`Provider error: ${error.message}`);
+      this.ui.apiFailure('complete', error);
       return { content: null };
     }
   }
@@ -356,7 +361,7 @@ export class Agent {
   /** Streaming completion with accumulated markdown rendering */
   private async streamResponse(): Promise<CompletionResult> {
     this.ui.neuralStatus('model', 'streaming provider response');
-    this.ui.startThinking('Waiting for model stream...');
+    this.ui.startThinking('Waiting for streamed reply…');
 
     try {
       let fullContent = '';
@@ -444,7 +449,7 @@ export class Agent {
       };
     } catch (error: any) {
       this.ui.stopSpinner();
-      this.ui.error(`Stream error: ${error.message}`);
+      this.ui.apiFailure('stream', error);
       return { content: null };
     }
   }

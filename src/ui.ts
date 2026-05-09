@@ -7,6 +7,7 @@ import ora, { Ora } from 'ora';
 import boxen from 'boxen';
 import { marked } from 'marked';
 import { markedTerminal } from 'marked-terminal';
+import { summarizeApiFailure } from './provider-error-format.js';
 
 // Configure marked with terminal renderer for rich markdown output
 marked.use(markedTerminal({
@@ -29,11 +30,18 @@ const MX = chalk.hex('#00FF41');
 const MX_DIM = chalk.hex('#008F11');
 const MX_CORE = chalk.hex('#41FF70');
 
+export type UIOptions = { verbose?: boolean };
+
 export class UI {
   private spinner: Ora | null = null;
   private streamBuffer = '';
+  private verbose = false;
 
-  banner(provider: string, model: string, session?: { title?: string; id?: string }, toolCount = 0, version = 'dev') {
+  constructor(opts?: UIOptions) {
+    this.verbose = opts?.verbose === true;
+  }
+
+  banner(provider: string, model: string, session?: { title?: string; id?: string }, toolCount = 0, version = 'dev', councilOn = false) {
     if (process.stdout.isTTY) console.clear();
 
     const threadTitle = session?.title ?? 'untitled';
@@ -47,7 +55,7 @@ export class UI {
       '',
       `   ${MX_DIM('provider')} ${MX(provider)} ${MX_DIM('|')} ${MX_DIM('model')} ${MX(model)}`,
       `   ${MX_DIM('thread')} ${MX(threadTitle)} ${MX_DIM('|')} ${MX_DIM(threadId)}...`,
-      `   ${MX_DIM('signal')} ${MX('online')} ${MX_DIM('|')} ${MX_DIM('model council')} ${MX('armed')} ${MX_DIM('|')} ${MX_DIM('logs')} ${MX('ready')}`,
+      `   ${MX_DIM('signal')} ${MX('online')} ${MX_DIM('|')} ${MX_DIM('council')} ${MX(councilOn ? 'on' : 'off')} ${MX_DIM('|')} ${MX_DIM('logs')} ${MX('ready')}`,
     ].join('\n');
 
     console.log('');
@@ -63,6 +71,7 @@ export class UI {
   }
 
   neuralStatus(stage: string, detail: string) {
+    if (!this.verbose) return;
     console.log(`  ${MX('◈')} ${MX_DIM('[')}${MX(stage.toUpperCase())}${MX_DIM(']')} ${DIM(detail)}`);
   }
 
@@ -111,15 +120,19 @@ export class UI {
   }
 
   startThinking(text = 'Thinking…') {
+    const prefix = this.verbose ? `${MX_DIM('[neural-link]')} ` : '';
     this.spinner = ora({
-      text: `${MX_DIM('[neural-link]')} ${DIM(text)}`,
+      text: `${prefix}${DIM(text)}`,
       color: 'green',
       spinner: 'dots',
     }).start();
   }
 
   updateSpinner(text: string) {
-    if (this.spinner) this.spinner.text = `${MX_DIM('[neural-link]')} ${DIM(text)}`;
+    if (this.spinner) {
+      const prefix = this.verbose ? `${MX_DIM('[neural-link]')} ` : '';
+      this.spinner.text = `${prefix}${DIM(text)}`;
+    }
   }
 
   stopSpinner() {
@@ -161,16 +174,34 @@ export class UI {
         return `${DIM(k)}=${chalk.white(JSON.stringify(val))}`;
       })
       .join(' ');
+    if (!this.verbose) {
+      console.log(`${DIM(`  › ${name}`)} ${argsStr}`.slice(0, (process.stdout.columns || 120) - 2));
+      return;
+    }
     console.log(`\n  ${MX('◈')} ${MX_DIM('[TOOL LINK]')} ${TOOL_COLOR.bold(name)} ${argsStr}`);
   }
 
   toolResult(name: string, result: string, duration: number) {
     const preview = result.length > 500 ? `${result.slice(0, 497)}…` : result;
     const lines = preview.split('\n');
+    const maxLines = this.verbose ? 15 : 8;
+    const headLines = this.verbose ? 12 : 6;
     const displayLines =
-      lines.length > 15
-        ? [...lines.slice(0, 12), DIM(`  … ${lines.length - 12} more lines`)]
+      lines.length > maxLines
+        ? [...lines.slice(0, headLines), DIM(`  … ${lines.length - headLines} more lines`)]
         : lines;
+
+    if (!this.verbose) {
+      if (preview.trim()) {
+        console.log(DIM(`  (${name} · ${duration}ms)`));
+        for (const line of displayLines) {
+          console.log(`    ${DIM(line)}`);
+        }
+      } else {
+        console.log(DIM(`  (${name} · ${duration}ms · ok)`));
+      }
+      return;
+    }
 
     console.log(`  ${SUCCESS('✓')} ${DIM(`[TOOL OK] ${name} · ${duration}ms`)}`);
     for (const line of displayLines) {
@@ -197,6 +228,39 @@ export class UI {
   error(msg: string) {
     this.stopSpinner();
     console.log(`\n  ${ERROR('✗')} ${ERROR(msg)}`);
+  }
+
+  /**
+   * Boxed provider / stream failures (parses embedded JSON bodies instead of dumping one long line).
+   */
+  apiFailure(kind: 'stream' | 'complete', err: unknown) {
+    this.stopSpinner();
+    const view = summarizeApiFailure(err);
+    const title = kind === 'stream' ? ' Stream failed ' : ' API request failed ';
+    const lines: string[] = [`${ERROR.bold(view.headline)}`];
+    for (const d of view.detailLines) lines.push('');
+    lines.push(...view.detailLines.map((d) => DIM(d)));
+    if (view.hints.length) {
+      lines.push('', DIM('What to try:'));
+      lines.push(...view.hints.map((h) => `  ${WARNING('-')} ${DIM(h)}`));
+    }
+    if (view.technical) {
+      lines.push('', DIM(view.technical));
+    }
+    const inner = lines.join('\n');
+    console.log(
+      '\n' +
+        boxen(inner, {
+          padding: { top: 0, bottom: 0, left: 1, right: 1 },
+          margin: { top: 0, bottom: 1, left: 0, right: 0 },
+          borderStyle: 'round',
+          borderColor: '#FF4136',
+          dimBorder: true,
+          title: ERROR.bold(title.trim()),
+          titleAlignment: 'left',
+        }) +
+        '\n'
+    );
   }
 
   success(msg: string) {

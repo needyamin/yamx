@@ -1,23 +1,10 @@
 # YamX
 
-Terminal assistant built around **commands, packages, scripts, logs, git, and quick local analysis**. It runs eligible input **straight on your shell** (no API call). When you ask in natural language, the model replies **short**, picks tools or shell commands, and follows **error → diagnose → fix → retry** instead of long chat.
+**YamX** is a terminal assistant centered on **shell commands**, **packages and scripts**, **git**, **logs**, and fast local facts. Matching input runs **directly on your machine** with **no LLM call**. Natural-language prompts use a connected model plus **29 built-in tools**; replies are biased toward **short answers**, **few questions**, and **run / fix / retry** on errors.
 
-**Providers:** OpenAI, Anthropic, Google Gemini, OpenRouter (many models), Ollama (local).
+Requires **Node.js 18+**.
 
-<<<<<<< HEAD
-Needs **Node.js 18+**.
-=======
----
-<img width="108" height="108" alt="Image" src="https://github.com/user-attachments/assets/3fad0efb-cc8e-4f81-981f-536f8db20ff2" />
-
-## What makes YamX different
-
-- **Local first, model second.** When you type a command like `systeminfo`, `lscpu`, `tar`, `jq`, or `python`, YamX runs it directly on your shell. No model call, no token cost.
-- **Auto-detected helpers.** YamX probes ~70 common tools cross-platform on startup (python, node, jq, yq, awk, sed, rg, openssl, sha256sum, etc.) and tells the model exactly what's installed and where.
-- **Local compute first.** For analysis, parsing, counting, math, JSON/CSV/YAML inspection, the agent prefers running a small one-liner with `python` / `jq` / `awk` / `node` instead of doing the work in chat. Smaller context, lower cost, deterministic results.
-- **Failure-aware.** When commands or services fail, YamX inspects task output and logs (`auto`, `latest-error`, `summary`, `tail`, `head`, `errors`, `full`) and follows an internal failure protocol before applying a fix.
-- **Safe by default.** Sensitive, destructive, privileged, publishing, package-install, credential, and permission-changing commands are classified and require approval — or are blocked outright if they look like exfiltration.
->>>>>>> 85c56ec82033ff8bb7d4102558b92fde37d959a3
+**Providers:** OpenAI, Anthropic, Google Gemini, OpenRouter (wide model choice), Ollama (local).
 
 ---
 
@@ -28,15 +15,14 @@ npm install -g @needyamin/yamx@latest
 yamx
 ```
 
-**From source**
+**From Git**
 
 ```bash
-git clone https://github.com/needyamin/yamx.git
-cd yamx
+git clone https://github.com/needyamin/yamx.git && cd yamx
 npm install && npm link
 ```
 
-**Without global install**
+**Without a global install**
 
 ```bash
 npx @needyamin/yamx
@@ -48,79 +34,41 @@ npx @needyamin/yamx
 npm uninstall -g @needyamin/yamx
 ```
 
-Remove data (config + sessions):
-
-- Windows (PowerShell): `Remove-Item -Recurse -Force $HOME\.yamx`
-- macOS / Linux: `rm -rf ~/.yamx`
-
----
-
-## First steps
+Config and chats live under `~/.yamx` (`%USERPROFILE%\.yamx` on Windows). To remove everything:
 
 ```bash
-yamx --onboard    # provider, API key, default model, runtime options
-yamx --diagnose   # Node, keys, git, Ollama, sessions, detected CLIs
-yamx              # start; sessions live under ~/.yamx/sessions/
+# macOS / Linux
+rm -rf ~/.yamx
+
+# Windows PowerShell
+Remove-Item -Recurse -Force $HOME\.yamx
 ```
 
-Without `~/.yamx/config.json`, the first **`yamx`** run walks through onboarding.
-
 ---
 
-## Design: CLI first, minimal noise
+## First run
 
-Out of the box YamX behaves like a **quiet command-line assistant**:
-
-- **`verboseCli`** defaults to **`false`**: fewer status lines and compact tool banners. Set **`true`** in `~/.yamx/config.json` for the older “verbose” telemetry.
-- **Hidden model council** defaults to **`off`** (`settings.modelCouncil.enabled: false`). Turn it **`true`** only if you want an extra reasoning pass before the main reply (more tokens).
-
-The **system prompt** tells every model to: stay on **one goal per turn**, **execute** (`run_command`, git, reads) ahead of narration, reply in **few lines**, ask **`Need:`** only when blocked, and **never repeat the same failing command** without changing something meaningful.
-
-Natural language still gets **29 agent tools** (files, git, shell, URLs, codebase intel, logs) when a task needs them.
-
----
-
-## Direct shell commands (zero LLM tokens)
-
-If the input looks like a normal shell invocation, YamX runs it locally—**no provider call**.
-
-Examples:
-
-```text
-git status
-npm run build
-python -c "print(2+3)"
-jq .scripts package.json
-systeminfo         # Windows
+```bash
+yamx --onboard    # provider, API key, default model, core settings
+yamx --diagnose   # Node, registry, keys (mask), git, Ollama, sessions, probes
+yamx              # REPL (sessions persist under ~/.yamx/sessions/)
 ```
 
-Prefixes that force passthrough:
-
-```text
-$ npm ls
-! ls -la
-> pwd
-run: dotnet --info
-```
-
-Open-ended prompts (`fix login`, `explain this repo`, `add a retry`) route to the agent.
+If no `config.json` exists, the CLI will steer you through setup on first launch.
 
 ---
 
-## Local tools YamX discovers
+## Highlights
 
-Startup probes common binaries (`python`, `node`, `jq`, `rg`, …) on **Windows** (`where.exe`) and Unix (`command -v`). The model receives which helpers exist so it can shell out for JSON, grep, hashing, archives, instead of rewriting that logic in prose.
+| Topic | Behavior |
+|--------|-----------|
+| **Local first** | Lines that look like shell commands bypass the API (zero tokens). |
+| **CLI detection** | Common tools (`python`, `node`, `jq`, `rg`, …) are probed per OS and surfaced in context. |
+| **Quiet UI** | `verboseCli` defaults to `false`. Model council defaults to **off**. |
+| **Provider errors** | Many API/stream failures are shown in a **boxed**, readable summary plus suggested next steps (e.g. context too large → `/compact` or `--new-chat`). |
+| **Safety** | Risky tooling can require confirmation; destructive patterns can be blocked. |
 
-`/run shell_diagnostics` or asking for **shell diagnostics** prints environment and shell behavior when commands act odd.
-
----
-
-## Logs and failures
-
-- **`/log`** / **`/log <file>`** with modes such as **`auto`**, **`latest-error`**, **`summary`**, **`tail`**, **`head`**, **`errors`**, **`full`**.
-- Agent tool **`log_inspect`** aligns with those modes.
-
-When **`run_command`** fails, the guided behavior is: use stderr/stdout, adjust command, cwd, shell, `.cmd` on Windows npm, deps, etc., then retry—without dumping giant logs unless needed.
+Forced shell prefixes when you want to avoid the router: `$ cmd`, `! cmd`, `> cmd`, or `run: cmd`.
 
 ---
 
@@ -128,143 +76,134 @@ When **`run_command`** fails, the guided behavior is: use stderr/stdout, adjust 
 
 Environment (optional `.env` in cwd):
 
-| Variable | Role |
-|---------|------|
-| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` | Provider keys |
-| `DEFAULT_PROVIDER`, `DEFAULT_MODEL` | Override defaults |
+| Variable | Purpose |
+|-----------|---------|
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` | Provider secrets |
+| `DEFAULT_PROVIDER`, `DEFAULT_MODEL` | Defaults |
 
-Files under **`~/.yamx/`**:
+Filesystem:
 
-| Path | Contents |
-|------|----------|
-| `config.json` | Providers, defaults, **`settings.verboseCli`**, **`settings.modelCouncil`**, stream, budgets, approvals, hooks, subagents |
-| `state.json` | Active session id |
-| `sessions/<uuid>.json` | Chat history |
+| Path | Purpose |
+|------|---------|
+| `~/.yamx/config.json` | Providers, keys, `settings.*` |
+| `~/.yamx/state.json` | Active session id |
+| `~/.yamx/sessions/*.json` | Chat history |
 
-Commands:
-
-```text
-yamx config          # interactive: wizard, council, budgets, keys
-yamx --reset-config  # reset config.json defaults (sessions kept)
+```bash
+yamx config         # wizard and toggles
+yamx --reset-config # wipe config defaults only (sessions kept)
 ```
 
-Relevant **`settings`** fields (defaults in code; merged with your saved `config.json`):
-
-- **`verboseCli`** — extra UI telemetry when `true`.
-- **`modelCouncil.enabled`** / **`modelCouncil.mode`** — `adaptive` \| `always` \| `off` (only matters if enabled).
-- **`streamOutput`**, **`maxTokens`**, **`temperature`**, **`autoApprove`**, **`permissionMode`**, **`contextBudgetChars`**, **`maxToolResultChars`**, **`hooksEnabled`**, **`subagents.enabled`**.
+Important **`settings`** keys: `verboseCli`, `modelCouncil.enabled` / `.mode`, `streamOutput`, `maxTokens`, `temperature`, `autoApprove`, `permissionMode`, `contextBudgetChars`, `maxToolResultChars`, `hooksEnabled`, `subagents.enabled`.
 
 ---
 
-## Sessions
+## Sessions & context
 
-| Flag / usage | Meaning |
-|----------------|--------|
-| `yamx` | Resume active session or most recent chat |
-| `yamx --new-chat` | New thread |
-| `yamx --history` | List saved conversations |
-| `yamx --resume <id>` | UUID or unique prefix |
-| `yamx --clear-chat` | Clear active session to system-only, exit |
-| `yamx --delete-chat <id>` | Delete one session |
+If the combined **system prompt + chat** exceeds what the provider allows, YamX tries to summarize that failure clearly. To avoid it proactively:
 
-Auto-save each turn and on **`/exit`** / **Ctrl+C**. Long histories can be summarized to fit **`contextBudgetChars`**. Use **`/compact`** to summarize older turns manually.
-
----
-
-## In-chat slash commands
-
-| Command | Meaning |
+| Action | Effect |
 |---------|--------|
-| `/help` | Grouped reference |
-| `/exit` \| `/quit` | Save and exit |
-| `/clear` | Clear thread (system prompt retained) |
-| `/compact` | Compress older messages |
-| `/undo` | Revert last file edits this turn |
-| `/model` | Provider and model |
-| `/cost` | Session token counts + history size |
-| `/diff` | `git diff` in cwd |
-| `/status` | Session/runtime snapshot |
-| `/log …` \| `/logs …` | Log helper (see `--mode`) |
-| `/tools` | List tools by category |
-| `/run <cmd>` | Run shell via YamX executor |
-| `/init` | YamX memory files for this project |
-| `/remember …` \| `/memory` | Persistent notes (`user:` prefix → user scope) |
-| `/skills` | Loaded skill hints |
-| `/agents` | Subagent roster |
-| `/agent <name> <task>` | Run named subagent (respects **`subagents.enabled`**) |
-| `/explore` \| `/plan` \| `/review` | Builtin read-only/analysis subagents |
+| `/compact` | Summarize older turns in-session |
+| `yamx --new-chat` | New thread (smaller history) |
 
----
-
-## Built-in agent tools (29)
-
-| Area | Tools |
+| Flag | Effect |
 |------|--------|
-| Files | `read_file`, `write_file`, `edit_file`, `list_files`, `search_files`, `delete_file`, `multi_edit`, `copy_file`, `move_file`, `file_info`, `grep_search`, `directory_tree`, `patch_file` |
-| Shell | `run_command`, `run_command_background`, `shell_diagnostics`, `task_list`, `task_tail`, `task_stop` |
-| Git | `git_status`, `git_diff`, `git_commit`, `git_log`, `git_branch`, `git_stash` |
-| Web | `fetch_url` |
-| Intelligence | `project_intel`, `codebase_analysis`, `log_inspect` |
+| `yamx` | Resume latest / active chat |
+| `yamx --new-chat` | New session file |
+| `yamx --history` | List saved threads |
+| `yamx --resume <id>` | UUID or prefix |
+| `yamx --clear-chat` | Trim active thread to bootstrap, exit |
+| `yamx --delete-chat <id>` | Drop one snapshot |
 
-For purely **CLI / package / script** questions the agent is steered toward **`run_command`** and manifests first; **`project_intel`** / **`codebase_analysis`** when navigating or fixing **application code**.
+Histories autosave during use. Long threads align with **`contextBudgetChars`** (internal summarization).
 
 ---
 
-## Project layout (contributors)
+## Slash commands (in-session)
+
+`/help`, `/exit` | `/quit`, `/clear`, `/compact`, `/undo`, `/model`, `/cost`, `/diff`, `/status`, `/log` | `/logs`, `/tools`, `/run ...`, `/init`, `/remember`, `/memory`, `/skills`, `/agents`, `/agent ...`, `/explore`, `/plan`, `/review`.
+
+---
+
+## Agent tools (29)
+
+**Files:** `read_file`, `write_file`, `edit_file`, `list_files`, `search_files`, `delete_file`, `multi_edit`, `copy_file`, `move_file`, `file_info`, `grep_search`, `directory_tree`, `patch_file`.
+
+**Shell:** `run_command`, `run_command_background`, `shell_diagnostics`, `task_list`, `task_tail`, `task_stop`.
+
+**Git:** `git_status`, `git_diff`, `git_commit`, `git_log`, `git_branch`, `git_stash`.
+
+**Web:** `fetch_url`.
+
+**Intel / logs:** `project_intel`, `codebase_analysis`, `log_inspect`.
+
+---
+
+## Contribute / build
 
 ```text
-src/index.ts           CLI entry, onboarding, sessions, REPL loop
-src/agent.ts           Streaming, tools, approvals, council hook, compaction
-src/context.ts         Project scan, memory/skills injection, system prompt
-src/direct-command.ts  Shell vs NL routing
-src/tool-detect.ts     Cross-platform CLI discovery
-src/tools/             Filesystem, shell, git, web, intel, logs
-src/providers/         openai | anthropic | gemini | openrouter | ollama
-src/session-store.ts   ~/.yamx/sessions
-src/policy.ts          Permission and risk for tool calls
+src/index.ts               CLI flags, onboarding, persistence
+src/agent.ts               Stream, tools, compaction, approvals
+src/context.ts             Project scan + system prompt
+src/provider-error-format.ts
+src/direct-command.ts      Shell vs routed input
+src/tools/                  Built-in tooling
 ```
 
 ```bash
-npm run build       # compile to dist/
-npm test            # build + tests
-npm run dev         # ts-node ES module dev run
+npm install
+npm run build
+npm test
+npm run dev               # TS dev boot
 yamx --diagnose
 ```
 
-Windows: if **`npm`** scripts are blocked, use **`npm.cmd run build`**.
+PowerShell blocking `npm` scripts → use **`npm.cmd run ...`**.
 
 ---
 
-## CLI reference
+## CLI flags
 
 ```text
 yamx [options]
 
-Options
-  -p, --provider <name>       openai | anthropic | gemini | openrouter | ollama
-  -m, --model <id>
-  -t, --temperature <n>
-  --max-tokens <n>
-  --auto-approve               approve all tools (dangerous)
-  --no-stream
-  --new-chat, --resume, --history, --clear-chat, --delete-chat
-  --onboard, --reset-config, --diagnose
+-p, --provider <name>     openai | anthropic | gemini | openrouter | ollama
+-m, --model <name>
+-t, --temperature <n>
+--max-tokens <n>
+--auto-approve
+--no-stream
+--new-chat, --resume, --history, --clear-chat, --delete-chat
+--onboard, --reset-config, --diagnose
 
-Subcommand
-  yamx config                  interactive configuration
+yamx config              interactive configurator
 ```
 
 ---
 
 ## Troubleshooting
 
-**`yamx` not found** — Add npm’s global bin to `PATH`; reopen the terminal after `npm install -g`.
+**`yamx`: command not found** — Put npm’s global `bin` on `PATH`; open a fresh terminal after `npm install -g`.
 
-**Windows `EPERM` scanning home directory** — Use YamX **1.0.4+** (skips fragile junctions during project scan).
+**Diagnose glyphs look wrong on Windows** — Prefer **Windows Terminal**, or run **`chcp 65001`** before YamX so UTF‑8 glyphs render; alternatively ignore cosmetic markers-only lines.
 
-**Banner shows stale version after update** — `npm uninstall -g @needyamin/yamx && npm install -g @needyamin/yamx@latest`
+**`npm whoami` → 401 Unauthorized** — Not logged in or token expired:
 
-**Publishing** — Bump `package.json` version; use npm 2FA or a publish-capable token; `npm publish --access public`.
+```bash
+npm login
+npm whoami
+```
+
+Check `~/.npmrc` for an old `_authToken` and redo login if publishing fails.
+
+**`npm publish` → 404 for `@scope/name`** — The logged-in **`npm`** user must **own that scope**. For **`@needyamin/yamx`**, `npm whoami` should be **`needyamin`** (or you must be an org **`@needyamin`** publisher). Otherwise rename `package.json` **`name`** to `@yourusername/yamx` and publish with **`"publishConfig": { "access": "public" }`**.
+
+**Context / token limit errors from the provider** — Use **`/compact`**, **`--new-chat`**, or a larger-context **model**.
+
+**Stale banner version** — Reinstall globals: **`npm uninstall -g @needyamin/yamx && npm install -g @needyamin/yamx@latest`**.
+
+**Git scan `EPERM` under Windows user profile folders** — Use YamX **1.0.4+** when scanning noisy home dirs.
 
 ---
 

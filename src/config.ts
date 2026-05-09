@@ -14,6 +14,8 @@ export interface YamConfig {
     openai?: { apiKey: string; model?: string };
     anthropic?: { apiKey: string; model?: string };
     gemini?: { apiKey: string; model?: string };
+    kimi?: { apiKey: string; model?: string };
+    grok?: { apiKey: string; model?: string };
     openrouter?: { apiKey: string; model?: string };
     ollama?: { baseUrl?: string; model?: string };
   };
@@ -122,6 +124,19 @@ export class Config {
       this.config.providers.gemini = {
         ...this.config.providers.gemini,
         apiKey: process.env.GEMINI_API_KEY,
+      };
+    }
+    const kimiKey = process.env.KIMI_API_KEY || process.env.MOONSHOT_API_KEY;
+    if (kimiKey) {
+      this.config.providers.kimi = {
+        ...this.config.providers.kimi,
+        apiKey: kimiKey,
+      };
+    }
+    if (process.env.XAI_API_KEY) {
+      this.config.providers.grok = {
+        ...this.config.providers.grok,
+        apiKey: process.env.XAI_API_KEY,
       };
     }
     if (process.env.OPENROUTER_API_KEY) {

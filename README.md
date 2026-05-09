@@ -38,7 +38,7 @@ It is not a general-purpose chat widget: the system behavior, defaults, and tool
 **It is**
 
 - A REPL-style **agent** with **built-in tools** (files, shell, git, logs, light web fetch, project intelligence).
-- **Multi-provider**: OpenAI, Anthropic, Gemini, OpenRouter, Ollama (local).
+- **Multi-provider**: OpenAI, Anthropic, Gemini, Kimi/Moonshot, Grok (xAI), OpenRouter, Ollama (local).
 - **Session-based**: config and chat snapshots under `~/.yamx` (on Windows, `%USERPROFILE%\.yamx`).
 
 **It is not**
@@ -112,7 +112,7 @@ If `~/.yamx/config.json` is missing—or your default cloud provider has **no** 
 
 | Variable | Role |
 |----------|------|
-| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` | Provider secrets |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `MOONSHOT_API_KEY`/`KIMI_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY` | Provider secrets |
 | `DEFAULT_PROVIDER`, `DEFAULT_MODEL` | Defaults |
 
 **Filesystem layout:**
@@ -219,7 +219,7 @@ On Windows, if PowerShell execution policy blocks `npm` scripts, prefer **`npm.c
 ```text
 yamx [options]
 
-  -p, --provider <name>     openai | anthropic | gemini | openrouter | ollama
+  -p, --provider <name>     openai | anthropic | gemini | kimi | grok | openrouter | ollama
   -m, --model <name>
   -t, --temperature <n>
   --max-tokens <n>

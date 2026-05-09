@@ -1,70 +1,41 @@
 /**
- * YamX - OpenRouter Provider
- * Access many models through a single OpenAI-compatible API — DeepSeek,
- * Llama, Claude, GPT, Gemini, Moonshot/Kimi, xAI Grok, and others.
- * through a single API key. Uses OpenAI-compatible API format.
- * 
- * Get your key at: https://openrouter.ai/keys
+ * Shared OpenAI-compatible Chat Completions provider (used by OpenAI, Kimi/Moonshot, Grok/xAI, etc.)
  */
 
 import OpenAI from 'openai';
 import { Provider, CompletionOptions, CompletionResult, StreamChunk, ToolCall } from './base.js';
 
-// Popular models available on OpenRouter (shorthand → provider/model slug)
-export const OPENROUTER_MODELS: Record<string, string> = {
-  'deepseek-chat': 'deepseek/deepseek-chat-v3.1',
-  'deepseek-chat-v3': 'deepseek/deepseek-chat-v3-0324',
-  'deepseek-r1': 'deepseek/deepseek-r1',
-  'llama-4-maverick': 'meta-llama/llama-4-maverick',
-  'llama-4-scout': 'meta-llama/llama-4-scout',
-  'qwen-3-235b': 'qwen/qwen3-235b-a22b',
-  'qwen-3-30b': 'qwen/qwen3-30b-a3b',
-  'gemini-3-flash': 'google/gemini-3-flash-preview',
-  'gemini-3-flash-preview': 'google/gemini-3-flash-preview',
-  'gemini-3-pro': 'google/gemini-3-pro-preview',
-  'gemini-3-pro-preview': 'google/gemini-3-pro-preview',
-  'gemini-flash-latest': 'google/gemini-3-flash-preview',
-  'gemini-pro-latest': 'google/gemini-3-pro-preview',
-  'gemini-2.5-pro': 'google/gemini-2.5-pro-preview',
-  'gemini-2.5-flash': 'google/gemini-2.5-flash-preview',
-  'claude-sonnet-4': 'anthropic/claude-sonnet-4.6',
-  'claude-sonnet-4.6': 'anthropic/claude-sonnet-4.6',
-  'claude-opus-4.7': 'anthropic/claude-opus-4.7',
-  'claude-3.5-sonnet': 'anthropic/claude-3.5-sonnet',
-  'gpt-5.5': 'openai/gpt-5.5',
-  'gpt-5.4': 'openai/gpt-5.4',
-  'gpt-4o': 'openai/gpt-4o',
-  'gpt-4.1': 'openai/gpt-4.1',
-  'o3': 'openai/o3',
-  'o4-mini': 'openai/o4-mini',
-  'mistral-large': 'mistralai/mistral-large-2411',
-  'codestral': 'mistralai/codestral-2501',
-  'kimi-k2.5': 'moonshotai/kimi-k2.5',
-  'kimi-k2-thinking': 'moonshotai/kimi-k2-thinking',
-  'kimi-k2.6': 'moonshotai/kimi-k2.6',
-  'kimi-latest': 'moonshotai/kimi-k2.6',
-  'grok-4.3': 'x-ai/grok-4.3',
-  'grok-4.20': 'x-ai/grok-4.20',
-};
+export interface OpenAIChatProviderOptions {
+  /** YamX provider id shown in UI (`openai`, `kimi`, `grok`, …). */
+  name: string;
+  apiKey: string;
+  model: string;
+  baseURL?: string;
+  defaultHeaders?: Record<string, string | undefined>;
+  /** Milliseconds; Grok reasoning workloads often need a long client timeout. */
+  timeout?: number;
+}
 
-export class OpenRouterProvider implements Provider {
-  name = 'openrouter';
+export class OpenAIChatProvider implements Provider {
+  name: string;
   modelId: string;
   private client: OpenAI;
-  private rawModel: string;
 
-  constructor(apiKey: string, model: string = 'deepseek/deepseek-chat-v3.1') {
-    // Resolve shorthand model names
-    this.rawModel = OPENROUTER_MODELS[model] || model;
-    this.modelId = model;
+  constructor(opts: OpenAIChatProviderOptions) {
+    const headers = opts.defaultHeaders;
+    const cleanedHeaders =
+      headers &&
+      Object.fromEntries(Object.entries(headers).filter(([, v]) => v != null && v !== '')) as
+        | Record<string, string>
+        | undefined;
 
+    this.name = opts.name;
+    this.modelId = opts.model;
     this.client = new OpenAI({
-      apiKey,
-      baseURL: 'https://openrouter.ai/api/v1',
-      defaultHeaders: {
-        'HTTP-Referer': 'https://github.com/needyamin/yamx',
-        'X-Title': 'YamX CLI',
-      },
+      apiKey: opts.apiKey,
+      baseURL: opts.baseURL,
+      defaultHeaders: cleanedHeaders,
+      timeout: opts.timeout,
     });
   }
 
@@ -82,7 +53,7 @@ export class OpenRouterProvider implements Provider {
 
   async complete(options: CompletionOptions): Promise<CompletionResult> {
     const response = await this.client.chat.completions.create({
-      model: this.rawModel,
+      model: this.modelId,
       messages: options.messages.map(m => ({
         role: m.role as any,
         content: m.content || '',
@@ -99,16 +70,18 @@ export class OpenRouterProvider implements Provider {
     return {
       content: choice.message.content,
       tool_calls: choice.message.tool_calls as ToolCall[] | undefined,
-      usage: response.usage ? {
-        inputTokens: response.usage.prompt_tokens,
-        outputTokens: response.usage.completion_tokens,
-      } : undefined,
+      usage: response.usage
+        ? {
+            inputTokens: response.usage.prompt_tokens,
+            outputTokens: response.usage.completion_tokens,
+          }
+        : undefined,
     };
   }
 
   async *stream(options: CompletionOptions): AsyncGenerator<StreamChunk> {
     const stream = await this.client.chat.completions.create({
-      model: this.rawModel,
+      model: this.modelId,
       messages: options.messages.map(m => ({
         role: m.role as any,
         content: m.content || '',

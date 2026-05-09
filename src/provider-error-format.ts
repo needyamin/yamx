@@ -128,7 +128,7 @@ export function summarizeApiFailure(err: unknown): ApiFailureView {
     hints.push('Wait briefly and retry (rate limited).');
   }
   if (/401|unauthorized|invalid api key|api key/i.test(lower) && hints.length === 0) {
-    hints.push('Check ~/.yamx/config.json keys or env OPENROUTER_* / provider API key.');
+    hints.push('Check ~/.yamx/config.json keys or env (OPENROUTER_*, OPENAI_*, MOONSHOT_*/KIMI_*, XAI_*, …).');
   }
   if (/402|billing|quota|credit/i.test(lower) && hints.length === 0) {
     hints.push('Check provider billing / quota.');

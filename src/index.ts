@@ -23,6 +23,8 @@ import { AnthropicProvider } from './providers/anthropic.js';
 import { GeminiProvider } from './providers/gemini.js';
 import { OllamaProvider } from './providers/ollama.js';
 import { OpenRouterProvider } from './providers/openrouter.js';
+import { KimiProvider } from './providers/kimi.js';
+import { GrokProvider } from './providers/grok.js';
 import { Provider, Message } from './providers/base.js';
 import { execSync } from 'child_process';
 import { SessionStore, type ChatSession } from './session-store.js';
@@ -50,14 +52,24 @@ const TERM = {
   warn: chalk.yellow('[!]'),
 } as const;
 
-type ProviderName = 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'ollama';
-const PROVIDER_NAMES = new Set<ProviderName>(['openai', 'anthropic', 'gemini', 'openrouter', 'ollama']);
+type ProviderName = 'openai' | 'anthropic' | 'gemini' | 'kimi' | 'grok' | 'openrouter' | 'ollama';
+const PROVIDER_NAMES = new Set<ProviderName>([
+  'openai',
+  'anthropic',
+  'gemini',
+  'kimi',
+  'grok',
+  'openrouter',
+  'ollama',
+]);
 
 const PROVIDER_CHOICES: Array<{ name: string; value: ProviderName }> = [
   { name: 'OpenRouter  (100+ models: DeepSeek, Llama, Claude, GPT, Gemini)', value: 'openrouter' },
-  { name: 'OpenAI      (GPT-4o, GPT-4.1, o-series)', value: 'openai' },
-  { name: 'Anthropic   (Claude Sonnet/Opus)', value: 'anthropic' },
-  { name: 'Gemini      (Gemini Flash/Pro)', value: 'gemini' },
+  { name: 'OpenAI      (GPT-5.5 / GPT-5.4 / reasoning models)', value: 'openai' },
+  { name: 'Anthropic   (Claude Sonnet / Opus 4.x)', value: 'anthropic' },
+  { name: 'Gemini      (Gemini 3 / 2.5 Flash & Pro)', value: 'gemini' },
+  { name: 'Kimi        (Moonshot — Kimi K2.5 / K2.6, OpenAI-compatible)', value: 'kimi' },
+  { name: 'Grok        (xAI — Grok 4.x, OpenAI-compatible chat)', value: 'grok' },
   { name: 'Ollama      (local models: Qwen, DeepSeek, Llama)', value: 'ollama' },
 ];
 
@@ -65,50 +77,101 @@ const KEY_HINTS: Record<Exclude<ProviderName, 'ollama'>, string> = {
   openai: 'https://platform.openai.com/api-keys',
   anthropic: 'https://console.anthropic.com/settings/keys',
   gemini: 'https://aistudio.google.com/apikey',
+  kimi: 'https://platform.kimi.ai/',
+  grok: 'https://console.x.ai/team/default/api-keys',
   openrouter: 'https://openrouter.ai/keys',
 };
 
 const PROVIDER_MODELS: Record<ProviderName, { name: string; value: string }[]> = {
   openai: [
+    { name: 'GPT-5.5', value: 'gpt-5.5' },
+    { name: 'GPT-5.4', value: 'gpt-5.4' },
     { name: 'GPT-4o', value: 'gpt-4o' },
     { name: 'GPT-4.1', value: 'gpt-4.1' },
-    { name: 'o3', value: 'o3' },
     { name: 'o4-mini', value: 'o4-mini' },
+    { name: 'o3', value: 'o3' },
   ],
   anthropic: [
-    { name: 'Claude Sonnet 4', value: 'claude-sonnet-4-20250514' },
-    { name: 'Claude Opus 4', value: 'claude-opus-4-20250514' },
+    { name: 'Claude Sonnet 4.6', value: 'claude-sonnet-4-6' },
+    { name: 'Claude Opus 4.7', value: 'claude-opus-4-7' },
     { name: 'Claude 3.7 Sonnet', value: 'claude-3-7-sonnet-20250219' },
   ],
   gemini: [
+    { name: 'Gemini 3 Flash Preview', value: 'gemini-3-flash-preview' },
+    { name: 'Gemini 3 Pro Preview', value: 'gemini-3-pro-preview' },
     { name: 'Gemini 2.5 Flash', value: 'gemini-2.5-flash' },
     { name: 'Gemini 2.5 Pro', value: 'gemini-2.5-pro' },
-    { name: 'Gemini 1.5 Pro', value: 'gemini-1.5-pro' },
+  ],
+  kimi: [
+    { name: 'Kimi K2.6 (recommended)', value: 'kimi-k2.6' },
+    { name: 'Kimi K2.5', value: 'kimi-k2.5' },
+    { name: 'Kimi K2 Thinking', value: 'kimi-k2-thinking' },
+  ],
+  grok: [
+    { name: 'Grok 4.3', value: 'grok-4.3' },
+    { name: 'Grok 4.20 reasoning (API id)', value: 'grok-4.20-0309-reasoning' },
+    { name: 'Grok 4.20 non-reasoning (API id)', value: 'grok-4.20-0309-non-reasoning' },
+    { name: 'Grok 4.20 multi-agent', value: 'grok-4.20-multi-agent-0309' },
   ],
   openrouter: [
-    { name: 'DeepSeek Chat V3 (recommended)', value: 'deepseek-chat' },
+    { name: 'DeepSeek Chat V3.1 (recommended)', value: 'deepseek-chat' },
     { name: 'DeepSeek R1', value: 'deepseek-r1' },
-    { name: 'Claude Sonnet 4', value: 'claude-sonnet-4' },
-    { name: 'GPT-4o', value: 'gpt-4o' },
-    { name: 'Gemini 2.5 Pro', value: 'gemini-2.5-pro' },
+    { name: 'Claude Sonnet 4.6', value: 'claude-sonnet-4' },
+    { name: 'GPT-5.5', value: 'gpt-5.5' },
+    { name: 'Gemini 3 Flash Preview', value: 'gemini-3-flash' },
+    { name: 'Kimi K2.5', value: 'kimi-k2.5' },
+    { name: 'Grok 4.3', value: 'grok-4.3' },
     { name: 'Llama 4 Maverick', value: 'llama-4-maverick' },
   ],
   ollama: [
     { name: 'Qwen 2.5 Coder', value: 'qwen2.5-coder' },
+    { name: 'Qwen 3 Coder', value: 'qwen3-coder' },
     { name: 'DeepSeek R1', value: 'deepseek-r1' },
-    { name: 'Llama 3.1', value: 'llama3.1' },
-    { name: 'CodeLlama', value: 'codellama' },
+    { name: 'Llama 3.3', value: 'llama3.3' },
   ],
 };
+
+/** Env var name YamX writes for .env quick-setup (matches official SDK docs). */
+function envKeyForProvider(providerId: string): string {
+  switch (String(providerId || '').toLowerCase()) {
+    case 'kimi':
+      return 'MOONSHOT_API_KEY';
+    case 'grok':
+      return 'XAI_API_KEY';
+    default:
+      return `${String(providerId).toUpperCase()}_API_KEY`;
+  }
+}
 
 function normalizeProviderName(value: unknown): ProviderName {
   const provider = String(value || '').trim().toLowerCase() as ProviderName;
   return PROVIDER_NAMES.has(provider) ? provider : 'openrouter';
 }
 
+/** API keys for Kimi and Grok use MOONSHOT_* / XAI_* env names (see config load). */
+function resolveCloudApiKey(cfg: YamConfig, provider: Exclude<ProviderName, 'ollama'>): string | undefined {
+  const prov = cfg.providers;
+  switch (provider) {
+    case 'kimi':
+      return prov.kimi?.apiKey || process.env.KIMI_API_KEY || process.env.MOONSHOT_API_KEY;
+    case 'grok':
+      return prov.grok?.apiKey || process.env.XAI_API_KEY;
+    default: {
+      const block = prov[provider] as { apiKey?: string } | undefined;
+      return block?.apiKey || process.env[`${provider.toUpperCase()}_API_KEY`];
+    }
+  }
+}
+
 /** Cloud providers need an API key; local Ollama does not by default. */
 function providerUsesApiKey(p: ProviderName): boolean {
   return p !== 'ollama';
+}
+
+function hasCloudApiKey(cfg: YamConfig, provider: ProviderName): boolean {
+  if (!providerUsesApiKey(provider)) return true;
+  const key = resolveCloudApiKey(cfg, provider as Exclude<ProviderName, 'ollama'>);
+  return !!String(key || '').trim();
 }
 
 /**
@@ -122,18 +185,18 @@ function needsAutoOnboarding(
 ): boolean {
   if (!configFileExists) return true;
   const p = normalizeProviderName(cliProviderFlag || cfg.defaultProvider || 'openrouter');
-  if (!providerUsesApiKey(p)) return false;
-  const pk = cfg.providers?.[p] as { apiKey?: string } | undefined;
-  const fromCfg = pk?.apiKey;
-  const fromEnv = process.env[`${p.toUpperCase()}_API_KEY`];
-  return !String(fromCfg || fromEnv || '').trim();
+  return !hasCloudApiKey(cfg, p);
 }
 
 program
   .name('yamx')
   .description('YamX - agent CLI with persistent chat sessions')
   .version(VERSION)
-  .option('-p, --provider <provider>', 'LLM provider (openai, anthropic, gemini, openrouter, ollama)', '')
+  .option(
+    '-p, --provider <provider>',
+    'LLM provider (openai, anthropic, gemini, kimi, grok, openrouter, ollama)',
+    ''
+  )
   .option('-m, --model <model>', 'Model name')
   .option('--auto-approve', 'Auto-approve all tool actions (dangerous!)', false)
   .option('--no-stream', 'Disable streaming output')
@@ -423,12 +486,12 @@ program.action(async (options) => {
         modelName = options.model || cfg.defaultModel;
         provider = createProvider(providerName, modelName, cfg);
       } else if (choice === 'env') {
-        const pName = providerName.toUpperCase();
+        const envVar = envKeyForProvider(providerName);
         const { key } = await inquirer.prompt([
           {
             type: 'password',
             name: 'key',
-            message: `Enter your ${providerName} API key (pasting is hidden):`,
+            message: `Enter your API key (stored as ${envVar}; pasting is hidden):`,
             mask: '*'
           }
         ]);
@@ -439,12 +502,11 @@ program.action(async (options) => {
           envContent = await fs.readFile(envPath, 'utf-8');
           if (!envContent.endsWith('\n')) envContent += '\n';
         }
-        envContent += `${pName}_API_KEY=${key}\n`;
+        envContent += `${envVar}=${key}\n`;
         await fs.writeFile(envPath, envContent, 'utf-8');
         console.log(chalk.green(`\n  [+] Saved to ${envPath}`));
 
-        // Inject into process.env so it works immediately
-        process.env[`${pName}_API_KEY`] = key;
+        process.env[envVar] = key;
         provider = createProvider(providerName, modelName, cfg);
       } else {
         console.log(chalk.dim('\nGoodbye.'));
@@ -898,9 +960,16 @@ async function runDiagnose(config: Config, cfg: any) {
   console.log(`  ${configExists ? TERM.ok : TERM.bad} Config file ${configExists ? 'exists' : 'missing'}: ${configPath}`);
 
   // Provider keys
-  const providers = ['openai', 'anthropic', 'gemini', 'openrouter'] as const;
+  const providers: Exclude<ProviderName, 'ollama'>[] = [
+    'openai',
+    'anthropic',
+    'gemini',
+    'kimi',
+    'grok',
+    'openrouter',
+  ];
   for (const p of providers) {
-    const key = (cfg.providers as any)?.[p]?.apiKey || process.env[`${p.toUpperCase()}_API_KEY`];
+    const key = resolveCloudApiKey(cfg, p);
     const has = !!key;
     const mark = has ? TERM.ok : TERM.idle;
     console.log(`  ${mark} ${p.padEnd(12)} ${has ? `key: ${key.slice(0, 6)}...` : chalk.dim('not configured')}`);
@@ -936,7 +1005,7 @@ async function runDiagnose(config: Config, cfg: any) {
   const sessionFiles = await fs.default.readdir(sessDir).catch(() => []);
   console.log(`  ${chalk.cyan('Sessions')}   ${sessionFiles.length} saved`);
 
-  console.log(chalk.dim('\n  Default: ') + chalk.white(`${cfg.defaultProvider || 'openai'} / ${cfg.defaultModel || 'gpt-4o'}`));
+  console.log(chalk.dim('\n  Default: ') + chalk.white(`${cfg.defaultProvider || 'openrouter'} / ${cfg.defaultModel || 'deepseek-chat'}`));
   console.log();
 }
 
@@ -945,31 +1014,45 @@ async function runDiagnose(config: Config, cfg: any) {
 function createProvider(name: string, model: string | undefined, cfg: any): Provider {
   switch (name) {
     case 'openai': {
-      const key = cfg.providers?.openai?.apiKey || process.env.OPENAI_API_KEY;
+      const key = resolveCloudApiKey(cfg, 'openai');
       if (!key) throw new Error('OpenAI API key not found. Set OPENAI_API_KEY or run: yamx --onboard');
-      return new OpenAIProvider(key, model || cfg.providers?.openai?.model || 'gpt-4o');
+      return new OpenAIProvider(key, model || cfg.providers?.openai?.model || 'gpt-5.5');
     }
     case 'anthropic': {
-      const key = cfg.providers?.anthropic?.apiKey || process.env.ANTHROPIC_API_KEY;
+      const key = resolveCloudApiKey(cfg, 'anthropic');
       if (!key) throw new Error('Anthropic API key not found. Set ANTHROPIC_API_KEY or run: yamx --onboard');
-      return new AnthropicProvider(key, model || cfg.providers?.anthropic?.model || 'claude-sonnet-4-20250514');
+      return new AnthropicProvider(key, model || cfg.providers?.anthropic?.model || 'claude-sonnet-4-6');
     }
     case 'gemini': {
-      const key = cfg.providers?.gemini?.apiKey || process.env.GEMINI_API_KEY;
+      const key = resolveCloudApiKey(cfg, 'gemini');
       if (!key) throw new Error('Gemini API key not found. Set GEMINI_API_KEY or run: yamx --onboard');
-      return new GeminiProvider(key, model || cfg.providers?.gemini?.model || 'gemini-2.5-flash');
+      return new GeminiProvider(key, model || cfg.providers?.gemini?.model || 'gemini-3-flash-preview');
+    }
+    case 'kimi': {
+      const key = resolveCloudApiKey(cfg, 'kimi');
+      if (!key)
+        throw new Error(
+          'Kimi / Moonshot API key not found. Set KIMI_API_KEY, MOONSHOT_API_KEY (see platform.kimi.ai), or run: yamx --onboard'
+        );
+      return new KimiProvider(key, model || cfg.providers?.kimi?.model || 'kimi-k2.5');
+    }
+    case 'grok': {
+      const key = resolveCloudApiKey(cfg, 'grok');
+      if (!key)
+        throw new Error('xAI Grok API key not found. Set XAI_API_KEY (see console.x.ai) or run: yamx --onboard');
+      return new GrokProvider(key, model || cfg.providers?.grok?.model || 'grok-4.3');
     }
     case 'ollama': {
       const baseUrl = cfg.providers?.ollama?.baseUrl || 'http://localhost:11434';
       return new OllamaProvider(baseUrl, model || cfg.providers?.ollama?.model || 'qwen2.5-coder');
     }
     case 'openrouter': {
-      const key = cfg.providers?.openrouter?.apiKey || process.env.OPENROUTER_API_KEY;
+      const key = resolveCloudApiKey(cfg, 'openrouter');
       if (!key) throw new Error('OpenRouter API key not found. Set OPENROUTER_API_KEY or run: yamx --onboard');
       return new OpenRouterProvider(key, model || cfg.providers?.openrouter?.model || 'deepseek-chat');
     }
     default:
-      throw new Error(`Unknown provider: ${name}. Use: openai, anthropic, gemini, openrouter, ollama`);
+      throw new Error(`Unknown provider: ${name}. Use: openai, anthropic, gemini, kimi, grok, openrouter, ollama`);
   }
 }
 

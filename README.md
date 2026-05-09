@@ -28,6 +28,8 @@ It is not a general-purpose chat widget: the system behavior, defaults, and tool
 | **Local facts first** | Detected local tooling (e.g. Python, Node, ripgrep) is surfaced in context so the model reaches for **your** environment before inventing steps. |
 | **Runtime preflight** | For install/PATH/version-style asks about common runtimes **(Python, Node, Docker, Git, Rust, Java, Go, kubectl)**, YamX runs **read-only local shell probes** before the first model reply and injects a `yamx_local_preflight` block into the conversation so answers are grounded in **this machine**, not generic tutorials. |
 | **Safe automation** | Hooks, approval modes, and optional allow/deny shell patterns support controlled automation. |
+| **Terminal-friendly output** | Wrapping respects **left and right gutters** (scrollbar/host padding) so long lines and boxed **tool/results** panels are less likely to clip at the edges. **`run_command`** panels show **much more output** before summarizing—full text still reaches the agent. |
+| **REPL readability** | After bulk output (↑/↓ **history replay** included), YamX resets ANSI styling and emits a newline **cue** so the next **`YamX ›`** prompt sits on a clean line in narrow or Windows-hosted terminals. |
 
 ---
 
@@ -194,6 +196,8 @@ src/context.ts             Workspace scan + system prompt
 src/direct-command.ts      Shell routing vs agent
 src/ui.ts                  Terminal Markdown and layout
 src/assistant-output-cap.ts Limits on assistant markdown
+src/terminal-layout.ts     Viewport widths, gutters, panel wrap math
+src/tty-repl-cue.ts        TTY reset + newline cue before prompts after output
 src/runtime-preflight.ts   Auto local probes before agent turn (install/PATH intents)
 src/tools/                 Built-in tool implementations
 ```
@@ -255,10 +259,15 @@ yamx config               interactive configuration
 
 **Stale global version** — `npm uninstall -g @needyamin/yamx && npm install -g @needyamin/yamx@latest`.
 
+**Publishing “cannot publish over previously published versions”** — Bump **`version`** in `package.json` (and reinstall / republish); npm never replaces an existing semver.
+
+**Long lines touch the edges or prompt looks stuck** — YamX trims wrap width from `stdout.columns`; very narrow terminals, split editor panels, or exotic Unicode widths can still mis-measure host-side. Try a wider pane or **Windows Terminal**; increase terminal width slightly if glyphs clip.
+
+**Huge tool stderr/stdout still summarized in the panel** — The on-screen panel can cap **characters and line count** while the **full string** stays in agent context (`maxToolResultChars` still applies to history). Raise limits or skim the transcript in **`~/.yamx/sessions/`** if needed.
+
 **Git scan `EPERM` under Windows profile folders** — Prefer recent YamX versions when scanning permissive directories.
 
 ---
 
 ## License
-
 **ISC** — [Yamin](https://github.com/needyamin)

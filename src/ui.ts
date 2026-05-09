@@ -16,9 +16,13 @@ import {
 } from './assistant-output-cap.js';
 import {
   BODY_LEFT_GUTTER,
+  BODY_RIGHT_GUTTER,
   terminalBodyWidthChars,
   wrapIndentedBodyBlock,
+  wrapWidthForIndentedBody,
+  panelInnerWrapWidth,
 } from './terminal-layout.js';
+import { ttyCueAfterBulkOutput, ttyResetBeforeReplPrompt } from './tty-repl-cue.js';
 
 const DIM = chalk.dim;
 
@@ -26,7 +30,7 @@ const DIM = chalk.dim;
 function yamxMarkedTerminal() {
   return markedTerminal({
     reflowText: false,
-    width: Math.max(42, terminalBodyWidthChars()),
+    width: Math.max(32, wrapWidthForIndentedBody()),
     tab: 2,
     showSectionPrefix: false,
     emoji: false,
@@ -117,6 +121,16 @@ export class UI {
     );
   }
 
+  /** Reset dangling SGR before readline redraws the prompt (↑/↓ history, next question). */
+  resetTTYBeforeReplPrompt(): void {
+    ttyResetBeforeReplPrompt();
+  }
+
+  /** After panels / streamed output so the viewport moves forward before the REPL resumes. */
+  cueTTYAfterBulkOutput(): void {
+    ttyCueAfterBulkOutput();
+  }
+
   /** Discard partial streamed assistant output (API error mid-stream). */
   cancelAssistantMarkdownStream() {
     if (this.assistantStreamOra) {
@@ -127,7 +141,7 @@ export class UI {
   }
 
   private printPanel(titleStrip: string, body: string, borderColor: string) {
-    const innerW = Math.max(26, terminalBodyWidthChars() - 8);
+    const innerW = panelInnerWrapWidth();
     const wrapped = wrapAnsi(body.trimEnd(), innerW, { trim: false, wordWrap: true });
     console.log(
       '\n' +
@@ -135,7 +149,7 @@ export class UI {
           title: titleStrip,
           titleAlignment: 'left',
           padding: { top: 0, bottom: 0, left: 1, right: 1 },
-          margin: { top: 0, bottom: 0, left: BODY_LEFT_GUTTER, right: 2 },
+          margin: { top: 0, bottom: 0, left: BODY_LEFT_GUTTER, right: 3 },
           borderStyle: 'round',
           borderColor,
           dimBorder: true,
@@ -150,7 +164,7 @@ export class UI {
     const cols =
       typeof process.stdout.columns === 'number' && process.stdout.columns >= 48 ? process.stdout.columns : 80;
     const pad = BODY_LEFT_GUTTER;
-    const boxInner = Math.min(Math.max(cols - pad - 4, 52), 78);
+    const boxInner = Math.min(Math.max(cols - pad - BODY_RIGHT_GUTTER - 4, 52), 78);
 
     const threadTitleRaw = clipField(session?.title ?? 'untitled', Math.max(28, Math.floor(boxInner * 0.48)));
     const threadId = session?.id?.slice(0, 8) ?? '--------';
@@ -390,7 +404,6 @@ export class UI {
   /** Render markdown content to the terminal with rich formatting */
   renderMarkdown(text: string, opts?: { bypassCap?: boolean }): string {
     try {
-      terminalBodyWidthChars();
       let src = text;
       if (!opts?.bypassCap) {
         const c = capAssistantMarkdownSource(src, this.assistantMarkdownCap);
@@ -483,7 +496,7 @@ export class UI {
 
   error(msg: string) {
     this.stopSpinner();
-    const w = Math.max(28, terminalBodyWidthChars() - BODY_LEFT_GUTTER - 2);
+    const w = wrapWidthForIndentedBody();
     const head = `${ERROR('✗')} ${ERROR(msg)}`;
     const folded = wrapAnsi(head, w, { trim: false, wordWrap: true });
     const text = `\n${folded
@@ -510,12 +523,13 @@ export class UI {
     if (view.technical) {
       lines.push('', DIM(view.technical));
     }
-    const inner = lines.join('\n');
+    const wrapW = panelInnerWrapWidth();
+    const inner = wrapAnsi(lines.join('\n').trimEnd(), wrapW, { trim: false, wordWrap: true });
     console.log(
       '\n' +
         boxen(inner, {
           padding: { top: 0, bottom: 0, left: 1, right: 1 },
-          margin: { top: 0, bottom: 1, left: 2, right: 2 },
+          margin: { top: 0, bottom: 1, left: 2, right: 3 },
           borderStyle: 'round',
           borderColor: '#FF4136',
           dimBorder: true,
@@ -531,8 +545,7 @@ export class UI {
   }
 
   info(msg: string) {
-    terminalBodyWidthChars();
-    const w = Math.max(28, terminalBodyWidthChars() - BODY_LEFT_GUTTER - 2);
+    const w = wrapWidthForIndentedBody();
     const line = `${INFO('○')} ${DIM(msg)}`;
     console.log(
       wrapAnsi(line, w, { trim: false, wordWrap: true })
@@ -543,8 +556,7 @@ export class UI {
   }
 
   warn(msg: string) {
-    terminalBodyWidthChars();
-    const w = Math.max(28, terminalBodyWidthChars() - BODY_LEFT_GUTTER - 2);
+    const w = wrapWidthForIndentedBody();
     const line = `${WARNING('⚠')} ${WARNING(msg)}`;
     console.log(
       wrapAnsi(line, w, { trim: false, wordWrap: true })

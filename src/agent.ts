@@ -214,59 +214,63 @@ export class Agent {
 
   /** Main chat entry point */
   async chat(userInput: string): Promise<void> {
-    await this.ensureContextBudget();
-    this.history.push({ role: 'user', content: userInput });
+    try {
+      await this.ensureContextBudget();
+      this.history.push({ role: 'user', content: userInput });
 
-    if (this.options.preflightRuntimeProbes !== false) {
-      const preflightBlob = await maybeRuntimePreflightMessage(userInput);
-      if (preflightBlob) {
-        this.ui.neuralStatus('preflight', 'attached read-only local probes to context');
-        this.history.push({ role: 'user', content: preflightBlob });
-      }
-    }
-
-    this.fileChanges = []; // Reset undo buffer per turn
-    this.toolCallCounts.clear();
-    this.turnStartTime = Date.now();
-
-    this.ui.neuralStatus('input', 'request received; preparing model context');
-    await this.runModelCouncil(userInput);
-
-    let iterations = 0;
-
-    while (iterations < MAX_TOOL_ITERATIONS) {
-      iterations++;
-
-      if (this.options.stream) {
-        const result = await this.streamResponse();
-        if (!result.tool_calls || result.tool_calls.length === 0) {
-          break; // No more tools, done
+      if (this.options.preflightRuntimeProbes !== false) {
+        const preflightBlob = await maybeRuntimePreflightMessage(userInput);
+        if (preflightBlob) {
+          this.ui.neuralStatus('preflight', 'attached read-only local probes to context');
+          this.history.push({ role: 'user', content: preflightBlob });
         }
-
-        // Process tool calls
-        const shouldContinue = await this.processToolCalls(result.tool_calls);
-        if (!shouldContinue) break;
-      } else {
-        const result = await this.completeResponse();
-        if (!result.tool_calls || result.tool_calls.length === 0) {
-          break;
-        }
-
-        const shouldContinue = await this.processToolCalls(result.tool_calls);
-        if (!shouldContinue) break;
       }
-    }
 
-    if (iterations >= MAX_TOOL_ITERATIONS) {
-      this.ui.warn(`Reached maximum tool iterations (${MAX_TOOL_ITERATIONS}). Stopping.`);
-    }
+      this.fileChanges = []; // Reset undo buffer per turn
+      this.toolCallCounts.clear();
+      this.turnStartTime = Date.now();
 
-    if (this.options.verboseCli) {
-      const elapsed = ((Date.now() - this.turnStartTime) / 1000).toFixed(1);
-      this.ui.info(`Turn completed in ${elapsed}s · ${iterations} iteration${iterations > 1 ? 's' : ''}`);
-    }
+      this.ui.neuralStatus('input', 'request received; preparing model context');
+      await this.runModelCouncil(userInput);
 
-    await Promise.resolve(this.options.onPersist?.());
+      let iterations = 0;
+
+      while (iterations < MAX_TOOL_ITERATIONS) {
+        iterations++;
+
+        if (this.options.stream) {
+          const result = await this.streamResponse();
+          if (!result.tool_calls || result.tool_calls.length === 0) {
+            break; // No more tools, done
+          }
+
+          // Process tool calls
+          const shouldContinue = await this.processToolCalls(result.tool_calls);
+          if (!shouldContinue) break;
+        } else {
+          const result = await this.completeResponse();
+          if (!result.tool_calls || result.tool_calls.length === 0) {
+            break;
+          }
+
+          const shouldContinue = await this.processToolCalls(result.tool_calls);
+          if (!shouldContinue) break;
+        }
+      }
+
+      if (iterations >= MAX_TOOL_ITERATIONS) {
+        this.ui.warn(`Reached maximum tool iterations (${MAX_TOOL_ITERATIONS}). Stopping.`);
+      }
+
+      if (this.options.verboseCli) {
+        const elapsed = ((Date.now() - this.turnStartTime) / 1000).toFixed(1);
+        this.ui.info(`Turn completed in ${elapsed}s · ${iterations} iteration${iterations > 1 ? 's' : ''}`);
+      }
+
+      await Promise.resolve(this.options.onPersist?.());
+    } finally {
+      this.ui.cueTTYAfterBulkOutput();
+    }
   }
 
   private async runModelCouncil(userInput: string): Promise<void> {

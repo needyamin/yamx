@@ -33,6 +33,7 @@ import { handleCommand } from './commands/index.js';
 import { buildAgentInputWithProjectIntel, shouldAttachProjectIntel } from './project-intel.js';
 import { REPL_HISTORY_PATH, printReplHistory } from './repl-history.js';
 import { DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS } from './assistant-output-cap.js';
+import { ttyResetBeforeReplPrompt } from './tty-repl-cue.js';
 
 dotenv.config();
 
@@ -586,6 +587,7 @@ program.action(async (options) => {
 
     if (input.startsWith('/')) {
       await handleCommand(input, agent, provider, { store, session: currentSession, agent }, cfg, executeDirectCommand);
+      agent.getUI().cueTTYAfterBulkOutput();
       continue;
     }
 
@@ -593,6 +595,7 @@ program.action(async (options) => {
     if (histExec) {
       const cap = histExec[1] ? parseInt(histExec[1], 10) : NaN;
       await printReplHistory(Number.isFinite(cap) && cap > 0 ? cap : undefined);
+      agent.getUI().cueTTYAfterBulkOutput();
       continue;
     }
 
@@ -644,7 +647,10 @@ async function createInputSession(): Promise<{
   }
 
   return {
-    question: (prompt: string) => rl.question(prompt),
+    question: async (prompt: string) => {
+      ttyResetBeforeReplPrompt();
+      return rl.question(prompt);
+    },
     save,
     close: () => rl.close(),
   };
@@ -665,6 +671,7 @@ async function executeDirectCommand(command: string, ui: UI, autoApprove: boolea
     ]);
     if (!approved) {
       ui.warn('Command denied.');
+      ui.cueTTYAfterBulkOutput();
       return;
     }
   }
@@ -673,6 +680,7 @@ async function executeDirectCommand(command: string, ui: UI, autoApprove: boolea
   const started = Date.now();
   const result = await runCommand.execute(args);
   ui.toolResult('run_command', result, Date.now() - started);
+  ui.cueTTYAfterBulkOutput();
 }
 
 async function resolveSessionRef(

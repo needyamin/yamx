@@ -145,6 +145,28 @@ test('run_command keeps a persistent YamX working directory inside the project',
   assert.match(blocked, /Path outside project/);
 });
 
+test('SIGINT-registered shell: interruptShellChildForUser ends a long wait quickly', async () => {
+  const { runProcess } = await import('../dist/tools/utils.js');
+  const { interruptShellChildForUser, clearShellInterruptState } = await import('../dist/shell-abort-context.js');
+  clearShellInterruptState();
+  const win = process.platform === 'win32';
+  const file = win ? 'cmd.exe' : 'sh';
+  const args = win ? ['/d', '/s', '/c', 'ping 127.0.0.1 -n 30 >nul'] : ['-c', 'sleep 30'];
+  const t0 = Date.now();
+  const p = runProcess(file, args, {
+    timeoutMs: 120_000,
+    maxChars: 4000,
+    registerForSigint: true,
+    shouldAbort: () => false,
+  });
+  await new Promise((r) => setTimeout(r, 400));
+  interruptShellChildForUser();
+  await p;
+  const ms = Date.now() - t0;
+  assert.ok(ms < 25_000, `expected kill to return quickly, took ${ms}ms`);
+  clearShellInterruptState();
+});
+
 test('command memory records shell outcomes for project intelligence', async () => {
   const { runCommand } = await import('../dist/tools/shell.js');
   const { commandMemoryPath, formatCommandMemoryForPrompt } = await import('../dist/command-memory.js');
@@ -192,6 +214,14 @@ test('command intelligence seeds local json and suggests offline commands', asyn
 
   const gitTypo = await suggestCommandFix('gti statsu', process.cwd());
   assert.ok(gitTypo?.command.startsWith('git status'));
+});
+
+test('direct shell: user cancel is not treated as a failed command for diagnosis', async () => {
+  const { isDirectShellFailure, isDirectShellUserCancelled } = await import('../dist/direct-shell-diagnose.js');
+  const cancelled = 'Tracing route...\n(stopped by user)\n(exit 1)\n(shell: cmd; …)';
+  assert.equal(isDirectShellUserCancelled(cancelled), true);
+  assert.equal(isDirectShellFailure(cancelled), false);
+  assert.equal(isDirectShellFailure('node: bad\n(exit 9)'), true);
 });
 
 test('direct command parser catches commands but not tasks', async () => {
@@ -317,10 +347,18 @@ test('tool risk classification separates safe, network, and destructive commands
 });
 
 test('filesystem tools support bounded reads, edit dry-run, and search context', async () => {
-  const { readFile, editFile, searchFiles } = await import('../dist/tools/filesystem.js');
+  const { readFile, writeFile, editFile, searchFiles } = await import('../dist/tools/filesystem.js');
+  const { multiEdit, patchFile } = await import('../dist/tools/advanced.js');
   const filePath = path.join(process.cwd(), 'tmp-yamx-fs.txt');
+  const writePath = path.join(process.cwd(), 'tmp-yamx-write.txt');
+  const multiPath = path.join(process.cwd(), 'tmp-yamx-multi.txt');
   await fs.writeFile(filePath, ['alpha', 'beta target', 'gamma', 'target delta'].join('\n'));
+  await fs.writeFile(multiPath, ['alpha', 'beta', 'alpha'].join('\n'));
   try {
+    const writeDry = await writeFile.execute({ path: 'tmp-yamx-write.txt', content: 'created later\n', dry_run: true });
+    assert.match(writeDry, /Dry run/);
+    await assert.rejects(fs.stat(writePath));
+
     const tail = await readFile.execute({ path: 'tmp-yamx-fs.txt', tail: true, start_line: 2 });
     assert.match(tail, /3: gamma/);
     assert.match(tail, /4: target delta/);
@@ -333,8 +371,42 @@ test('filesystem tools support bounded reads, edit dry-run, and search context',
     const search = await searchFiles.execute({ path: '.', include: 'tmp-yamx-fs.txt', pattern: 'TARGET', context_lines: 1 });
     assert.match(search, /-- tmp-yamx-fs.txt:4 --/);
     assert.match(search, /> 4: TARGET delta/);
+
+    const multiFail = await multiEdit.execute({
+      path: 'tmp-yamx-multi.txt',
+      edits: [
+        { old_text: 'alpha', new_text: 'ALPHA' },
+        { old_text: 'missing-token', new_text: 'x' },
+      ],
+    });
+    assert.match(multiFail, /no changes written/);
+    assert.equal(await fs.readFile(multiPath, 'utf8'), ['alpha', 'beta', 'alpha'].join('\n'));
+
+    const multiDry = await multiEdit.execute({
+      path: 'tmp-yamx-multi.txt',
+      edits: [{ old_text: 'alpha', new_text: 'ALPHA', replace_all: true }],
+      dry_run: true,
+    });
+    assert.match(multiDry, /Dry run/);
+
+    const multiOk = await multiEdit.execute({
+      path: 'tmp-yamx-multi.txt',
+      edits: [{ old_text: 'alpha', new_text: 'ALPHA', replace_all: true }],
+    });
+    assert.match(multiOk, /Applied 1 edit/);
+
+    const patchDry = await patchFile.execute({
+      path: 'tmp-yamx-multi.txt',
+      start_line: 2,
+      end_line: 2,
+      new_content: 'BETA',
+      dry_run: true,
+    });
+    assert.match(patchDry, /Dry run/);
   } finally {
     await fs.unlink(filePath).catch(() => {});
+    await fs.unlink(writePath).catch(() => {});
+    await fs.unlink(multiPath).catch(() => {});
   }
 });
 
@@ -651,6 +723,48 @@ test('web command server serves UI and executes safe commands', async () => {
   }
 });
 
+test('web API sessions CRUD and grouped routes doc', async () => {
+  const { startYamxWebServer } = await import('../dist/web/server.js');
+  const app = await startYamxWebServer({ host: '127.0.0.1', port: 0 });
+  try {
+    const routes = await fetch(`${app.url}/api/routes`).then((res) => res.json());
+    assert.equal(routes.ok, true);
+    assert.ok(Array.isArray(routes.groups));
+    assert.ok(Array.isArray(routes.routes));
+    assert.ok(routes.groups.some((g) => String(g.name).includes('Sessions')));
+
+    const created = await fetch(`${app.url}/api/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'CRUD test session', activate: false }),
+    }).then((res) => res.json());
+    assert.equal(created.ok, true);
+    const sid = created.session.id;
+
+    const one = await fetch(`${app.url}/api/sessions/${encodeURIComponent(sid)}`).then((res) => res.json());
+    assert.equal(one.ok, true);
+    assert.equal(one.session.title, 'CRUD test session');
+
+    const patched = await fetch(`${app.url}/api/sessions/${encodeURIComponent(sid)}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Renamed' }),
+    }).then((res) => res.json());
+    assert.equal(patched.ok, true);
+    assert.equal(patched.session.title, 'Renamed');
+
+    const del = await fetch(`${app.url}/api/sessions/${encodeURIComponent(sid)}`, { method: 'DELETE' }).then((res) =>
+      res.json()
+    );
+    assert.equal(del.ok, true);
+
+    const gone = await fetch(`${app.url}/api/sessions/${encodeURIComponent(sid)}`);
+    assert.equal(gone.status, 404);
+  } finally {
+    await app.close();
+  }
+});
+
 test('web server routes natural messages to the YamX agent', async () => {
   const { startYamxWebServer } = await import('../dist/web/server.js');
   const provider = {
@@ -707,9 +821,50 @@ test('tool registry exposes codebase analysis intelligence tool', async () => {
   const { getTool, getToolCount, getToolsByCategory } = await import('../dist/tools/registry.js');
   assert.ok(getTool('codebase_analysis'));
   assert.ok(getTool('log_inspect'));
-  assert.equal(getToolCount(), 29);
+  assert.equal(getToolCount(), 31);
   assert.ok(getToolsByCategory().Intelligence.includes('codebase_analysis'));
   assert.ok(getToolsByCategory().Intelligence.includes('log_inspect'));
+});
+
+test('intent extraction enriches package managers and lifecycle hints', async () => {
+  const { classifyUserIntent } = await import('../dist/intent.js');
+  const intent = classifyUserIntent('npm install failed with ELIFECYCLE; trying pnpm');
+  assert.ok(intent.entities?.packageManagers?.includes('npm'));
+  assert.ok(intent.entities?.packageManagers?.includes('pnpm'));
+  assert.match(intent.entities?.lifecycleHint || '', /lifecycle/i);
+});
+
+test('command suggestions boost diagnostic commands for failure-shaped queries', async () => {
+  const { suggestCommands } = await import('../dist/command-intelligence.js');
+  const cwd = process.cwd();
+  const diag = await suggestCommands('docker failing need logs', cwd, 8);
+  assert.ok(diag.length > 0);
+  assert.ok(diag.some((s) => /logs?/i.test(s.command)));
+});
+
+test('file intelligence: fingerprint and multi-edit simulation', async () => {
+  const { contentFingerprint, simulateMultiEditSequence } = await import('../dist/tools/file-editing.js');
+  assert.match(contentFingerprint('hello'), /^sha256:[a-f0-9]{16}$/);
+  const snap = { eol: '\n' };
+  const content = 'AAA\nBBB\nCCC\n';
+  const sim = simulateMultiEditSequence(content, snap, [
+    { old_text: 'BBB', new_text: 'ZZZ' },
+    { old_text: 'BBB', new_text: 'QQQ' },
+  ]);
+  assert.equal(sim.ok, false);
+  assert.match(sim.failures[0]?.reason || '', /not found/i);
+});
+
+test('tool risk classifies write_files paths', async () => {
+  const { classifyToolCall } = await import('../dist/tool-risk.js');
+  const ok = classifyToolCall('write_files', {
+    writes: [{ path: 'src/a.ts', content: 'x' }],
+  });
+  assert.equal(ok.risk, 'project-write');
+  const bad = classifyToolCall('write_files', {
+    writes: [{ path: 'secrets/.env', content: 'x' }],
+  });
+  assert.equal(bad.risk, 'sensitive');
 });
 
 test('log inspector reads tails and error context', async () => {

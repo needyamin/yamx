@@ -159,12 +159,20 @@ const POWERSHELL_ALIASES = new Set([
 const NATURAL_LANGUAGE_STARTERS = [
   'can', 'could', 'would', 'should', 'please', 'fix', 'create', 'build', 'add', 'change',
   'update', 'explain', 'why', 'how', 'what', 'analyze', 'analyse', 'review', 'implement',
-  'continue', 'make',
+  'continue', 'make', 'write', 'show', 'tell', 'describe', 'help', 'give',
+  'improve', 'enhance', 'optimize', 'refactor', 'debug', 'troubleshoot', 'investigate',
+  'configure', 'setup', 'generate', 'migrate', 'summarize',
+  'is', 'are', 'does', 'did', 'will', 'shall', 'may', 'might', 'want',
+  'need', 'try', 'let', 'suggest', 'recommend', 'verify', 'validate',
 ];
 
 const NATURAL_OBJECT_WORDS = new Set([
   'my', 'the', 'this', 'that', 'a', 'an', 'your', 'our', 'agent', 'app', 'project', 'code',
-  'feature', 'bug', 'issue', 'thing', 'tools',
+  'feature', 'bug', 'issue', 'thing', 'tools', 'file', 'files', 'function', 'class', 'method',
+  'module', 'component', 'service', 'server', 'client', 'api', 'endpoint', 'database',
+  'test', 'tests', 'error', 'errors', 'warning', 'warnings', 'problem', 'problems',
+  'performance', 'memory', 'security', 'config', 'configuration', 'settings', 'something',
+  'everything', 'anything', 'nothing', 'it', 'them', 'these', 'those', 'me',
 ]);
 
 const COMMAND_SUBCOMMAND_WORDS = new Set([

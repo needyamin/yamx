@@ -1,5 +1,8 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { homedir } from 'node:os';
+import { join as pathJoin } from 'node:path';
+import { createRequire } from 'node:module';
 import stripAnsi from 'strip-ansi';
 import { Agent } from '../agent.js';
 import { Config, type YamConfig } from '../config/index.js';
@@ -21,7 +24,57 @@ import { pseudoShellAdviceMessage } from '../tools/shell.js';
 import { recordCommandRun } from '../command-memory.js';
 import { parseDirectCommand } from '../direct-command.js';
 import { classifyUserIntent } from '../intent.js';
+import { loadMergeSaveConfig, publicConfigView, resetConfigToDefaults } from './config-handlers.js';
+import { getToolCount, getToolDefinitions, getToolsByCategory } from '../tools/registry.js';
 import { WEB_CSS, WEB_HTML, WEB_JS } from './ui.js';
+
+const require = createRequire(import.meta.url);
+
+const SESSIONS_API = '/api/sessions';
+
+function yamxConfigFilePath(): string {
+  return pathJoin(homedir(), '.yamx', 'config.json');
+}
+
+function sessionListItem(s: ChatSession) {
+  return {
+    id: s.id,
+    title: s.title,
+    cwd: s.cwd,
+    updatedAt: s.updatedAt,
+    messageCount: s.messages?.length ?? 0,
+  };
+}
+
+function sessionDetail(s: ChatSession, full: boolean) {
+  const base = {
+    id: s.id,
+    title: s.title,
+    cwd: s.cwd,
+    createdAt: s.createdAt,
+    updatedAt: s.updatedAt,
+    messageCount: s.messages?.length ?? 0,
+  };
+  if (full) return { ...base, messages: s.messages };
+  return base;
+}
+
+/** Single-session id from `/api/sessions/:id` (not `active`). */
+function parseSessionIdPath(pathname: string): string | null {
+  const prefix = `${SESSIONS_API}/`;
+  if (!pathname.startsWith(prefix)) return null;
+  const id = decodeURIComponent(pathname.slice(prefix.length));
+  if (!id || id.includes('/') || id === 'active') return null;
+  return id;
+}
+
+function packageVersion(): string {
+  try {
+    return (require('../../package.json') as { version?: string }).version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
 
 export interface WebServerOptions {
   host?: string;
@@ -280,16 +333,17 @@ class WebAgentRuntime {
 
     try {
       const env = await this.getAgentEnv();
-      const output = await captureConsoleOutput(async () => {
+      const captured = await captureConsoleOutput(async () => {
         await env.agent.chat(command);
       });
-      const fallback = latestAssistantText(env.agent.getHistory()) || '(no response)';
+      const fromTurn = assistantTextAfterLastUserMessage(env.agent.getHistory());
+      const output = fromTurn.trim() || captured.trim() || '(no response)';
       return {
         ok: true,
         blocked: false,
         kind: 'chat',
         command,
-        output: output || fallback,
+        output,
         code: 0,
         timedOut: false,
         durationMs: Date.now() - started,
@@ -318,6 +372,12 @@ class WebAgentRuntime {
     const config = new Config();
     this.cfg = await config.load();
     return this.cfg;
+  }
+
+  /** After config.json changes: drop caches so the next chat uses new provider + settings. */
+  invalidateCaches(): void {
+    this.cfg = undefined;
+    this.agentEnv = undefined;
   }
 
   private async getAgentEnv(): Promise<NonNullable<WebAgentRuntime['agentEnv']>> {
@@ -367,10 +427,42 @@ class WebAgentRuntime {
       maxAssistantMarkdownChars: cfg.settings?.maxAssistantMarkdownChars ?? 3200,
       preflightRuntimeProbes: cfg.settings?.preflightRuntimeProbes !== false,
       nonInteractiveApprovals: this.allowDangerous ? 'allow' : 'deny',
+      headlessUi: true,
     });
 
     this.agentEnv = { agent, cfg, store, session, provider };
     return this.agentEnv;
+  }
+
+  /** New chat file under ~/.yamx/sessions with current system prompt. */
+  async createChatSession(body: {
+    title?: string;
+    cwd?: string;
+    activate?: boolean;
+  }): Promise<ChatSession> {
+    const cfg = await this.loadConfig();
+    const contextEngine = new ContextEngine();
+    const systemPrompt = await contextEngine.buildSystemPrompt();
+    const store = new SessionStore();
+    await store.init();
+    let cwd = getWorkspaceCwd();
+    if (typeof body.cwd === 'string' && body.cwd.trim()) {
+      const resolved = ensureInsideProject(body.cwd.trim());
+      if (!resolved.ok) throw new Error(resolved.error);
+      cwd = resolved.path;
+    }
+    const activate = body.activate !== false;
+    const session = await store.createSession(
+      cwd,
+      { role: 'system', content: systemPrompt },
+      { activate }
+    );
+    if (typeof body.title === 'string' && body.title.trim()) {
+      session.title = body.title.trim().slice(0, 240);
+      await store.saveSession(session);
+    }
+    this.invalidateCaches();
+    return session;
   }
 }
 
@@ -383,33 +475,203 @@ async function handleRequest(
   if (req.method === 'GET' && url.pathname === '/') return sendText(res, 200, WEB_HTML, 'text/html; charset=utf-8');
   if (req.method === 'GET' && url.pathname === '/style.css') return sendText(res, 200, WEB_CSS, 'text/css; charset=utf-8');
   if (req.method === 'GET' && url.pathname === '/app.js') return sendText(res, 200, WEB_JS, 'text/javascript; charset=utf-8');
-  if (req.method === 'GET' && url.pathname === '/api/state') {
-    const agentState = await options.runtime.state();
-    return sendJson(res, 200, {
-      ok: true,
-      cwd: getWorkspaceRelativeCwd(),
-      root: PROJECT_ROOT,
-      platform: process.platform,
-      allowDangerous: options.allowDangerous,
-      provider: agentState.provider,
-      model: agentState.model,
-      sessionId: agentState.sessionId,
-    });
+
+  try {
+    if (req.method === 'GET' && url.pathname === '/api/state') {
+      const agentState = await options.runtime.state();
+      return sendJson(res, 200, {
+        ok: true,
+        cwd: getWorkspaceRelativeCwd(),
+        root: PROJECT_ROOT,
+        platform: process.platform,
+        allowDangerous: options.allowDangerous,
+        provider: agentState.provider,
+        model: agentState.model,
+        sessionId: agentState.sessionId,
+      });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/info') {
+      return sendJson(res, 200, {
+        ok: true,
+        version: packageVersion(),
+        node: process.version,
+        platform: process.platform,
+        cwd: getWorkspaceRelativeCwd(),
+        projectRoot: PROJECT_ROOT,
+        configPath: yamxConfigFilePath(),
+      });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/config') {
+      const config = new Config();
+      const cfg = await config.load();
+      return sendJson(res, 200, { ok: true, config: publicConfigView(cfg), configPath: yamxConfigFilePath() });
+    }
+
+    if (req.method === 'PATCH' && url.pathname === '/api/config') {
+      const body = await readJsonBody(req);
+      const { public: pub } = await loadMergeSaveConfig(body);
+      options.runtime.invalidateCaches();
+      return sendJson(res, 200, { ok: true, config: pub });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/config/reset') {
+      await resetConfigToDefaults();
+      options.runtime.invalidateCaches();
+      const config = new Config();
+      const cfg = await config.load();
+      return sendJson(res, 200, { ok: true, config: publicConfigView(cfg) });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/runtime/reload') {
+      options.runtime.invalidateCaches();
+      return sendJson(res, 200, { ok: true, message: 'Agent cache cleared; next request loads fresh config.' });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/tools') {
+      return sendJson(res, 200, {
+        ok: true,
+        count: getToolCount(),
+        byCategory: getToolsByCategory(),
+        tools: getToolDefinitions().map((d) => ({
+          name: d.name,
+          description: d.description,
+          parameters: d.parameters,
+        })),
+      });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/sessions') {
+      const store = new SessionStore();
+      await store.init();
+      const list = await store.listSessions();
+      const activeSessionId = await store.getActiveSessionId();
+      return sendJson(res, 200, {
+        ok: true,
+        activeSessionId,
+        sessions: list.map(sessionListItem),
+      });
+    }
+
+    if (req.method === 'POST' && url.pathname === `${SESSIONS_API}/active`) {
+      const body = await readJsonBody(req);
+      const id = body.id === null || body.id === '' ? null : String(body.id);
+      const store = new SessionStore();
+      await store.init();
+      if (id) {
+        const session = await store.loadSession(id);
+        if (!session) return sendJson(res, 400, { ok: false, error: 'Session not found' });
+      }
+      await store.setActiveSessionId(id);
+      options.runtime.invalidateCaches();
+      return sendJson(res, 200, { ok: true, activeSessionId: id });
+    }
+
+    if (req.method === 'POST' && url.pathname === SESSIONS_API) {
+      const body = await readJsonBody(req);
+      const session = await options.runtime.createChatSession({
+        title: typeof body.title === 'string' ? body.title : undefined,
+        cwd: typeof body.cwd === 'string' ? body.cwd : undefined,
+        activate: body.activate !== false,
+      });
+      return sendJson(res, 201, { ok: true, session: sessionDetail(session, false) });
+    }
+
+    const resourceSessionId = parseSessionIdPath(url.pathname);
+    if (resourceSessionId) {
+      const store = new SessionStore();
+      await store.init();
+
+      if (req.method === 'GET') {
+        const session = await store.loadSession(resourceSessionId);
+        if (!session) return sendJson(res, 404, { ok: false, error: 'Session not found' });
+        const full = url.searchParams.get('full') === '1' || url.searchParams.get('full') === 'true';
+        return sendJson(res, 200, { ok: true, session: sessionDetail(session, full) });
+      }
+
+      if (req.method === 'PATCH') {
+        const body = await readJsonBody(req);
+        const session = await store.loadSession(resourceSessionId);
+        if (!session) return sendJson(res, 404, { ok: false, error: 'Session not found' });
+        if (typeof body.title === 'string') {
+          const t = body.title.trim();
+          if (t) session.title = t.slice(0, 240);
+        }
+        await store.saveSession(session);
+        options.runtime.invalidateCaches();
+        return sendJson(res, 200, { ok: true, session: sessionDetail(session, false) });
+      }
+
+      if (req.method === 'DELETE') {
+        const deleted = await store.deleteSession(resourceSessionId);
+        if (!deleted) return sendJson(res, 404, { ok: false, error: 'Session not found' });
+        options.runtime.invalidateCaches();
+        return sendJson(res, 200, { ok: true, deleted: resourceSessionId });
+      }
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/routes') {
+      const groups = [
+        {
+          name: 'State & project',
+          endpoints: [
+            { method: 'GET', path: '/api/state', note: 'cwd, provider, model, activeSessionId' },
+            { method: 'GET', path: '/api/info', note: 'version, node, configPath, projectRoot' },
+          ],
+        },
+        {
+          name: 'Configuration',
+          endpoints: [
+            { method: 'GET', path: '/api/config', note: 'masked ~/.yamx/config.json' },
+            { method: 'PATCH', path: '/api/config', body: '{ partial }', note: 'merge + save' },
+            { method: 'POST', path: '/api/config/reset', body: '{}', note: 'reset defaults' },
+            { method: 'POST', path: '/api/runtime/reload', body: '{}', note: 'invalidate agent cache' },
+          ],
+        },
+        {
+          name: 'Sessions (CRUD)',
+          endpoints: [
+            { method: 'GET', path: '/api/sessions', note: 'list + activeSessionId' },
+            { method: 'POST', path: '/api/sessions', body: '{ title?, cwd?, activate? }', note: 'create chat' },
+            { method: 'GET', path: '/api/sessions/:id', note: 'read; ?full=1 includes messages' },
+            { method: 'PATCH', path: '/api/sessions/:id', body: '{ title }', note: 'rename' },
+            { method: 'DELETE', path: '/api/sessions/:id', note: 'delete' },
+            { method: 'POST', path: '/api/sessions/active', body: '{ id } | null', note: 'set active' },
+          ],
+        },
+        {
+          name: 'Agent & tools',
+          endpoints: [
+            { method: 'GET', path: '/api/tools', note: 'definitions + categories' },
+            { method: 'POST', path: '/api/command', body: '{ command }', note: 'shell or chat' },
+            { method: 'POST', path: '/api/chat', body: '{ message }', note: 'agent only' },
+          ],
+        },
+      ];
+      const routes = groups.flatMap((g) => g.endpoints.map((e) => ({ ...e, group: g.name })));
+      return sendJson(res, 200, { ok: true, groups, routes });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/command') {
+      const body = await readJsonBody(req);
+      const result = await options.runtime.handleInput({
+        command: String(body.command || ''),
+        shell: typeof body.shell === 'string' ? body.shell : undefined,
+        cwd: typeof body.cwd === 'string' ? body.cwd : undefined,
+      });
+      return sendJson(res, 200, result);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/chat') {
+      const body = await readJsonBody(req);
+      const result = await options.runtime.chat(String(body.message || body.command || ''));
+      return sendJson(res, 200, result);
+    }
+  } catch (error: any) {
+    const msg = error?.message || 'Bad request';
+    return sendJson(res, 400, { ok: false, error: msg });
   }
-  if (req.method === 'POST' && url.pathname === '/api/command') {
-    const body = await readJsonBody(req);
-    const result = await options.runtime.handleInput({
-      command: String(body.command || ''),
-      shell: typeof body.shell === 'string' ? body.shell : undefined,
-      cwd: typeof body.cwd === 'string' ? body.cwd : undefined,
-    });
-    return sendJson(res, 200, result);
-  }
-  if (req.method === 'POST' && url.pathname === '/api/chat') {
-    const body = await readJsonBody(req);
-    const result = await options.runtime.chat(String(body.message || body.command || ''));
-    return sendJson(res, 200, result);
-  }
+
   sendJson(res, 404, { error: 'Not found' });
 }
 
@@ -458,8 +720,18 @@ async function captureConsoleOutput(fn: () => Promise<void>): Promise<string> {
     .trim();
 }
 
-function latestAssistantText(history: Array<{ role: string; content: string | null }>): string {
+/** Assistant reply text for the current turn (after the last user message in history). */
+function assistantTextAfterLastUserMessage(
+  history: Array<{ role: string; content: string | null | undefined }>
+): string {
+  let lastUserIdx = -1;
   for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === 'user') {
+      lastUserIdx = i;
+      break;
+    }
+  }
+  for (let i = history.length - 1; i > lastUserIdx; i--) {
     const message = history[i];
     if (message.role === 'assistant' && message.content?.trim()) {
       return message.content.trim();

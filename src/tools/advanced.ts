@@ -8,17 +8,37 @@ import path from 'path';
 import fg from 'fast-glob';
 import { Tool } from './registry.js';
 import { ensureInsideProject, formatBytes } from './utils.js';
+import {
+  atomicWriteText,
+  closestTextHints,
+  countOccurrences,
+  formatTextEditSummary,
+  lineColumnForIndex,
+  multiEditOverlapWarnings,
+  normalizeNewTextForFile,
+  orderMultiEditIndicesByPosition,
+  previewTextChange,
+  readTextFileSnapshot,
+  replaceOccurrence,
+  simulateMultiEditSequence,
+  summarizeTextChange,
+} from './file-editing.js';
 
 export const multiEdit: Tool = {
   definition: {
     name: 'multi_edit',
-    description: `Apply multiple search-and-replace edits to a single file in one operation. 
-Each edit has an old_text (exact match) and new_text (replacement). Edits are applied sequentially.
-Use this when you need to make several non-adjacent changes to the same file — much faster than calling edit_file multiple times.`,
+    description: `Apply multiple exact search-and-replace edits to one file as a single transaction.
+By default every edit must match before the file is written, so failed edits do not leave half-applied changes. Supports occurrence targeting, replace_all, dry_run previews, and optional allow_partial mode.
+
+**Intelligence:** set smart_order=true to apply edits in ascending source order (reduces failures when the model lists edits bottom-to-up). Yamx runs a full-sequence simulation when allow_partial is false to catch "edit 3 invalidated by edit 1" before writing. Overlapping single replacements emit yamx_edit_intel warnings.`,
     parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Relative path to the file' },
+        smart_order: {
+          type: 'boolean',
+          description: 'Reorder edits by first match position in the original file (stable). Helps when edits are listed in arbitrary order.',
+        },
         edits: {
           type: 'array',
           description: 'Array of edits to apply',
@@ -27,10 +47,14 @@ Use this when you need to make several non-adjacent changes to the same file —
             properties: {
               old_text: { type: 'string', description: 'Exact text to find' },
               new_text: { type: 'string', description: 'Replacement text' },
+              occurrence: { type: 'number', description: 'Which occurrence to replace for this edit (1-indexed, default 1)' },
+              replace_all: { type: 'boolean', description: 'Replace every occurrence for this edit' },
             },
             required: ['old_text', 'new_text'],
           },
         },
+        dry_run: { type: 'boolean', description: 'Preview all edits without writing the file' },
+        allow_partial: { type: 'boolean', description: 'Apply edits that match even if other edits fail. Default false.' },
       },
       required: ['path', 'edits'],
     },
@@ -40,23 +64,117 @@ Use this when you need to make several non-adjacent changes to the same file —
     const target = ensureInsideProject(args.path);
     if (!target.ok) return target.error;
     const filePath = target.path;
-    if (!await fs.pathExists(filePath)) return `Error: File not found: ${args.path}`;
-
-    let content = await fs.readFile(filePath, 'utf-8');
-    const results: string[] = [];
-
-    for (let i = 0; i < args.edits.length; i++) {
-      const edit = args.edits[i];
-      if (content.includes(edit.old_text)) {
-        content = content.replace(edit.old_text, edit.new_text);
-        results.push(`Edit ${i + 1}: ✓ applied`);
-      } else {
-        results.push(`Edit ${i + 1}: ✗ old_text not found`);
-      }
+    const snapshot = await readTextFileSnapshot(filePath, args.path);
+    if (typeof snapshot === 'string') return snapshot;
+    if (!Array.isArray(args.edits) || args.edits.length === 0) {
+      return 'Error: edits must be a non-empty array.';
+    }
+    if (args.edits.length > 80) {
+      return 'Error: too many edits for one multi_edit call. Split into smaller batches of 80 or fewer edits.';
     }
 
-    await fs.writeFile(filePath, content, 'utf-8');
-    return `Applied edits to ${args.path}:\n${results.join('\n')}`;
+    type EditEntry = { old_text?: string; new_text?: string; occurrence?: number; replace_all?: boolean };
+    let edits: EditEntry[] = args.edits.slice();
+    const allowPartial = Boolean(args.allow_partial);
+    const smartOrder = Boolean(args.smart_order);
+
+    const normalizedOldTexts = edits.map((e) => normalizeNewTextForFile(String(e.old_text ?? ''), snapshot));
+    const overlapWarnings = multiEditOverlapWarnings(snapshot.content, edits, normalizedOldTexts);
+
+    if (smartOrder) {
+      const order = orderMultiEditIndicesByPosition(snapshot.content, normalizedOldTexts);
+      edits = order.map((i) => edits[i]);
+    }
+
+    const simEdits = edits.map((e) => ({
+      old_text: String(e.old_text ?? ''),
+      new_text: String(e.new_text ?? ''),
+      occurrence: e.occurrence,
+      replace_all: e.replace_all,
+    }));
+    const simulation = simulateMultiEditSequence(snapshot.content, snapshot, simEdits);
+    if (!simulation.ok && !allowPartial) {
+      return [
+        `Error: multi_edit preflight failed for ${args.path}; no changes written.`,
+        ...simulation.failures.map((f) => `Simulation edit ${f.index}: ${f.reason}`),
+        ...overlapWarnings.map((w) => `yamx_edit_intel: ${w}`),
+        ...(smartOrder ? ['Note: smart_order was applied before simulation.'] : []),
+      ].join('\n');
+    }
+
+    let content = snapshot.content;
+    const original = content;
+    const results: string[] = [];
+    const failures: string[] = [];
+
+    for (let i = 0; i < edits.length; i++) {
+      const edit = edits[i];
+      const oldText = normalizeNewTextForFile(String(edit.old_text ?? ''), snapshot);
+      const newText = normalizeNewTextForFile(String(edit.new_text ?? ''), snapshot);
+      if (!oldText) {
+        failures.push(`Edit ${i + 1}: old_text must not be empty.`);
+        continue;
+      }
+
+      const count = countOccurrences(content, oldText);
+      if (count === 0) {
+        const hints = closestTextHints(content, oldText, 2);
+        failures.push(`Edit ${i + 1}: old_text not found${hints.length ? `; closest lines: ${hints.join(' | ')}` : ''}.`);
+        continue;
+      }
+
+      const replaceAll = Boolean(edit.replace_all);
+      const occurrence = boundedNumber(edit.occurrence, 1, 1, Math.max(1, count));
+      const firstIndex = content.indexOf(oldText);
+      const loc = lineColumnForIndex(content, firstIndex);
+      content = replaceAll
+        ? content.split(oldText).join(newText)
+        : replaceOccurrence(content, oldText, newText, occurrence);
+      const applied = replaceAll ? count : 1;
+      results.push(`Edit ${i + 1}: applied ${applied}/${count} match${count === 1 ? '' : 'es'} near ${loc.line}:${loc.column}.`);
+    }
+    if (failures.length && !allowPartial) {
+      return [
+        `Error: multi_edit aborted for ${args.path}; no changes were written because ${failures.length} edit${failures.length === 1 ? '' : 's'} failed.`,
+        ...failures,
+      ].join('\n');
+    }
+    if (content === original) {
+      return `No changes: all matched replacements for ${args.path} were identical to current content.`;
+    }
+
+    const summary = summarizeTextChange(original, content);
+    const intelHeader =
+      overlapWarnings.length || smartOrder || (!simulation.ok && allowPartial)
+        ? [
+          'yamx_edit_intel:',
+          ...overlapWarnings.map((w) => `  - ${w}`),
+          smartOrder ? '  - smart_order: applied edits in ascending source position.' : '',
+          !simulation.ok && allowPartial
+            ? `  - preflight simulation had ${simulation.failures.length} issue(s); allow_partial will skip failing steps.`
+            : '',
+        ].filter(Boolean).join('\n')
+        : '';
+
+    if (args.dry_run) {
+      return [
+        intelHeader,
+        `Dry run: would apply ${results.length} edit${results.length === 1 ? '' : 's'} to ${args.path}${failures.length ? ` (${failures.length} skipped)` : ''}.`,
+        ...results,
+        ...failures,
+        formatTextEditSummary(summary),
+        previewTextChange(original, content),
+      ].filter(Boolean).join('\n');
+    }
+
+    await atomicWriteText(filePath, content);
+    return [
+      intelHeader,
+      `Applied ${results.length} edit${results.length === 1 ? '' : 's'} to ${args.path}${failures.length ? ` (${failures.length} skipped by allow_partial)` : ''}.`,
+      ...results,
+      ...failures,
+      formatTextEditSummary(summary),
+    ].filter(Boolean).join('\n');
   },
 };
 
@@ -313,6 +431,7 @@ Provide the start_line and end_line (1-indexed, inclusive) and the new content t
         start_line: { type: 'number', description: 'First line to replace (1-indexed)' },
         end_line: { type: 'number', description: 'Last line to replace (1-indexed, inclusive)' },
         new_content: { type: 'string', description: 'New content to insert in place of the specified line range' },
+        dry_run: { type: 'boolean', description: 'Preview the patch without changing the file' },
       },
       required: ['path', 'start_line', 'end_line', 'new_content'],
     },
@@ -322,22 +441,49 @@ Provide the start_line and end_line (1-indexed, inclusive) and the new content t
     const target = ensureInsideProject(args.path);
     if (!target.ok) return target.error;
     const filePath = target.path;
-    if (!await fs.pathExists(filePath)) return `Error: File not found: ${args.path}`;
+    const snapshot = await readTextFileSnapshot(filePath, args.path);
+    if (typeof snapshot === 'string') return snapshot;
 
-    const content = await fs.readFile(filePath, 'utf-8');
-    const lines = content.split('\n');
-    const start = args.start_line - 1;
-    const end = args.end_line;
+    const content = snapshot.content;
+    const lines = content.split(/\r?\n/);
+    const startLine = boundedNumber(args.start_line, 1, 1, Math.max(1, lines.length));
+    const endLine = boundedNumber(args.end_line, startLine, startLine, Math.max(startLine, lines.length));
+    const start = startLine - 1;
+    const end = endLine;
 
     if (start < 0 || end > lines.length || start >= end) {
       return `Error: Invalid line range ${args.start_line}-${args.end_line} (file has ${lines.length} lines)`;
     }
 
     const removedCount = end - start;
-    const newLines = args.new_content.split('\n');
+    const normalizedNewContent = normalizeNewTextForFile(String(args.new_content ?? ''), snapshot);
+    const newLines = normalizedNewContent.split(snapshot.eol);
     lines.splice(start, removedCount, ...newLines);
-    await fs.writeFile(filePath, lines.join('\n'), 'utf-8');
+    let newContent = lines.join(snapshot.eol);
+    if (snapshot.finalNewline && !newContent.endsWith(snapshot.eol)) {
+      newContent += snapshot.eol;
+    }
+    if (newContent === content) {
+      return `No changes: patch for ${args.path} is identical to current content.`;
+    }
 
-    return `Patched ${args.path}: replaced lines ${args.start_line}-${args.end_line} (${removedCount} lines) with ${newLines.length} lines. File now has ${lines.length} lines.`;
+    const summary = summarizeTextChange(content, newContent);
+    if (args.dry_run) {
+      return [
+        `Dry run: would patch ${args.path} lines ${startLine}-${endLine} (${removedCount} line${removedCount === 1 ? '' : 's'}) with ${newLines.length} line${newLines.length === 1 ? '' : 's'}.`,
+        formatTextEditSummary(summary),
+        previewTextChange(content, newContent),
+      ].join('\n');
+    }
+
+    await atomicWriteText(filePath, newContent);
+
+    return `Patched ${args.path}: replaced lines ${startLine}-${endLine} (${removedCount} line${removedCount === 1 ? '' : 's'}) with ${newLines.length} line${newLines.length === 1 ? '' : 's'}; ${formatTextEditSummary(summary)}.`;
   },
 };
+
+function boundedNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return Math.min(max, Math.max(min, fallback));
+  return Math.min(max, Math.max(min, Math.floor(parsed)));
+}

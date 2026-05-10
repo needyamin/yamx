@@ -41,6 +41,45 @@ export interface CommandFixSuggestion extends CommandSuggestion {
 
 const DB_PATH = path.join(process.env.YAMX_HOME || path.join(PROJECT_ROOT, '.yamx'), 'command-intelligence.json');
 
+/* ── Suggestion cache layer (eliminates disk I/O on every keystroke) ────── */
+let _cachedDbCommands: CommandKnowledge[] | null = null;
+let _cachedDbMtime = 0;
+let _cachedProjectCwd = '';
+let _cachedProjectKnowledge: CommandKnowledge[] | null = null;
+let _cachedProjectAt = 0;
+const PROJECT_CACHE_TTL_MS = 8_000; // re-scan project files every 8s max
+
+async function getCachedDbCommands(): Promise<CommandKnowledge[]> {
+  try {
+    const stat = await fs.stat(DB_PATH).catch(() => null);
+    if (!stat) {
+      // File doesn't exist — invalidate cache and return seed commands
+      _cachedDbCommands = null;
+      _cachedDbMtime = 0;
+      return ALL_SEED_COMMANDS;
+    }
+    const mtime = stat.mtimeMs;
+    if (_cachedDbCommands && mtime === _cachedDbMtime) return _cachedDbCommands;
+    const file = await readCommandIntelligenceFile();
+    _cachedDbCommands = file.commands;
+    _cachedDbMtime = mtime;
+    return _cachedDbCommands;
+  } catch {
+    return ALL_SEED_COMMANDS;
+  }
+}
+
+async function getCachedProjectKnowledge(cwd: string): Promise<CommandKnowledge[]> {
+  const now = Date.now();
+  if (_cachedProjectKnowledge && _cachedProjectCwd === cwd && now - _cachedProjectAt < PROJECT_CACHE_TTL_MS) {
+    return _cachedProjectKnowledge;
+  }
+  _cachedProjectKnowledge = await projectCommandKnowledge(cwd).catch((): CommandKnowledge[] => []);
+  _cachedProjectCwd = cwd;
+  _cachedProjectAt = now;
+  return _cachedProjectKnowledge;
+}
+
 const SEED_COMMANDS: CommandKnowledge[] = [
   { command: 'git status --short', domain: 'software', tags: ['git', 'status', 'repo', 'check'], description: 'Compact repository status.' },
   { command: 'git diff --stat', domain: 'software', tags: ['git', 'diff', 'changes', 'review'], description: 'Summarize changed files.' },
@@ -326,6 +365,13 @@ const QUERY_ALIASES: Record<string, string[]> = {
   diag: ['diagnose', 'doctor', 'status', 'check'],
   doctor: ['diagnose', 'health', 'check'],
   docotr: ['doctor', 'diagnose', 'health', 'check'],
+  cicd: ['github actions', 'gh run', 'pipeline', 'workflow'],
+  pipeline: ['gh run', 'actions', 'ci', 'workflow'],
+  monorepo: ['nx', 'turbo', 'workspace', 'packages'],
+  nx: ['monorepo', 'workspace'],
+  turbo: ['monorepo', 'build', 'cache'],
+  peer: ['npm', 'pnpm', 'install', 'dependencies'],
+  flaky: ['test', 'retry', 'jest', 'vitest'],
 };
 
 let cachedKnownTerms: string[] | null = null;
@@ -352,35 +398,86 @@ export async function suggestCommands(input: string, cwd = process.cwd(), limit 
   const query = normalizeQuery(input);
   if (!query || query.startsWith('/')) return [];
 
-  const [file, memory, project] = await Promise.all([
-    readCommandIntelligenceFile(),
+  const [dbCommands, memory, project] = await Promise.all([
+    getCachedDbCommands(),
     getCommandMemoryRecords(cwd, 80).catch(() => []),
-    projectCommandKnowledge(cwd).catch((): CommandKnowledge[] => []),
+    getCachedProjectKnowledge(cwd),
   ]);
   const suggestions = new Map<string, CommandSuggestion>();
 
-  for (const entry of [...file.commands, ...project]) {
+  // Pre-compute expensive query analysis ONCE (not per-entry)
+  const queryLower = query.toLowerCase();
+  const expandedQuery = expandQuery(query);
+  const queryDomain = inferDomain(expandedQuery);
+  const cliIntentBlob = `${queryLower} ${expandedQuery.toLowerCase()}`;
+  const cliIntent = inferCliIntentMode(cliIntentBlob);
+  const isProjectEntry = new Set(project);
+  const cwdRel = workspaceRelCwd(cwd);
+
+  for (const entry of [...dbCommands, ...project]) {
     if (entry.platforms?.length && !entry.platforms.includes(process.platform)) continue;
-    const score = scoreKnowledge(entry, query);
+    const cmdLower = entry.command.toLowerCase();
+    // Fast path: direct prefix match gets high score — always outranks fuzzy
+    if (cmdLower.startsWith(queryLower)) {
+      const source: 'project' | 'database' = isProjectEntry.has(entry) ? 'project' : 'database';
+      // Coverage ratio: how much of the command the user has typed (0..1)
+      const coverage = queryLower.length / cmdLower.length;
+      // Base prefix score high enough to always outrank fuzzy (which maxes ~140)
+      // Coverage bonus rewards longer typed prefixes, exact match gets +40
+      const prefixScore = 160 + Math.round(coverage * 60) + (cmdLower === queryLower ? 40 : 0)
+        + (source === 'project' ? 36 : 0)
+        + (entry.platforms?.includes(process.platform) ? 10 : 0)
+        + intentModeScoreBoost(cliIntent, entry.command, entry.description);
+      const existing = suggestions.get(entry.command);
+      if (!existing || prefixScore > existing.score) {
+        suggestions.set(entry.command, {
+          command: entry.command,
+          score: prefixScore,
+          source,
+          reason: source === 'project' ? entry.description : entry.domain,
+        });
+      }
+      continue;
+    }
+    const score = scoreKnowledge(entry, query, expandedQuery, queryDomain, cliIntent);
     if (score <= 0) continue;
-    const source = project.includes(entry) ? 'project' : 'database';
+    const source: 'project' | 'database' = isProjectEntry.has(entry) ? 'project' : 'database';
     const sourceBoost = source === 'project' ? 36 : 0;
-    suggestions.set(entry.command, {
-      command: entry.command,
-      score: score + sourceBoost,
-      source,
-      reason: source === 'project' ? entry.description : entry.domain,
-    });
+    const existing = suggestions.get(entry.command);
+    const total = score + sourceBoost;
+    if (!existing || total > existing.score) {
+      suggestions.set(entry.command, {
+        command: entry.command,
+        score: total,
+        source,
+        reason: source === 'project' ? entry.description : entry.domain,
+      });
+    }
   }
 
   for (const record of memory) {
-    const baseScore = Math.max(scoreText(record.command, query), scoreText(record.command, expandQuery(query)));
+    const baseScore = Math.max(scoreText(record.command, query), scoreText(record.command, expandedQuery));
     if (baseScore <= 0) continue;
-    const score = baseScore + Math.min(40, record.successes * 8 + record.runs * 2) - record.failures * 3;
+    const affinity = memoryCwdAffinity(record.cwd, cwdRel);
+    const ageMs = Date.now() - Date.parse(record.lastRunAt);
+    const recencyBoost = ageMs < 3_600_000 ? 22 : ageMs < 86_400_000 ? 14 : 6;
+    const successRate = record.runs > 0 ? record.successes / record.runs : 0.5;
+    const reliabilityBoost = Math.round(successRate * 24) + Math.min(14, Math.log1p(record.runs) * 3);
+    const affinityBoost = Math.round(affinity * 42);
+    const streakPenalty = record.failures > record.successes && record.runs >= 3 ? 10 : 0;
+    const intentMemBoost = intentModeScoreBoost(cliIntent, record.command, '');
+    const score =
+      baseScore
+      + affinityBoost
+      + recencyBoost
+      + reliabilityBoost
+      - streakPenalty
+      + intentMemBoost
+      + 15;
     const existing = suggestions.get(record.command);
     const candidate: CommandSuggestion = {
       command: record.command,
-      score: score + 15,
+      score,
       source: 'memory',
       reason: record.lastExit === 0 ? 'worked before' : 'seen before',
     };
@@ -448,15 +545,22 @@ function normalizeQuery(input: string): string {
   return input.trim().replace(/^\$ |^> |^!/, '').toLowerCase();
 }
 
-function scoreKnowledge(entry: CommandKnowledge, query: string): number {
-  const expandedQuery = expandQuery(query);
+function scoreKnowledge(
+  entry: CommandKnowledge,
+  query: string,
+  expandedQuery: string,
+  queryDomain: Domain | null,
+  cliIntent: CliIntentMode,
+): number {
   const commandScore = Math.max(scoreText(entry.command, query), scoreText(entry.command, expandedQuery));
+  // Build searchable text (cheap string concat, no regex)
   const text = `${entry.command} ${entry.domain} ${entry.tags.join(' ')} ${entry.description}`.toLowerCase();
   const textScore = Math.max(scoreText(text, query), scoreText(text, expandedQuery));
-  const domainBoost = entry.domain === inferDomain(expandedQuery) ? 28 : 0;
+  const domainBoost = queryDomain && entry.domain === queryDomain ? 28 : 0;
   const platformBoost = entry.platforms?.includes(process.platform) ? 10 : 0;
   const safetyBoost = /\b(status|list|show|check|validate|lint|test|logs?|describe|diff|dry-run|plan|version)\b/i.test(entry.command) ? 6 : 0;
-  return commandScore + textScore + domainBoost + platformBoost + safetyBoost;
+  const intentBoost = intentModeScoreBoost(cliIntent, entry.command, entry.description);
+  return commandScore + textScore + domainBoost + platformBoost + safetyBoost + intentBoost;
 }
 
 function scoreText(text: string, query: string): number {
@@ -469,11 +573,18 @@ function scoreText(text: string, query: string): number {
   if (tokens.length === 0) return 0;
   let score = 0;
   for (const token of tokens) {
-    if (new RegExp(`(^|[^a-z0-9])${escapeRegex(token)}($|[^a-z0-9])`, 'i').test(lower)) score += 34;
-    else if (new RegExp(`(^|[^a-z0-9])${escapeRegex(token)}`, 'i').test(lower)) score += 24;
-    else if (lower.startsWith(token)) score += 18;
-    else if (lower.includes(token)) score += 8;
-    else score += fuzzyTokenScore(lower, token);
+    const idx = lower.indexOf(token);
+    if (idx >= 0) {
+      const before = idx === 0 || !/[a-z0-9]/i.test(lower[idx - 1]);
+      const afterIdx = idx + token.length;
+      const after = afterIdx >= lower.length || !/[a-z0-9]/i.test(lower[afterIdx]);
+      if (before && after) score += 34;       // whole-word match
+      else if (before) score += 24;           // word-start match
+      else if (idx === 0) score += 18;        // text-start match
+      else score += 8;                        // substring match
+    } else {
+      score += fuzzyTokenScore(lower, token); // fuzzy fallback
+    }
   }
   return score >= Math.max(14, Math.min(40, tokens.length * 10)) ? score : 0;
 }
@@ -496,7 +607,75 @@ function inferDomain(query: string): Domain | null {
   return null;
 }
 
+type CliIntentMode = 'diagnose' | 'verify' | 'mutate' | 'discover' | null;
+
+function inferCliIntentMode(blob: string): CliIntentMode {
+  const lower = blob.toLowerCase().trim();
+  if (!lower) return null;
+  if (/\b(broken|failing|fail|failure|errors?|crash|cannot|can't|cant|won'?t|wont|doesn'?t work|doesnt work|doesn'?t run|hang|stuck|timeout|debug|traceback|stack trace)\b/.test(lower)) {
+    return 'diagnose';
+  }
+  if (/\b(uninstall|reinstall|\brm\s+-rf\b|prune|purge|nuke\s+|drop\s+database|clean\s+install)\b/.test(lower)
+    || /\b(install|add \S|remove \S)\b/.test(lower)) {
+    return 'mutate';
+  }
+  if (/\b(build|compile|bundle|typecheck|\btsc\b|testing?\b|\btest\b|lint|fmt|format|verify|validate|audit|coverage|clippy|\bvet\b)\b/.test(lower)) {
+    return 'verify';
+  }
+  if (/\b(list|show|status|which|where|whoami|version|logs?|watch|tail|head|describe)\b/.test(lower)) {
+    return 'discover';
+  }
+  return null;
+}
+
+function intentModeScoreBoost(mode: CliIntentMode, cmd: string, description: string): number {
+  if (!mode) return 0;
+  const blob = `${cmd} ${description}`.toLowerCase();
+  switch (mode) {
+    case 'diagnose':
+      if (/\b(log|logs|status|describe|inspect|diff|doctor|events|journal|trace|verbose|audit|errors?|dmesg|tail)\b/.test(blob)) return 16;
+      return 0;
+    case 'verify':
+      if (/\b(test|lint|check|validate|audit|fmt|typecheck|build|coverage|clippy|vet|fmt)\b/.test(blob)) return 16;
+      return 0;
+    case 'mutate':
+      if (/\b(install|uninstall|add |remove |prune|clean |compose up|compose down|apply|destroy|migrate)\b/.test(blob)) return 12;
+      return 0;
+    case 'discover':
+      if (/\b(list|ls\b|status|show|get |describe|version|whoami|branch|remote|conninfo|ping)\b/.test(blob)) return 12;
+      return 0;
+    default:
+      return 0;
+  }
+}
+
+function workspaceRelCwd(cwd: string): string {
+  const rel = path.relative(PROJECT_ROOT, path.resolve(cwd));
+  if (!rel) return '.';
+  return rel.split(path.sep).join('/');
+}
+
+function memoryCwdAffinity(memCwd: string, currentRel: string): number {
+  const m = memCwd.replace(/\\/g, '/');
+  const c = currentRel.replace(/\\/g, '/');
+  if (m === c) return 1;
+  if (m === '.') return 0.55;
+  if (c === '.') return 0.45;
+  if (c.startsWith(`${m}/`) || m.startsWith(`${c}/`)) return 0.72;
+  return 0.18;
+}
+
+let _lastExpandQuery = '';
+let _lastExpandResult = '';
+
 function expandQuery(query: string): string {
+  if (query === _lastExpandQuery) return _lastExpandResult;
+  _lastExpandResult = expandQueryInner(query);
+  _lastExpandQuery = query;
+  return _lastExpandResult;
+}
+
+function expandQueryInner(query: string): string {
   const tokens = query.split(/\s+/).filter(Boolean);
   const additions: string[] = [];
   const knownTerms = getKnownQueryTerms();
@@ -528,6 +707,13 @@ function expandQuery(query: string): string {
     [/\bdocker\s+logs?\b/, 'docker compose logs container'],
     [/\bkube\s+logs?\b|\bk8s\s+logs?\b/, 'kubectl logs kubernetes pod'],
     [/\bdb\s+status\b/, 'database health ping ready'],
+    [/\b(won'?t|wont|doesn'?t|doesnt)\s+(build|compile|run|start|work)\b/, 'build test lint typecheck logs diagnose'],
+    [/\bcompile\s+error\b|\bsyntax\s+error\b/, 'lint typecheck tsc eslint build'],
+    [/\bport\s+in\s+use\b|\bEADDRINUSE\b/, 'netstat ss lsof process listeners kill'],
+    [/\bclean\s+install\b|\bfresh\s+deps?\b|\bnode_modules\b.*\b(deleted|delete|rm)\b/, 'install ci npm pnpm'],
+    [/\bpeer\s+dep(endency)?\b/, 'npm ls pnpm why install'],
+    [/\bflaky\s+test\b/, 'test vitest jest retry'],
+    [/\bcicd\b|\bpipeline\b|\bgithub\s+actions\b/, 'gh run actions ci workflow'],
   ];
   for (const [pattern, alias] of phraseAliases) {
     if (pattern.test(query)) additions.push(alias);

@@ -100,12 +100,18 @@ function truncateToolTextAtNewline(raw: string, maxChars: number): { text: strin
   };
 }
 
-export type UIOptions = { verbose?: boolean; maxAssistantMarkdownChars?: number };
+export type UIOptions = {
+  verbose?: boolean;
+  maxAssistantMarkdownChars?: number;
+  /** No spinners, panels, or decorative console output (servers / web UI capture). */
+  headless?: boolean;
+};
 
 export class UI {
   private spinner: Ora | null = null;
   private streamBuffer = '';
   private verbose = false;
+  private headless = false;
   /** Accumulated assistant Markdown while streaming (rendered once on finalize). */
   private assistantMarkdownDraft = '';
   /** Subtle spinner while streamed tokens arrive before Markdown is painted. */
@@ -115,6 +121,7 @@ export class UI {
 
   constructor(opts?: UIOptions) {
     this.verbose = opts?.verbose === true;
+    this.headless = opts?.headless === true;
     this.assistantMarkdownCap = Math.max(
       400,
       opts?.maxAssistantMarkdownChars ?? DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS
@@ -193,15 +200,15 @@ export class UI {
 
     const line1 = padVis(ribbon, boxInner);
     const line2 = padVis(
-      `${deco}${MX.bold('Y A M X')}  ${MX_DIM(`v${version}`)}  ${MX_DIM('coding agent')}`,
+      `${deco}${MX.bold('Y A M X')}  ${MX_DIM(`v${version}`)}  ${MX_DIM('Coding Agent')}`,
       boxInner
     );
     const triple =
-      MX_DIM('encrypted session') +
+      MX_DIM('Encrypted Session') +
       ' ' +
       MX_DIM('|') +
       ' ' +
-      MX_DIM(`${tc} tools`) +
+      MX_DIM(`${tc} Tools`) +
       ' ' +
       MX_DIM('|') +
       ' ' +
@@ -210,33 +217,33 @@ export class UI {
     const line4 = padVis(sep, boxInner);
 
     const provLine =
-      MX_DIM('provider') +
+      MX_DIM('Provider') +
       ' ' +
       MX(provClip) +
       ' ' +
       MX_DIM('|') +
       ' ' +
-      MX_DIM('model') +
+      MX_DIM('Model') +
       ' ' +
       MX(modelClip);
     const thrLine =
-      MX_DIM('thread') + ' ' + MX(threadTitleRaw) + ' ' + MX_DIM('|') + ' ' + MX_DIM(`${threadId}…`);
+      MX_DIM('Thread') + ' ' + MX(threadTitleRaw) + ' ' + MX_DIM('|') + ' ' + MX_DIM(`${threadId}…`);
     const sigLine =
-      MX_DIM('signal') +
+      MX_DIM('Signal') +
       ' ' +
-      MX('online') +
-      ' ' +
-      MX_DIM('|') +
-      ' ' +
-      MX_DIM('council') +
-      ' ' +
-      MX(councilOn ? 'on' : 'off') +
+      MX('Online') +
       ' ' +
       MX_DIM('|') +
       ' ' +
-      MX_DIM('logs') +
+      MX_DIM('Council') +
       ' ' +
-      MX('ready');
+      MX(councilOn ? 'On' : 'Off') +
+      ' ' +
+      MX_DIM('|') +
+      ' ' +
+      MX_DIM('Logs') +
+      ' ' +
+      MX('Ready');
 
     const line5 = padVis('', boxInner);
     const line6 = padVis(`${footPad}${provLine}`, boxInner);
@@ -318,6 +325,7 @@ export class UI {
   }
 
   startThinking(text = 'Thinking…') {
+    if (this.headless) return;
     const prefix = this.verbose ? `${MX_DIM('[neural-link]')} ` : '';
     this.spinner = ora({
       text: `${prefix}${DIM(text)}`,
@@ -343,7 +351,7 @@ export class UI {
   /** Start assistant markdown stream with optional blank line above first token. */
   beginAssistantMarkdownStream(withLeadingNl: boolean) {
     this.cancelAssistantMarkdownStream(); // clears draft + stray stream spinner
-    if (withLeadingNl) console.log('');
+    if (withLeadingNl && !this.headless) console.log('');
   }
 
   /** Stream one Markdown chunk — buffered until finalize (so headings/lists/code fences render). */
@@ -353,7 +361,7 @@ export class UI {
     this.assistantMarkdownDraft += f;
 
     const ttyOut = typeof process.stdout.isTTY === 'boolean' ? process.stdout.isTTY : true;
-    if (ttyOut && !this.assistantStreamOra) {
+    if (!this.headless && ttyOut && !this.assistantStreamOra) {
       this.assistantStreamOra = ora({
         text: DIM('Receiving reply…'),
         color: 'green',
@@ -373,13 +381,15 @@ export class UI {
 
     const capped = capAssistantMarkdownSource(draftRaw, this.assistantMarkdownCap);
     const draft = capped.text;
-    if (capped.truncated) {
+    if (capped.truncated && !this.headless) {
       console.log(
         DIM(
           `[yamx] Reply truncated (${capped.text.length}/${capped.originalLength} chars). Raise settings.maxAssistantMarkdownChars in ~/.yamx/config.json.`
         )
       );
     }
+
+    if (this.headless) return;
 
     try {
       const rendered = marked.parse(draft);
@@ -393,13 +403,13 @@ export class UI {
 
   streamText(text: string) {
     this.stopSpinner();
-    process.stdout.write(text);
+    if (!this.headless) process.stdout.write(text);
     this.streamBuffer += text;
   }
 
   endStream() {
     if (this.streamBuffer) {
-      console.log();
+      if (!this.headless) console.log();
       this.streamBuffer = '';
     }
   }
@@ -411,7 +421,7 @@ export class UI {
       if (!opts?.bypassCap) {
         const c = capAssistantMarkdownSource(src, this.assistantMarkdownCap);
         src = c.text;
-        if (c.truncated) {
+        if (c.truncated && !this.headless) {
           console.log(
             DIM(
               `[yamx] Output truncated (${c.text.length}/${c.originalLength} chars). Raise settings.maxAssistantMarkdownChars in ~/.yamx/config.json.`
@@ -430,21 +440,42 @@ export class UI {
 
   toolCall(name: string, args: Record<string, unknown>) {
     this.stopSpinner();
-    const argsStr = Object.entries(args)
-      .map(([k, v]) => {
-        const val =
-          typeof v === 'string' && v.length > 80 ? `${v.slice(0, 77)}…` : v;
-        return `${DIM(k)}=${chalk.white(JSON.stringify(val))}`;
-      })
-      .join(' ');
+    if (this.headless) return;
+
+    const clipToolArgString = (key: string, raw: string): string => {
+      const max =
+        key === 'command' ? 14_000
+          : key === 'content' || key === 'old_text' || key === 'new_text' ? 3_000
+            : ['message', 'pattern', 'path', 'source', 'destination'].includes(key) ? 2_000
+              : 420;
+      if (raw.length <= max) return raw;
+      return `${raw.slice(0, Math.max(1, max - 1))}…`;
+    };
+
+    const argLines = Object.entries(args).map(([k, v]) => {
+      const val = typeof v === 'string' ? clipToolArgString(k, v) : v;
+      return `${DIM(k)}=${chalk.white(JSON.stringify(val))}`;
+    });
+    const sep = this.verbose ? ' ' : '\n';
+    const argsStr = argLines.join(sep);
     const innerBody = this.verbose ? argsStr : `${TOOL_COLOR.bold(name)}\n${argsStr}`;
     if (this.verbose) {
       console.log(`\n  ${MX('◈')} ${MX_DIM('[TOOL LINK]')} ${TOOL_COLOR.bold(name)}`);
     }
     this.printPanel(DIM(' tool '), innerBody, '#2563EB');
+
+    if (name === 'run_command' && typeof args.command === 'string' && args.command.trim()) {
+      const cmd = args.command.trim();
+      const cols = typeof process.stdout.columns === 'number' && process.stdout.columns >= 40 ? process.stdout.columns : 80;
+      const budget = Math.max(48, Math.min(96, cols - 24));
+      const preview = cmd.length > budget ? `${cmd.slice(0, budget - 1)}…` : cmd;
+      this.startThinking(`Running: ${preview}`);
+    }
   }
 
   toolResult(name: string, result: string, duration: number) {
+    this.stopSpinner();
+    if (this.headless) return;
     const normalized = String(result ?? '').replace(/\r\n/g, '\n');
     const maxLines = this.verbose ? TOOL_RESULT_MAX_LINES_VERBOSE : TOOL_RESULT_MAX_LINES_NORMAL;
 
@@ -482,6 +513,7 @@ export class UI {
   }
 
   approvalNeeded(toolName: string, args: Record<string, unknown>): string {
+    if (this.headless) return '';
     console.log(`\n  ${WARNING('⚠')} ${chalk.bold('Approve')} ${TOOL_COLOR(toolName)}`);
     for (const [k, v] of Object.entries(args)) {
       const val =
@@ -492,8 +524,9 @@ export class UI {
   }
 
   usage(input: number, output: number, totalInput: number, totalOutput: number) {
+    if (this.headless) return;
     console.log(
-      DIM(`\n  Tokens ↑${input} ↓${output} · session ↑${totalInput} ↓${totalOutput}`)
+      DIM(`\n  Tokens ↑${input} ↓${output} · Session ↑${totalInput} ↓${totalOutput}`)
     );
   }
 
@@ -544,10 +577,12 @@ export class UI {
   }
 
   success(msg: string) {
+    if (this.headless) return;
     console.log(`\n  ${SUCCESS('✓')} ${msg}`);
   }
 
   info(msg: string) {
+    if (this.headless) return;
     const w = wrapWidthForIndentedBody();
     const line = `${INFO('○')} ${DIM(msg)}`;
     console.log(
@@ -559,6 +594,7 @@ export class UI {
   }
 
   warn(msg: string) {
+    if (this.headless) return;
     const w = wrapWidthForIndentedBody();
     const line = `${WARNING('⚠')} ${WARNING(msg)}`;
     console.log(
@@ -569,7 +605,14 @@ export class UI {
     );
   }
 
+  /** After cooperative stop: second Ctrl+C exits YamX while work is active. */
+  replForceExitHint(): void {
+    if (this.headless) return;
+    console.log(`${' '.repeat(BODY_LEFT_GUTTER)}${chalk.dim('Press Ctrl+C again to exit YamX.')}`);
+  }
+
   separator() {
+    if (this.headless) return;
     console.log(DIM('  ─'.repeat(28)));
   }
 

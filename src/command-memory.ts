@@ -30,6 +30,7 @@ export async function recordCommandRun(args: {
   cwd: string;
   code: number | null;
   timedOut?: boolean;
+  cancelled?: boolean;
   output?: string;
 }): Promise<void> {
   const command = normalizeCommand(args.command);
@@ -40,8 +41,8 @@ export async function recordCommandRun(args: {
   const relCwd = relativeProjectPath(args.cwd);
   const records = file.projects[projectKey] || [];
   const existing = records.find((record) => record.command === command && record.cwd === relCwd);
-  const success = args.code === 0 && !args.timedOut;
-  const signal = extractSignal(args.output || '', args.timedOut);
+  const success = args.code === 0 && !args.timedOut && !args.cancelled;
+  const signal = extractSignal(args.output || '', args.timedOut, args.cancelled);
 
   if (existing) {
     existing.runs += 1;
@@ -67,6 +68,7 @@ export async function recordCommandRun(args: {
     .sort((a, b) => Date.parse(b.lastRunAt) - Date.parse(a.lastRunAt))
     .slice(0, MAX_PROJECT_RECORDS);
   await writeMemoryFile(file);
+  invalidateMemoryCache();
 }
 
 export async function formatCommandMemoryForPrompt(cwd: string, limit = 14): Promise<string> {
@@ -75,26 +77,55 @@ export async function formatCommandMemoryForPrompt(cwd: string, limit = 14): Pro
   if (records.length === 0) return '(no command memory for this project yet)';
 
   const rel = relativeProjectPath(cwd);
-  const focused = records
-    .filter((record) => record.cwd === rel || record.cwd === '.')
-    .slice(0, limit);
-  const list = focused.length ? focused : records.slice(0, limit);
+  const scored = records.map((record) => {
+    const cwdRank = record.cwd === rel ? 4 : record.cwd === '.' ? 2 : 0;
+    const ageH = (Date.now() - Date.parse(record.lastRunAt)) / 3_600_000;
+    const recency = Math.max(0, 3.2 - ageH / 8);
+    const rate = record.runs > 0 ? record.successes / record.runs : 0.45;
+    const volume = Math.log1p(record.runs);
+    const score = cwdRank * 2.1 + recency * 1.4 + rate * 3 + volume * 0.55;
+    return { record, score };
+  });
+  scored.sort((a, b) => b.score - a.score || Date.parse(b.record.lastRunAt) - Date.parse(a.record.lastRunAt));
 
-  return list.map((record) => {
+  const ok = scored.filter((s) => s.record.lastExit === 0).length;
+  const bad = scored.length - ok;
+  const header = `yamx_cli_memory: entries=${records.length} recent_ok≈${ok} recent_fail≈${bad} (cwd-ranked)`;
+  const list = scored.slice(0, limit).map(({ record }) => {
     const mark = record.lastExit === 0 ? 'ok' : `fail:${record.lastExit ?? '?'}`;
     const signal = record.lastSignal ? ` | ${record.lastSignal}` : '';
     return `- [${mark}] cwd=${record.cwd} runs=${record.runs} ok=${record.successes} fail=${record.failures} :: ${record.command}${signal}`;
-  }).join('\n');
+  });
+
+  return [header, ...list].join('\n');
 }
 
 export async function getCommandMemoryRecords(cwd: string, limit = 80): Promise<CommandRecord[]> {
-  const file = await readMemoryFile();
+  const file = await readMemoryFileCached();
   const records = file.projects[PROJECT_ROOT] || [];
   if (records.length === 0) return [];
 
   const rel = relativeProjectPath(cwd);
   const focused = records.filter((record) => record.cwd === rel || record.cwd === '.');
   return (focused.length ? focused : records).slice(0, limit);
+}
+
+/* ── Memory file cache (avoid disk I/O on every suggestion keystroke) ── */
+let _memoryCache: CommandMemoryFile | null = null;
+let _memoryCacheAt = 0;
+const MEMORY_CACHE_TTL_MS = 5_000;
+
+async function readMemoryFileCached(): Promise<CommandMemoryFile> {
+  const now = Date.now();
+  if (_memoryCache && now - _memoryCacheAt < MEMORY_CACHE_TTL_MS) return _memoryCache;
+  _memoryCache = await readMemoryFile();
+  _memoryCacheAt = now;
+  return _memoryCache;
+}
+
+function invalidateMemoryCache(): void {
+  _memoryCache = null;
+  _memoryCacheAt = 0;
 }
 
 async function readMemoryFile(): Promise<CommandMemoryFile> {
@@ -128,7 +159,8 @@ function relativeProjectPath(cwd: string): string {
   return rel || '.';
 }
 
-function extractSignal(output: string, timedOut?: boolean): string {
+function extractSignal(output: string, timedOut?: boolean, cancelled?: boolean): string {
+  if (cancelled) return 'stopped by user';
   if (timedOut) return 'timed out';
   const lines = output
     .split(/\r?\n/)

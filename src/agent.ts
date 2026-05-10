@@ -13,6 +13,7 @@ import {
 } from './tools/shell.js';
 import { evaluateToolCall, PermissionMode } from './policy.js';
 import { HookManager } from './hooks.js';
+import { setRunCommandAbortCheck } from './shell-abort-context.js';
 import { UI } from './ui.js';
 import {
   ASSISTANT_TRUNCATION_HISTORY_NOTE,
@@ -65,6 +66,8 @@ export interface AgentOptions {
    * results are injected before the model as a user-role yamx_local_preflight XML-style block.
    */
   preflightRuntimeProbes?: boolean;
+  /** Suppress spinners and decorative terminal output (web / programmatic runners). */
+  headlessUi?: boolean;
 }
 
 export class Agent {
@@ -118,7 +121,8 @@ export class Agent {
     this.stopRequested = true;
     this.ui.stopSpinner();
     this.ui.cancelAssistantMarkdownStream();
-    this.ui.warn('Stop requested. Finishing the current safe boundary...');
+    this.ui.warn('Interrupted — stopping shell now; ending this turn…');
+    this.ui.replForceExitHint();
     for (const waiter of [...this.stopWaiters]) waiter();
   }
 
@@ -162,6 +166,7 @@ export class Agent {
     this.ui = new UI({
       verbose: merged.verboseCli === true,
       maxAssistantMarkdownChars: merged.maxAssistantMarkdownChars,
+      headless: merged.headlessUi === true,
     });
     this.options = merged;
     if (this.options.initialHistory && this.options.initialHistory.length > 0) {
@@ -420,8 +425,19 @@ export class Agent {
 
   private shouldRunModelCouncil(userInput: string): boolean {
     const text = userInput.toLowerCase();
-    if (text.length > 500) return true;
-    return /\b(fix|bug|error|broken|fail|crash|implement|add|create|refactor|review|analy[sz]e|architecture|security|performance|optimi[sz]e|test|build|deploy|database|migration|agent|powerful|advanced|pro|logs?)\b/.test(text);
+    // Long inputs are likely complex tasks
+    if (text.length > 400) return true;
+    // Multiple file references suggest multi-file work
+    const fileRefs = text.match(/\b[\w./\\-]+\.(ts|tsx|js|jsx|py|go|rs|java|json|yaml|yml|toml|md|c|cpp|h|cs|rb|php)\b/gi);
+    if (fileRefs && fileRefs.length >= 2) return true;
+    // Error paste — user is likely debugging
+    if (/\b(TypeError|SyntaxError|ReferenceError|ENOENT|EACCES|EPERM|ECONNREFUSED|stack trace|traceback|segfault|panic|core dump)\b/i.test(text)) return true;
+    // Infrastructure / architecture work
+    if (/\b(docker|kubernetes|k8s|helm|terraform|ansible|ci\/cd|pipeline|microservice|monorepo|migration|schema|database)\b/.test(text)) return true;
+    // Code quality / complex analysis
+    if (/\b(refactor|redesign|architect|restructure|split|merge|decouple|abstract|generalize|optimize|benchmark|profile|memory leak|race condition|deadlock|thread)\b/.test(text)) return true;
+    // Standard complexity triggers
+    return /\b(fix|bug|error|broken|fail|crash|implement|add|create|refactor|review|analy[sz]e|architecture|security|performance|optimi[sz]e|test|build|deploy|database|migration|agent|powerful|advanced|pro|logs?|debug|investigate|diagnose|troubleshoot|integrate|upgrade|convert|port|rewrite)\b/.test(text);
   }
 
   /** Non-streaming completion */
@@ -468,7 +484,7 @@ export class Agent {
       };
       this.history.push(assistantMsg);
 
-      if (capResult) {
+      if (capResult && this.options.headlessUi !== true) {
         const rendered = this.ui.renderMarkdown(capResult.text, { bypassCap: true });
         console.log('\n' + rendered);
       }
@@ -856,14 +872,22 @@ export class Agent {
       this.ui.toolCall(tc.function.name, args);
       const startTime = Date.now();
 
+      if (tc.function.name === 'run_command') {
+        setRunCommandAbortCheck(() => this.isStopRequested());
+      }
       try {
         // Track file changes for undo
-        if (['write_file', 'edit_file', 'delete_file', 'multi_edit', 'patch_file', 'move_file'].includes(tc.function.name) && (args.path || args.source)) {
-          await this.trackFileChange(args.path || args.source);
+        if (['write_file', 'edit_file', 'delete_file', 'multi_edit', 'patch_file', 'move_file', 'write_files'].includes(tc.function.name)) {
+          if (tc.function.name === 'write_files' && Array.isArray(args?.writes)) {
+            for (const w of args.writes) {
+              if (w?.path) await this.trackFileChange(w.path);
+            }
+          } else if (args.path || args.source) {
+            await this.trackFileChange(args.path || args.source);
+          }
         }
 
         const result = await tool.execute(args);
-        this.throwIfStopped();
         const duration = Date.now() - startTime;
         this.ui.toolResult(tc.function.name, result, duration);
 
@@ -885,6 +909,7 @@ export class Agent {
           name: tc.function.name,
           content: this.prepareToolResultForHistory(tc.function.name, result),
         });
+        this.throwIfStopped();
       } catch (error: any) {
         const duration = Date.now() - startTime;
         const errorMsg = `Error executing ${tc.function.name}: ${error.message}`;
@@ -908,6 +933,10 @@ export class Agent {
           name: tc.function.name,
           content: errorMsg,
         });
+      } finally {
+        if (tc.function.name === 'run_command') {
+          setRunCommandAbortCheck(null);
+        }
       }
     }
 
@@ -921,6 +950,7 @@ export class Agent {
   private repeatLimit(name: string): number {
     const readOnlyRepeatable = new Set([
       'read_file',
+      'read_files',
       'list_files',
       'search_files',
       'grep_search',
@@ -939,6 +969,7 @@ export class Agent {
     return !new Set([
       'run_command',
       'read_file',
+      'read_files',
       'search_files',
       'grep_search',
       'log_inspect',
@@ -979,23 +1010,58 @@ export class Agent {
     const base = this.compactToolResultForHistory(toolName, result);
     if (!this.isFailureResult(toolName, result)) return base;
 
+    const domain = this.classifyFailureDomain(result);
+    const domainGuidance = this.failureDomainGuidance(domain);
+
     return [
       base,
       '',
       '<yamx_failure_protocol>',
+      `failure_domain=${domain}`,
       'The previous command/tool result indicates a failure. Do not guess a fix from one line only.',
       'Next steps:',
       '1. Identify the exact error message, file path, stack frame, port, missing command, or failing assertion.',
       '2. If a background task or log file may exist, use task_tail or log_inspect mode=auto/latest-error/summary.',
       '3. Search the codebase for the exact symbol/error/config referenced by the logs.',
       '4. Apply the smallest fix, then rerun the narrow failing command.',
+      domainGuidance,
       '</yamx_failure_protocol>',
     ].join('\n');
   }
 
+  private classifyFailureDomain(result: string): string {
+    if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|getaddrinfo|DNS|socket hang up|network/i.test(result)) return 'network';
+    if (/ENOENT|EACCES|EPERM|permission denied|access denied|not found|no such file/i.test(result)) return 'filesystem';
+    if (/EADDRINUSE|port.*in use|address already in use/i.test(result)) return 'port-conflict';
+    if (/Cannot find module|Module not found|ModuleNotFoundError|ImportError|require\(\)|ERR_MODULE_NOT_FOUND/i.test(result)) return 'missing-dependency';
+    if (/SyntaxError|TypeError|ReferenceError|compile|parse|unexpected token|unterminated/i.test(result)) return 'code-error';
+    if (/not recognized|command not found|is not a recognized|is not installed/i.test(result)) return 'missing-tool';
+    if (/test.*fail|assertion|expect|assert|FAIL/i.test(result)) return 'test-failure';
+    if (/build.*fail|compilation error|linker error|tsc|type error/i.test(result)) return 'build-failure';
+    if (/timeout|timed out|deadline exceeded/i.test(result)) return 'timeout';
+    if (/out of memory|heap|OOM|allocation failed|ENOMEM/i.test(result)) return 'memory';
+    return 'general';
+  }
+
+  private failureDomainGuidance(domain: string): string {
+    switch (domain) {
+      case 'network': return 'Domain hint: check if the target service/URL is reachable, verify DNS resolution, check proxy settings, confirm ports are open.';
+      case 'filesystem': return 'Domain hint: verify the path exists, check file permissions, confirm cwd is correct, look for typos in path.';
+      case 'port-conflict': return 'Domain hint: find the process using the port (lsof/netstat/ss), kill it or use a different port.';
+      case 'missing-dependency': return 'Domain hint: check if the package is installed (npm ls / pip list), verify import paths match installed names, run install if missing.';
+      case 'code-error': return 'Domain hint: read the exact file:line referenced, fix the syntax/type issue, then rerun. Check recent edits for introduced bugs.';
+      case 'missing-tool': return 'Domain hint: verify the CLI tool is installed and on PATH (where/which/command -v), install it if missing with the appropriate package manager.';
+      case 'test-failure': return 'Domain hint: read the failing test assertion, compare expected vs actual, inspect the tested function, fix the root cause not the test.';
+      case 'build-failure': return 'Domain hint: read compiler/build errors from top to bottom, fix the first error (later ones often cascade), then rebuild.';
+      case 'timeout': return 'Domain hint: check if the target is reachable, increase timeout if appropriate, verify the operation is not hanging on interactive input.';
+      case 'memory': return 'Domain hint: check for infinite loops, unbounded data structures, or large file reads. Consider streaming or pagination.';
+      default: return 'Domain hint: focus on the first error line and trace from there.';
+    }
+  }
+
   private isFailureResult(toolName: string, result: string): boolean {
     if (!['run_command', 'run_command_background', 'task_tail', 'log_inspect'].includes(toolName)) return false;
-    return /\(exit\s+[1-9]\d*|timed out|error|exception|fatal|failed|failure|traceback|uncaught|unhandled|typeerror|syntaxerror|referenceerror|eaddrinuse|econnrefused|enoent|eacces|eperm/i.test(result);
+    return /\(exit\s+[1-9]\d*|timed out|error|exception|fatal|failed|failure|traceback|uncaught|unhandled|typeerror|syntaxerror|referenceerror|eaddrinuse|econnrefused|enoent|eacces|eperm|panic|abort|segfault|core dump|SIGKILL|SIGSEGV|SIGABRT|ERR_MODULE|Cannot find module|Module not found|command not found|not recognized|ImportError|ModuleNotFoundError|compilation error|linker error/i.test(result);
   }
 
   /** Track file changes for undo */

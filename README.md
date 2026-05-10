@@ -4,7 +4,20 @@
 
 **Requirements:** Node.js **18+**.
 
-The main README stays at the repository root for GitHub. Extra docs live in `docs/`; project-level config examples and compiler config live in `config/`.
+The main README stays at the repository root for GitHub. **Interactive documentation** (Bootstrap 5) lives in `docs/` as static HTML: start at [`docs/index.html`](docs/index.html) (CLI, Web UI, HTTP API). Publishing notes stay in [`docs/publish.txt`](docs/publish.txt). Compiler config lives in `config/`.
+
+---
+
+## Documentation site (Bootstrap 5)
+
+| Page | Contents |
+|------|----------|
+| [`docs/index.html`](docs/index.html) | Hub and navigation |
+| [`docs/cli.html`](docs/cli.html) | CLI install, flags, `yamx web`, data paths |
+| [`docs/web.html`](docs/web.html) | Web UI panels (shell, settings, sessions CRUD, tools) |
+| [`docs/api.html`](docs/api.html) | Full HTTP API (config, sessions CRUD, tools, examples) |
+
+Open the files directly in a browser, or serve the folder (e.g. `npx serve docs`). Styles/scripts load from the Bootstrap 5.3 CDN (needs network on first load unless cached).
 
 ---
 
@@ -117,16 +130,13 @@ yamx web --port 8787
 yamx web --host 127.0.0.1 --port 8787
 ```
 
-The web UI starts a localhost YamX console. Command-like input runs through the same cross-platform shell selection used by `run_command`; normal messages go to the configured YamX AI agent with tool access, sessions, project context, and command memory.
+The web UI is a **local control plane** (default bind **127.0.0.1**): sidebar navigation, **Shell** (turn-based chat + command routing), **Settings** (tabbed editor for `~/.yamx/config.json`), **Sessions** (full CRUD + set active), and **Tools & API** (grouped endpoint reference + tool schemas). Command-like input uses the same shell stack as `run_command`; other lines go to the YamX agent with tools, sessions, and project context.
 
-```text
-GET  /              browser UI
-GET  /api/state     cwd/platform status
-POST /api/command   JSON body: { "command": "hi" } or { "command": "node -v" }
-POST /api/chat      JSON body: { "message": "explain this repo" }
-```
+**Detailed layout & API:** [`docs/web.html`](docs/web.html) · [`docs/api.html`](docs/api.html). At runtime, **`GET /api/routes`** returns grouped + flat route metadata.
 
-Browser AI turns run non-interactively: ordinary safe/write/network tool actions can proceed according to policy, while approval-required destructive and sensitive credential-style actions are blocked by default. Start with `yamx web --allow-dangerous` only when you intentionally want that local web session to approve those actions.
+**Quick API:** `POST /api/command` with `{ "command": "..." }` (shell or agent); `POST /api/chat` with `{ "message": "..." }` (agent only); `GET/PATCH/POST/DELETE` under `/api/sessions` for session CRUD; `GET/PATCH` config under `/api/config`. Static assets: `GET /`, `/style.css`, `/app.js`.
+
+Browser turns run **non-interactively**; destructive / sensitive actions stay blocked unless you start with `yamx web --allow-dangerous` and understand the policy implications.
 
 ---
 
@@ -248,6 +258,10 @@ Use `/help` in the REPL for the authoritative list.
 config/tsconfig.json      TypeScript compiler config
 config/.env.example       Environment variable template
 README.md                 Main project documentation
+docs/index.html           Bootstrap 5 doc hub (CLI, Web, API)
+docs/cli.html             CLI reference
+docs/web.html             Web UI reference
+docs/api.html             HTTP API reference
 docs/publish.txt          Publish command notes
 src/index.ts               CLI entry, flags, onboarding, persistence
 src/agent.ts               Streaming, tools, compaction, approvals

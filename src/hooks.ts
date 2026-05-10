@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'fs-extra';
 import os from 'node:os';
 import path from 'node:path';
-import { getShell, truncateOutput } from './tools/utils.js';
+import { getShell, truncateOutput, killProcessTreeBestEffort } from './tools/utils.js';
 
 export type HookEvent =
   | 'UserPromptSubmit'
@@ -135,9 +135,13 @@ export class HookManager {
 
       const timer = setTimeout(() => {
         try {
-          child.kill(process.platform === 'win32' ? undefined : 'SIGTERM');
+          killProcessTreeBestEffort(child);
         } catch {
-          child.kill();
+          try {
+            child.kill();
+          } catch {
+            /* ignore */
+          }
         }
       }, timeoutMs);
 

@@ -25,12 +25,18 @@ import { execSync } from 'child_process';
 import { SessionStore, type ChatSession } from './session-store.js';
 import { getToolCount } from './tools/registry.js';
 import { parseDirectCommand } from './direct-command.js';
+import { isDirectShellFailure, isDirectShellUserCancelled } from './direct-shell-diagnose.js';
 import { runCommand } from './tools/shell.js';
 import { handleCommand } from './commands/index.js';
 import { buildAgentInputWithProjectIntel, shouldAttachProjectIntel } from './project-intel.js';
 import { REPL_HISTORY_PATH, printReplHistory } from './repl-history.js';
 import { DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS } from './assistant-output-cap.js';
 import { ttyResetBeforeReplPrompt } from './tty-repl-cue.js';
+import {
+  setRunCommandAbortCheck,
+  interruptShellChildForUser,
+  clearShellInterruptState,
+} from './shell-abort-context.js';
 import { maybePromptCliUpdate } from './cli-update-check.js';
 import { startYamxWebServer } from './web/server.js';
 import { ensureCommandIntelligenceDatabase, suggestCommandFix, suggestCommands, type CommandSuggestion } from './command-intelligence.js';
@@ -645,31 +651,69 @@ program.action(async (options) => {
 
   if (currentSession.messages.length === 1) {
     console.log(chalk.dim('  /help — slash commands | history or /history [n] — ~/.yamx/history'));
-    console.log(chalk.dim(`  Live command suggestions from ${nodePath.relative(process.cwd(), intelligencePath) || intelligencePath} after 3 chars\n`));
+    console.log(chalk.dim(`  Live suggestions (${nodePath.relative(process.cwd(), intelligencePath) || intelligencePath}) after 3 chars · ↑/↓ choose row · Tab/Enter apply · Ctrl+↑/↓ session history · Esc dismiss\n`));
   } else {
     console.log(); // Just a spacer if resuming chat
   }
 
   const inputSession = await createInputSession();
   let activeWork = false;
-  let lastStopRequestAt = 0;
+  /**
+   * Ctrl+C while work is active:
+   * 1st (logical) press — kill the shell tree immediately + cooperative stop.
+   * 2nd press — exit YamX (save first).
+   * One physical key can emit SIGINT twice on Windows; debounce + min gap avoid treating that as two presses.
+   */
+  let workSigintLastEventAt = 0;
+  let workSigintBurstStart = 0;
+  let workSigintBurstCount = 0;
+  const SIGINT_DEBOUNCE_MS = 95;
+  /** Min ms after first counted Ctrl+C before a second counts as "exit YamX" (filters Windows echo-SIGINT). */
+  const FORCE_EXIT_MIN_GAP_MS = 320;
+  const FORCE_EXIT_WINDOW_MS = 8000;
+
+  const endReplActiveWork = () => {
+    activeWork = false;
+    workSigintLastEventAt = 0;
+    workSigintBurstStart = 0;
+    workSigintBurstCount = 0;
+    clearShellInterruptState();
+  };
 
   process.on('SIGINT', async () => {
     if (activeWork) {
       inputSession.clearPrompt?.();
       const now = Date.now();
-      if (agent.isStopRequested() && now - lastStopRequestAt < 1600) {
-        console.log(chalk.dim('\nForce exit requested. Saving...'));
+      if (now - workSigintLastEventAt < SIGINT_DEBOUNCE_MS) return;
+      workSigintLastEventAt = now;
+
+      if (workSigintBurstCount === 0 || now - workSigintBurstStart > FORCE_EXIT_WINDOW_MS) {
+        workSigintBurstStart = now;
+        workSigintBurstCount = 0;
+      }
+      workSigintBurstCount += 1;
+
+      interruptShellChildForUser();
+
+      if (workSigintBurstCount >= 2 && now - workSigintBurstStart >= FORCE_EXIT_MIN_GAP_MS) {
+        console.log(chalk.dim('\nSecond interrupt: exiting YamX…'));
+        endReplActiveWork();
         await saveToDisk().catch(() => undefined);
         inputSession.close();
         process.exit(130);
       }
-      lastStopRequestAt = now;
+
+      const stopAlreadyPending = agent.isStopRequested();
       agent.requestStop();
-      console.log(chalk.dim('\nPress Ctrl+C again quickly to force exit.'));
+      if (stopAlreadyPending) {
+        agent.getUI().replForceExitHint();
+      }
       return;
     }
 
+    workSigintLastEventAt = 0;
+    workSigintBurstStart = 0;
+    workSigintBurstCount = 0;
     try {
       await saveToDisk();
       inputSession.close();
@@ -700,7 +744,7 @@ program.action(async (options) => {
         await handleCommand(input, agent, provider, { store, session: currentSession, agent }, cfg, executeDirectCommand);
         agent.getUI().cueTTYAfterBulkOutput();
       } finally {
-        activeWork = false;
+        endReplActiveWork();
       }
       continue;
     }
@@ -719,7 +763,7 @@ program.action(async (options) => {
       try {
         await executeDirectCommand(directCommand, agent, options.autoApprove || cfg.settings?.autoApprove || false, true);
       } finally {
-        activeWork = false;
+        endReplActiveWork();
       }
       continue;
     }
@@ -733,7 +777,7 @@ program.action(async (options) => {
     } catch (error: any) {
       agent.getUI().error(`Fatal error: ${error.message}`);
     } finally {
-      activeWork = false;
+      endReplActiveWork();
     }
   }
 });
@@ -799,10 +843,15 @@ async function createInputSession(): Promise<{
     }
 
     stdout.write('\n');
+    /** Entire row (indent + command + reason) uses ANSI gray — works without truecolor; rgb was often ignored on Windows. */
     visible.forEach((item, index) => {
       const source = item.source === 'memory' ? 'memory' : item.reason;
-      const line = `  ${item.command}  (${source})`;
-      stdout.write(selectionActive && index === selectedIndex ? chalk.inverse(line) + '\n' : chalk.dim(line) + '\n');
+      const fullLine = `  ${item.command}  (${source})`;
+      if (selectionActive && index === selectedIndex) {
+        stdout.write(`${chalk.inverse(fullLine)}\n`);
+      } else {
+        stdout.write(`${chalk.gray(fullLine)}\n`);
+      }
     });
     stdout.write(`\x1b[${visible.length + 1}A`);
     stdout.write(`\x1b[${stripAnsi(prompt).length + cursor + 1}G`);
@@ -822,6 +871,8 @@ async function createInputSession(): Promise<{
       let selectionActive = false;
       let acceptedSuggestionPrefix = '';
       let historyIndex = history.length;
+      /** While true, hide intelligence rows so ↑/↓ behaves like shell history only. */
+      let suppressSuggestionsForHistory = false;
       let refreshSeq = 0;
 
       const cleanup = () => {
@@ -840,8 +891,22 @@ async function createInputSession(): Promise<{
         }
       };
 
+      let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
       const refreshSuggestions = () => {
-        const seq = ++refreshSeq;
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = null;
+        }
+
+        if (suppressSuggestionsForHistory) {
+          suggestions = [];
+          selectedIndex = 0;
+          selectionActive = false;
+          redraw();
+          return;
+        }
+
         if (acceptedSuggestionPrefix && buffer.startsWith(acceptedSuggestionPrefix)) {
           suggestions = [];
           selectedIndex = 0;
@@ -859,21 +924,30 @@ async function createInputSession(): Promise<{
           redraw();
           return;
         }
-        suggestCommands(buffer, process.cwd(), 7)
-          .then((next) => {
-            if (seq !== refreshSeq || closed) return;
-            suggestions = next;
-            selectedIndex = Math.min(selectedIndex, Math.max(0, suggestions.length - 1));
-            selectionActive = false;
-            redraw();
-          })
-          .catch(() => {
-            if (seq !== refreshSeq || closed) return;
-            suggestions = [];
-            selectedIndex = 0;
-            selectionActive = false;
-            redraw();
-          });
+
+        // Debounce: wait 30ms of idle time before computing suggestions
+        // This prevents redundant scoring runs during rapid typing
+        // but keeps responsiveness high (scoring itself is ~2ms)
+        const seq = ++refreshSeq;
+        const delay = suggestions.length === 0 ? 0 : 30; // instant first appearance
+        debounceTimer = setTimeout(() => {
+          debounceTimer = null;
+          suggestCommands(buffer, process.cwd(), 7)
+            .then((next) => {
+              if (seq !== refreshSeq || closed) return;
+              suggestions = next;
+              selectedIndex = Math.min(selectedIndex, Math.max(0, suggestions.length - 1));
+              selectionActive = false;
+              redraw();
+            })
+            .catch(() => {
+              if (seq !== refreshSeq || closed) return;
+              suggestions = [];
+              selectedIndex = 0;
+              selectionActive = false;
+              redraw();
+            });
+        }, delay);
       };
 
       const finish = (value: string) => {
@@ -882,6 +956,48 @@ async function createInputSession(): Promise<{
         stdout.write(`${prompt}${value}\n`);
         cleanup();
         resolve(value);
+      };
+
+      const cancelSuggestDebounce = () => {
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = null;
+        }
+        refreshSeq++;
+      };
+
+      /** ~/.yamx/history — hides suggestion rows while browsing. */
+      const historyStepPrev = () => {
+        if (history.length === 0) return;
+        cancelSuggestDebounce();
+        historyIndex = Math.max(0, historyIndex - 1);
+        buffer = history[historyIndex] ?? buffer;
+        cursor = buffer.length;
+        acceptedSuggestionPrefix = '';
+        suggestions = [];
+        selectedIndex = 0;
+        selectionActive = false;
+        suppressSuggestionsForHistory = true;
+        redraw();
+      };
+
+      const historyStepNext = () => {
+        if (history.length === 0) return;
+        cancelSuggestDebounce();
+        historyIndex = Math.min(history.length, historyIndex + 1);
+        buffer = historyIndex >= history.length ? '' : (history[historyIndex] ?? '');
+        cursor = buffer.length;
+        acceptedSuggestionPrefix = '';
+        suggestions = [];
+        selectedIndex = 0;
+        selectionActive = false;
+        if (buffer.trim().length < 3) {
+          suppressSuggestionsForHistory = false;
+          refreshSuggestions();
+        } else {
+          suppressSuggestionsForHistory = true;
+          redraw();
+        }
       };
 
       const onKeypress = (str: string, key: any) => {
@@ -906,6 +1022,7 @@ async function createInputSession(): Promise<{
         }
         if (key?.name === 'backspace') {
           if (cursor <= 0) return;
+          suppressSuggestionsForHistory = false;
           markEdit();
           buffer = buffer.slice(0, cursor - 1) + buffer.slice(cursor);
           cursor--;
@@ -916,6 +1033,7 @@ async function createInputSession(): Promise<{
         }
         if (key?.name === 'delete') {
           if (cursor >= buffer.length) return;
+          suppressSuggestionsForHistory = false;
           markEdit();
           buffer = buffer.slice(0, cursor) + buffer.slice(cursor + 1);
           selectionActive = false;
@@ -924,6 +1042,11 @@ async function createInputSession(): Promise<{
           return;
         }
         if (key?.name === 'tab') {
+          if (suppressSuggestionsForHistory && buffer.trim().length >= 3) {
+            suppressSuggestionsForHistory = false;
+            refreshSuggestions();
+            return;
+          }
           if (suggestions[selectedIndex]) {
             buffer = suggestions[selectedIndex].command;
             cursor = buffer.length;
@@ -935,34 +1058,51 @@ async function createInputSession(): Promise<{
           }
           return;
         }
+        if (key?.ctrl && key?.name === 'n' && suggestions.length > 0) {
+          suppressSuggestionsForHistory = false;
+          selectedIndex = selectionActive ? (selectedIndex + 1) % suggestions.length : 0;
+          selectionActive = true;
+          redraw();
+          return;
+        }
+        if (key?.ctrl && key?.name === 'p' && suggestions.length > 0) {
+          suppressSuggestionsForHistory = false;
+          selectedIndex = selectionActive
+            ? (selectedIndex <= 0 ? suggestions.length - 1 : selectedIndex - 1)
+            : 0;
+          selectionActive = true;
+          redraw();
+          return;
+        }
+
+        if (key?.ctrl && key?.name === 'up') {
+          historyStepPrev();
+          return;
+        }
+        if (key?.ctrl && key?.name === 'down') {
+          historyStepNext();
+          return;
+        }
         if (key?.name === 'up') {
-          if (suggestions.length > 0) {
+          if (!suppressSuggestionsForHistory && suggestions.length > 0) {
             selectedIndex = selectionActive
               ? (selectedIndex <= 0 ? suggestions.length - 1 : selectedIndex - 1)
               : 0;
             selectionActive = true;
             redraw();
-          } else if (history.length > 0) {
-            historyIndex = Math.max(0, historyIndex - 1);
-            buffer = history[historyIndex] || buffer;
-            cursor = buffer.length;
-            acceptedSuggestionPrefix = '';
-            refreshSuggestions();
+            return;
           }
+          historyStepPrev();
           return;
         }
         if (key?.name === 'down') {
-          if (suggestions.length > 0) {
+          if (!suppressSuggestionsForHistory && suggestions.length > 0) {
             selectedIndex = selectionActive ? (selectedIndex + 1) % suggestions.length : 0;
             selectionActive = true;
             redraw();
-          } else if (history.length > 0) {
-            historyIndex = Math.min(history.length, historyIndex + 1);
-            buffer = historyIndex >= history.length ? '' : history[historyIndex];
-            cursor = buffer.length;
-            acceptedSuggestionPrefix = '';
-            refreshSuggestions();
+            return;
           }
+          historyStepNext();
           return;
         }
         if (key?.name === 'left') {
@@ -994,12 +1134,28 @@ async function createInputSession(): Promise<{
           cursor = 0;
           acceptedSuggestionPrefix = '';
           selectionActive = false;
+          suppressSuggestionsForHistory = false;
           historyIndex = history.length;
           refreshSuggestions();
           return;
         }
-        if (key?.name === 'escape') return;
+        if (key?.name === 'escape') {
+          if (suggestions.length > 0 || selectionActive) {
+            suggestions = [];
+            selectedIndex = 0;
+            selectionActive = false;
+            suppressSuggestionsForHistory = false;
+            refreshSeq++;
+            if (debounceTimer) {
+              clearTimeout(debounceTimer);
+              debounceTimer = null;
+            }
+            redraw();
+          }
+          return;
+        }
         if (typeof str === 'string' && str >= ' ' && !str.includes('\r') && !str.includes('\n')) {
+          suppressSuggestionsForHistory = false;
           markEdit();
           buffer = buffer.slice(0, cursor) + str + buffer.slice(cursor);
           cursor += str.length;
@@ -1058,7 +1214,13 @@ async function executeDirectCommand(
 
   ui.toolCall('run_command', args);
   const started = Date.now();
-  const result = await runCommand.execute(args);
+  setRunCommandAbortCheck(() => agent.isStopRequested());
+  let result: string;
+  try {
+    result = await runCommand.execute(args);
+  } finally {
+    setRunCommandAbortCheck(null);
+  }
   ui.toolResult('run_command', result, Date.now() - started);
   ui.cueTTYAfterBulkOutput();
 
@@ -1068,7 +1230,13 @@ async function executeDirectCommand(
       ui.info(`Offline command intelligence suggests: ${offlineFix.command}`);
       ui.toolCall('run_command', { command: offlineFix.command });
       const fixStarted = Date.now();
-      const fixedResult = await runCommand.execute({ command: offlineFix.command });
+      setRunCommandAbortCheck(() => agent.isStopRequested());
+      let fixedResult: string;
+      try {
+        fixedResult = await runCommand.execute({ command: offlineFix.command });
+      } finally {
+        setRunCommandAbortCheck(null);
+      }
       ui.toolResult('run_command', fixedResult, Date.now() - fixStarted);
       ui.cueTTYAfterBulkOutput();
       if (!isDirectShellFailure(fixedResult)) return;
@@ -1088,6 +1256,9 @@ async function askAgentToRecoverFromDirectShellFailure(
   offlineFixCommand?: string,
   offlineFixResult?: string
 ): Promise<void> {
+  if (isDirectShellUserCancelled(result) || (offlineFixResult && isDirectShellUserCancelled(offlineFixResult))) {
+    return;
+  }
   const ui = agent.getUI();
   ui.neuralStatus('recover', offlineFixCommand
     ? 'offline correction also failed; asking agent to diagnose and continue'
@@ -1115,12 +1286,6 @@ async function askAgentToRecoverFromDirectShellFailure(
         : []),
       '</yamx_direct_shell_failure>',
     ].join('\n'));
-}
-
-function isDirectShellFailure(result: string): boolean {
-  return /\(exit\s+[1-9]\d*|timed out after|Spawn error:|Error:|not recognized as an internal or external command|command not found|No such file or directory|cannot find the path|bad option|fatal:|Traceback|TypeError|SyntaxError|ReferenceError/i.test(
-    result
-  );
 }
 
 async function resolveSessionRef(

@@ -2,6 +2,7 @@ export type ToolRisk = 'read-only' | 'project-write' | 'shell-safe' | 'shell-net
 
 const WRITE_TOOLS = new Set([
   'write_file',
+  'write_files',
   'edit_file',
   'multi_edit',
   'patch_file',
@@ -17,6 +18,7 @@ const WRITE_TOOLS = new Set([
 
 const READ_TOOLS = new Set([
   'read_file',
+  'read_files',
   'list_files',
   'search_files',
   'grep_search',
@@ -120,6 +122,15 @@ export function classifyToolCall(name: string, args: any): ToolRiskResult {
   }
 
   if (WRITE_TOOLS.has(name)) {
+    if (name === 'write_files' && Array.isArray(args?.writes)) {
+      for (const w of args.writes) {
+        const targetPath = String(w?.path || '');
+        if (isSensitivePath(targetPath)) {
+          return { risk: 'sensitive', destructive: false, reason: 'sensitive file path write' };
+        }
+      }
+      return { risk: 'project-write', destructive: false, reason: 'project write tool' };
+    }
     const targetPath = String(args?.path || args?.source || args?.destination || '');
     if (isSensitivePath(targetPath)) {
       return { risk: 'sensitive', destructive: false, reason: 'sensitive file path write' };

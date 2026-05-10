@@ -4,7 +4,7 @@
  */
 
 import { ToolDefinition } from '../providers/base.js';
-import { readFile, writeFile, editFile, listFiles, searchFiles, deleteFile } from './filesystem.js';
+import { readFile, writeFile, editFile, listFiles, searchFiles, deleteFile, readFiles, writeFiles } from './filesystem.js';
 import { runCommand, runCommandBackground, shellDiagnostics, taskList, taskTail, taskStop } from './shell.js';
 import { gitStatus, gitDiff, gitCommit, gitLog, gitBranch, gitStash } from './git.js';
 import { fetchUrlTool } from './web.js';
@@ -21,7 +21,9 @@ export interface Tool {
 
 export const allTools: Record<string, Tool> = {
   read_file: readFile,
+  read_files: readFiles,
   write_file: writeFile,
+  write_files: writeFiles,
   edit_file: editFile,
   list_files: listFiles,
   search_files: searchFiles,
@@ -69,7 +71,7 @@ export function getToolCount(): number {
 
 export function getToolsByCategory(): Record<string, string[]> {
   return {
-    Files: ['read_file', 'write_file', 'edit_file', 'list_files', 'search_files', 'delete_file'],
+    Files: ['read_file', 'read_files', 'write_file', 'write_files', 'edit_file', 'list_files', 'search_files', 'delete_file'],
     'Advanced Files': ['multi_edit', 'copy_file', 'move_file', 'file_info', 'grep_search', 'directory_tree', 'patch_file'],
     Shell: ['run_command', 'run_command_background', 'shell_diagnostics', 'task_list', 'task_tail', 'task_stop'],
     Git: ['git_status', 'git_diff', 'git_commit', 'git_log', 'git_branch', 'git_stash'],

@@ -12,6 +12,7 @@ import {
   getWorkspaceRelativeCwd,
   runProcess,
 } from './utils.js';
+import { getRunCommandAbortCheck } from '../shell-abort-context.js';
 import { TaskManager } from '../tasks.js';
 import { isDangerousShellCommand } from '../tool-risk.js';
 import { recordCommandRun } from '../command-memory.js';
@@ -134,24 +135,31 @@ export const runCommand: Tool = {
     const smart = getSmartShell(args.command, args.shell);
     const timeoutMs = boundedNumber(args.timeout_ms, DEFAULT_TIMEOUT_MS, 1000, 600_000);
     const maxChars = boundedNumber(args.max_chars, DEFAULT_MAX_CHARS, 1000, 500_000);
-    const { text, code, timedOut } = await runProcess(smart.shell.command, [...smart.shell.args, smart.command], {
+    const abortFn = getRunCommandAbortCheck();
+    const tracking = Boolean(abortFn);
+    const { text, code, timedOut, cancelled } = await runProcess(smart.shell.command, [...smart.shell.args, smart.command], {
       cwd: cwd.path,
       timeoutMs,
       maxChars,
+      shouldAbort: abortFn ? () => abortFn() : undefined,
+      registerForSigint: tracking,
+      abortPollMs: tracking ? 40 : undefined,
     });
     await recordCommandRun({
       command: smart.command,
       cwd: cwd.path,
       code,
       timedOut,
+      cancelled,
       output: text,
     });
 
     let body = text;
+    if (cancelled) body = body ? `${body}\n(stopped by user)` : '(stopped by user)';
     if (timedOut) body = body ? `${body}\n(timed out after ${timeoutMs}ms)` : `(timed out after ${timeoutMs}ms)`;
     if (code !== 0 && code !== null) body = body ? `${body}\n(exit ${code})` : `(exit ${code})`;
     if (!body) body = code === 0 ? '(no output)' : `(exit ${code}, no output)`;
-    if (code !== 0 || timedOut) {
+    if (code !== 0 || timedOut || cancelled) {
       body += `\n(shell: ${smart.shell.label}; ${smart.reason}; executed: ${smart.command})`;
     }
     return body;

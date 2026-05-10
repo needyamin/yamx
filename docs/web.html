@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YamX Web UI · Documentation</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+</head>
+<body class="bg-light">
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <div class="container">
+      <a class="navbar-brand" href="index.html">YamX docs</a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav"><span class="navbar-toggler-icon"></span></button>
+      <div class="collapse navbar-collapse" id="nav">
+        <ul class="navbar-nav">
+          <li class="nav-item"><a class="nav-link" href="index.html">Home</a></li>
+          <li class="nav-item"><a class="nav-link" href="cli.html">CLI</a></li>
+          <li class="nav-item"><a class="nav-link active" href="web.html">Web UI</a></li>
+          <li class="nav-item"><a class="nav-link" href="api.html">HTTP API</a></li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container py-4">
+    <h1 class="mb-3">Local web UI</h1>
+    <p class="lead text-secondary">A browser control plane served by YamX on <strong>127.0.0.1</strong> by default. Not a hosted SaaS — keep it on loopback unless you add your own auth.</p>
+
+    <section class="mb-5">
+      <h2 class="h4">Start</h2>
+      <pre class="bg-dark text-light p-3 rounded small"><code>yamx web
+yamx web --port 8787
+yamx web --host 127.0.0.1 --port 8765
+yamx web --allow-dangerous   # only if you understand tool policy risks</code></pre>
+      <p class="small text-secondary mb-0">Open the printed URL (e.g. <code>http://127.0.0.1:8765</code>).</p>
+    </section>
+
+    <section class="mb-5">
+      <h2 class="h4">Layout</h2>
+      <div class="accordion" id="acc">
+        <div class="accordion-item">
+          <h3 class="accordion-header"><button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#c1">Sidebar navigation</button></h3>
+          <div id="c1" class="accordion-collapse collapse show" data-bs-parent="#acc">
+            <div class="accordion-body">
+              <strong>Shell</strong>, <strong>Settings</strong>, <strong>Sessions</strong>, <strong>Tools &amp; API</strong>. On narrow screens the sidebar is a drawer (hamburger, backdrop, <kbd>Esc</kbd> to close).
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c2">Shell (conversation)</button></h3>
+          <div id="c2" class="accordion-collapse collapse" data-bs-parent="#acc">
+            <div class="accordion-body">
+              Chat-style turns: your message appears immediately; a working indicator runs until the server responds. Command-like input can execute as shell; other text routes to the YamX agent (tools, sessions, project context). The shell lives in a bounded card (not full-screen edge-to-edge).
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c3">Settings</button></h3>
+          <div id="c3" class="accordion-collapse collapse" data-bs-parent="#acc">
+            <div class="accordion-body">
+              Section <strong>pill tabs</strong>: General, Providers, Behavior, Model council, Subagents, Shell policy. Edits merge into <code>~/.yamx/config.json</code> (API keys masked in the browser). Buttons: save, reload agent cache, reset to defaults.
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c4">Sessions</button></h3>
+          <div id="c4" class="accordion-collapse collapse" data-bs-parent="#acc">
+            <div class="accordion-body">
+              <strong>New session</strong>, <strong>Refresh</strong>, per-row <strong>Use</strong> (set active), <strong>Rename</strong>, <strong>Delete</strong>. Matches the HTTP session CRUD API. Changing the active session invalidates the web agent cache for the next message.
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c5">Tools &amp; API</button></h3>
+          <div id="c5" class="accordion-collapse collapse" data-bs-parent="#acc">
+            <div class="accordion-body">
+              Grouped API reference table (method badges, path, body hint, notes). Click a row to copy the path. Collapsible raw <code>GET /api/routes</code> JSON. Tool list with search and expandable JSON Schema per tool.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-5">
+      <h2 class="h4">Static assets (when server is running)</h2>
+      <ul class="mb-0">
+        <li><code>GET /</code> — HTML shell</li>
+        <li><code>GET /style.css</code> — theme</li>
+        <li><code>GET /app.js</code> — client script</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2 class="h4">Related</h2>
+      <p class="mb-0"><a href="api.html">HTTP API reference</a> for every JSON endpoint the UI calls.</p>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+</body>
+</html>

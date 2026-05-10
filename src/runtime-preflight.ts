@@ -108,8 +108,12 @@ function inferProjectOpsPreflight(text: string): boolean {
     lower
   );
   const packageAction = /\b(npm|pnpm|yarn|bun|pip|poetry|composer|cargo|go|make|docker|compose|kubectl|helm|terraform|tofu|ansible|aws|gcloud|az|wrangler|vercel|netlify|flyctl|ping|tracert|traceroute|nslookup|dig|netstat|ss|ipconfig|ifconfig|netsh|nmap|tcpdump|tshark|gitleaks|trivy|semgrep|bandit|pip-audit|cargo-audit|govulncheck|osv-scanner|snyk|checkov|tfsec|hadolint|kube-linter|kubescape)\b/.test(lower);
+  const reinstallish =
+    /\b(clean\s+install|reinstall|nuke\s+node_modules|delete\s+node_modules|rm\s+node_modules|fresh\s+deps?|blow\s+away\s+deps?)\b/.test(
+      lower
+    );
 
-  return localTarget || vagueAction || packageAction;
+  return localTarget || vagueAction || packageAction || reinstallish;
 }
 
 function osFingerprintCommands(): string[] {

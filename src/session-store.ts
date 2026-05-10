@@ -73,7 +73,7 @@ export class SessionStore {
     return path.join(this.sessionsDir, `${id}.json`);
   }
 
-  async createSession(cwd: string, systemMessage: Message): Promise<ChatSession> {
+  async createSession(cwd: string, systemMessage: Message, opts?: { activate?: boolean }): Promise<ChatSession> {
     await this.init();
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -86,7 +86,9 @@ export class SessionStore {
       messages: [systemMessage],
     };
     await this.saveSession(session);
-    await this.setActiveSessionId(id);
+    if (opts?.activate !== false) {
+      await this.setActiveSessionId(id);
+    }
     return session;
   }
 

@@ -57,9 +57,9 @@ export async function handleCommand(
     case '/cancel':
       if (agent.isStopRequested()) {
         ui.warn('A stop request is already pending.');
+        ui.replForceExitHint();
       } else {
         agent.requestStop();
-        ui.info('Stop requested for the active YamX turn. During active work, Ctrl+C is the fastest way to stop.');
       }
       break;
     case '/undo':

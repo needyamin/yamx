@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +9,11 @@ import {
   preferredYamlTool,
   preferredSearchTool,
 } from '../tool-detect.js';
+import { killProcessTreeBestEffort } from '../process-tree-kill.js';
+import {
+  registerShellChildForInterrupt,
+  unregisterShellChildIfMatches,
+} from '../shell-abort-context.js';
 
 export const PROJECT_ROOT = path.resolve(process.cwd());
 let workspaceCwd = PROJECT_ROOT;
@@ -394,6 +399,8 @@ function shellAvailable(shellName: string): boolean {
   }
 }
 
+export { killProcessTreeBestEffort } from '../process-tree-kill.js';
+
 export function runProcess(
   file: string,
   args: string[],
@@ -402,12 +409,18 @@ export function runProcess(
     timeoutMs?: number;
     maxChars?: number;
     env?: NodeJS.ProcessEnv;
+    /** When this returns true, the process tree is killed (user stop / cooperatives cancel). */
+    shouldAbort?: () => boolean;
+    /** Poll interval for shouldAbort (default 120ms). */
+    abortPollMs?: number;
+    /** Register child so REPL Ctrl+C can kill the shell tree immediately (same scope as YamX `run_command`). */
+    registerForSigint?: boolean;
   } = {}
-): Promise<{ text: string; code: number | null; timedOut: boolean }> {
+): Promise<{ text: string; code: number | null; timedOut: boolean; cancelled?: boolean }> {
   return new Promise((resolve) => {
     const timeoutMs = options.timeoutMs ?? 120_000;
     const maxChars = options.maxChars ?? 100_000;
-    let child;
+    let child: ChildProcess;
     try {
       const cwd = options.cwd ?? PROJECT_ROOT;
       child = spawn(file, args, {
@@ -420,8 +433,13 @@ export function runProcess(
       return;
     }
 
+    if (options.registerForSigint) {
+      registerShellChildForInterrupt(child);
+    }
+
     let out = '';
     let timedOut = false;
+    let cancelled = false;
     let settled = false;
 
     const append = (chunk: string) => {
@@ -430,12 +448,26 @@ export function runProcess(
 
     const timer = setTimeout(() => {
       timedOut = true;
-      try {
-        child.kill(process.platform === 'win32' ? undefined : 'SIGTERM');
-      } catch {
-        child.kill();
-      }
+      killProcessTreeBestEffort(child);
     }, timeoutMs);
+
+    let abortTimer: ReturnType<typeof setInterval> | undefined;
+    if (options.shouldAbort) {
+      const pollMs = Math.max(40, Math.min(options.abortPollMs ?? 120, 2_000));
+      abortTimer = setInterval(() => {
+        if (settled) return;
+        try {
+          if (options.shouldAbort!()) {
+            cancelled = true;
+            if (abortTimer) clearInterval(abortTimer);
+            abortTimer = undefined;
+            killProcessTreeBestEffort(child);
+          }
+        } catch {
+          /* ignore */
+        }
+      }, pollMs);
+    }
 
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');
@@ -445,14 +477,18 @@ export function runProcess(
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
+      if (options.registerForSigint) unregisterShellChildIfMatches(child);
       clearTimeout(timer);
-      resolve({ text: truncateOutput(out.trim(), maxChars), code, timedOut });
+      if (abortTimer) clearInterval(abortTimer);
+      resolve({ text: truncateOutput(out.trim(), maxChars), code, timedOut, cancelled: cancelled || undefined });
     });
 
     child.on('error', (err) => {
       if (settled) return;
       settled = true;
+      if (options.registerForSigint) unregisterShellChildIfMatches(child);
       clearTimeout(timer);
+      if (abortTimer) clearInterval(abortTimer);
       resolve({ text: `Spawn error: ${err.message}`, code: 1, timedOut });
     });
   });

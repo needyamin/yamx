@@ -1,7 +1,7 @@
 # YamX
 
 **YamX** is a **terminal-first coding and ops agent**: it is built to help you run and fix things **from the command line**—scripts, package managers, installs, git, builds, logs, and local diagnostics—without turning every answer into a tutorial.
-<img width="50" height="50" alt="Image" src="https://github.com/user-attachments/assets/0d327064-4213-46c3-b2cf-5f69d0f87664" />
+<img width="80" height="80" alt="Image" src="https://github.com/user-attachments/assets/0d327064-4213-46c3-b2cf-5f69d0f87664" />
 <img width="1919" height="914" alt="Image" src="https://github.com/user-attachments/assets/34713749-e708-4bac-84d7-6bb9b4892658" />
 
 **Requirements:** Node.js **18+**.
@@ -354,3 +354,4 @@ yamx web [--host 127.0.0.1] [--port 8765] [-p provider] [-m model]
 
 ## License
 **ISC** — [Yamin](https://github.com/needyamin)
+<img width="50" height="50" alt="Image" src="https://github.com/user-attachments/assets/0d327064-4213-46c3-b2cf-5f69d0f87664" />

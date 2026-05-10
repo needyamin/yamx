@@ -157,7 +157,7 @@ test('command memory records shell outcomes for project intelligence', async () 
 });
 
 test('command intelligence seeds local json and suggests offline commands', async () => {
-  const { commandIntelligencePath, ensureCommandIntelligenceDatabase, suggestCommands } = await import('../dist/command-intelligence.js');
+  const { commandIntelligencePath, ensureCommandIntelligenceDatabase, suggestCommandFix, suggestCommands } = await import('../dist/command-intelligence.js');
   await fs.unlink(commandIntelligencePath()).catch(() => {});
 
   const dbPath = await ensureCommandIntelligenceDatabase();
@@ -180,6 +180,18 @@ test('command intelligence seeds local json and suggests offline commands', asyn
 
   const fuzzy = await suggestCommands('dockr cmpse logs', process.cwd(), 7);
   assert.ok(fuzzy.some((entry) => entry.command === 'docker compose logs --tail=100'));
+
+  const tsProject = await suggestCommands('tsc config', process.cwd(), 7);
+  assert.ok(tsProject.some((entry) => entry.command === 'npx tsc -p config/tsconfig.json --noEmit'));
+
+  const typoFromVocabulary = await suggestCommands('docotr', process.cwd(), 7);
+  assert.ok(typoFromVocabulary.some((entry) => /doctor|diagnose|status|check/i.test(entry.command + entry.reason)));
+
+  const npmTypo = await suggestCommandFix('npm run bild', process.cwd());
+  assert.equal(npmTypo?.command, 'npm run build');
+
+  const gitTypo = await suggestCommandFix('gti statsu', process.cwd());
+  assert.ok(gitTypo?.command.startsWith('git status'));
 });
 
 test('direct command parser catches commands but not tasks', async () => {

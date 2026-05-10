@@ -35,6 +35,10 @@ export interface CommandSuggestion {
   reason: string;
 }
 
+export interface CommandFixSuggestion extends CommandSuggestion {
+  confidence: number;
+}
+
 const DB_PATH = path.join(process.env.YAMX_HOME || path.join(PROJECT_ROOT, '.yamx'), 'command-intelligence.json');
 
 const SEED_COMMANDS: CommandKnowledge[] = [
@@ -310,7 +314,21 @@ const QUERY_ALIASES: Record<string, string[]> = {
   android: ['adb', 'flutter', 'react-native'],
   ios: ['xcrun', 'simctl', 'flutter'],
   llm: ['ollama', 'ai', 'model'],
+  git: ['git', 'status', 'diff', 'branch'],
+  gti: ['git', 'status', 'diff', 'branch'],
+  statsu: ['status', 'show', 'list'],
+  status: ['status', 'show', 'list'],
+  build: ['build', 'compile'],
+  test: ['test', 'verify'],
+  lint: ['lint', 'check'],
+  pub: ['publish', 'release', 'npm publish'],
+  rel: ['release', 'deploy', 'publish'],
+  diag: ['diagnose', 'doctor', 'status', 'check'],
+  doctor: ['diagnose', 'health', 'check'],
+  docotr: ['doctor', 'diagnose', 'health', 'check'],
 };
+
+let cachedKnownTerms: string[] | null = null;
 
 export function commandIntelligencePath(): string {
   return DB_PATH;
@@ -346,9 +364,10 @@ export async function suggestCommands(input: string, cwd = process.cwd(), limit 
     const score = scoreKnowledge(entry, query);
     if (score <= 0) continue;
     const source = project.includes(entry) ? 'project' : 'database';
+    const sourceBoost = source === 'project' ? 36 : 0;
     suggestions.set(entry.command, {
       command: entry.command,
-      score,
+      score: score + sourceBoost,
       source,
       reason: source === 'project' ? entry.description : entry.domain,
     });
@@ -371,6 +390,29 @@ export async function suggestCommands(input: string, cwd = process.cwd(), limit 
   return [...suggestions.values()]
     .sort((a, b) => b.score - a.score || a.command.localeCompare(b.command))
     .slice(0, limit);
+}
+
+export async function suggestCommandFix(command: string, cwd = process.cwd()): Promise<CommandFixSuggestion | null> {
+  const original = command.trim();
+  if (!original || original.startsWith('/')) return null;
+  const suggestions = await suggestCommands(original, cwd, 8);
+  if (suggestions.length === 0) return null;
+
+  const originalNorm = normalizeComparableCommand(original);
+  const ranked = suggestions
+    .filter((item) => normalizeComparableCommand(item.command) !== originalNorm)
+    .map((item) => {
+      const similarity = commandSimilarity(original, item.command);
+      const executableBoost = firstTokenSimilarity(original, item.command) * 0.22;
+      const scoreConfidence = Math.min(1, item.score / 140) * 0.35;
+      const confidence = Math.min(1, similarity * 0.43 + executableBoost + scoreConfidence);
+      return { ...item, confidence };
+    })
+    .sort((a, b) => b.confidence - a.confidence || b.score - a.score);
+
+  const best = ranked[0];
+  if (!best) return null;
+  return best.confidence >= 0.52 || best.score >= 110 ? best : null;
 }
 
 export async function readlineCommandCompleter(line: string): Promise<[string[], string]> {
@@ -427,11 +469,17 @@ function scoreText(text: string, query: string): number {
   if (tokens.length === 0) return 0;
   let score = 0;
   for (const token of tokens) {
-    if (lower.startsWith(token)) score += 24;
-    else if (lower.includes(token)) score += 14;
+    if (new RegExp(`(^|[^a-z0-9])${escapeRegex(token)}($|[^a-z0-9])`, 'i').test(lower)) score += 34;
+    else if (new RegExp(`(^|[^a-z0-9])${escapeRegex(token)}`, 'i').test(lower)) score += 24;
+    else if (lower.startsWith(token)) score += 18;
+    else if (lower.includes(token)) score += 8;
     else score += fuzzyTokenScore(lower, token);
   }
   return score >= Math.max(14, Math.min(40, tokens.length * 10)) ? score : 0;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function inferDomain(query: string): Domain | null {
@@ -451,8 +499,26 @@ function inferDomain(query: string): Domain | null {
 function expandQuery(query: string): string {
   const tokens = query.split(/\s+/).filter(Boolean);
   const additions: string[] = [];
+  const knownTerms = getKnownQueryTerms();
   for (const token of tokens) {
-    additions.push(...(QUERY_ALIASES[token] || []));
+    const directAliases = QUERY_ALIASES[token] || [];
+    additions.push(...directAliases);
+    if (directAliases.length === 0) {
+      for (const [alias, values] of Object.entries(QUERY_ALIASES)) {
+        if (alias !== token && stringSimilarity(token, alias) >= 0.67) {
+          additions.push(alias, ...values);
+        }
+      }
+    }
+    if (token.length >= 3 && directAliases.length === 0) {
+      const nearTerms = knownTerms
+        .map((term) => ({ term, similarity: stringSimilarity(token, term) }))
+        .filter((item) => item.term !== token && item.similarity >= typoSimilarityThreshold(token))
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, 3)
+        .map((item) => item.term);
+      additions.push(...nearTerms);
+    }
   }
   const phraseAliases: Array<[RegExp, string]> = [
     [/\bsecret\s+scan\b/, 'gitleaks secrets security redact'],
@@ -467,6 +533,33 @@ function expandQuery(query: string): string {
     if (pattern.test(query)) additions.push(alias);
   }
   return [...tokens, ...additions.flatMap((item) => item.split(/\s+/))].join(' ');
+}
+
+function getKnownQueryTerms(): string[] {
+  if (cachedKnownTerms) return cachedKnownTerms;
+  const terms = new Set<string>();
+  for (const entry of ALL_SEED_COMMANDS) {
+    const text = `${entry.command} ${entry.domain} ${entry.tags.join(' ')} ${entry.description}`;
+    for (const token of text.toLowerCase().split(/[^a-z0-9.+#-]+/)) {
+      if (token.length >= 3 && token.length <= 24) terms.add(token);
+    }
+  }
+  for (const [alias, values] of Object.entries(QUERY_ALIASES)) {
+    if (alias.length >= 3) terms.add(alias);
+    for (const value of values) {
+      for (const token of value.toLowerCase().split(/[^a-z0-9.+#-]+/)) {
+        if (token.length >= 3 && token.length <= 24) terms.add(token);
+      }
+    }
+  }
+  cachedKnownTerms = [...terms];
+  return cachedKnownTerms;
+}
+
+function typoSimilarityThreshold(token: string): number {
+  if (token.length <= 4) return 0.74;
+  if (token.length <= 7) return 0.64;
+  return 0.62;
 }
 
 function fuzzyTokenScore(text: string, token: string): number {
@@ -489,6 +582,69 @@ function fuzzyTokenScore(text: string, token: string): number {
   return compactToken.length >= 4 ? Math.min(12, 4 + bestStreak * 2) : 0;
 }
 
+function normalizeComparableCommand(command: string): string {
+  return command.toLowerCase().replace(/\.(cmd|exe|ps1|sh)\b/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function firstTokenSimilarity(a: string, b: string): number {
+  return stringSimilarity(a.trim().split(/\s+/, 1)[0] || '', b.trim().split(/\s+/, 1)[0] || '');
+}
+
+function commandSimilarity(a: string, b: string): number {
+  const aTokens = normalizeComparableCommand(a).split(/\s+/).filter(Boolean);
+  const bTokens = normalizeComparableCommand(b).split(/\s+/).filter(Boolean);
+  if (!aTokens.length || !bTokens.length) return 0;
+
+  let total = 0;
+  for (const token of aTokens) {
+    total += Math.max(...bTokens.map((candidate) => stringSimilarity(token, candidate)));
+  }
+  const tokenSimilarity = total / aTokens.length;
+  const joinedSimilarity = stringSimilarity(aTokens.join(' '), bTokens.join(' '));
+  return tokenSimilarity * 0.65 + joinedSimilarity * 0.35;
+}
+
+function stringSimilarity(a: string, b: string): number {
+  const left = a.toLowerCase();
+  const right = b.toLowerCase();
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  if (right.includes(left) || left.includes(right)) return Math.min(left.length, right.length) / Math.max(left.length, right.length);
+  if (isSingleAdjacentTransposition(left, right)) return 0.9;
+
+  const distance = levenshtein(left, right);
+  return Math.max(0, 1 - distance / Math.max(left.length, right.length));
+}
+
+function isSingleAdjacentTransposition(a: string, b: string): boolean {
+  if (a.length !== b.length || a.length < 2) return false;
+  const diffs: number[] = [];
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) diffs.push(i);
+  }
+  return diffs.length === 2
+    && diffs[1] === diffs[0] + 1
+    && a[diffs[0]] === b[diffs[1]]
+    && a[diffs[1]] === b[diffs[0]];
+}
+
+function levenshtein(a: string, b: string): number {
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  const curr = new Array<number>(b.length + 1);
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+    prev.splice(0, prev.length, ...curr);
+  }
+  return prev[b.length];
+}
+
 async function projectCommandKnowledge(cwd: string): Promise<CommandKnowledge[]> {
   const [pkg, manager, files, localBins] = await Promise.all([
     readJson(path.join(cwd, 'package.json')),
@@ -505,11 +661,25 @@ async function projectCommandKnowledge(cwd: string): Promise<CommandKnowledge[]>
   const scripts = pkg?.scripts && typeof pkg.scripts === 'object' ? pkg.scripts as Record<string, string> : {};
   for (const [name, body] of Object.entries(scripts)) {
     add(`${runPrefix} ${name}`, [name, ...scriptTags(name, body)], `package script: ${name}`);
+    const short = packageScriptShortcut(manager, name);
+    if (short) add(short, [name, ...scriptTags(name, body)], `package shortcut: ${name}`);
   }
 
   if (pkg) {
+    const deps = dependencyNames(pkg);
     add(projectInstallCommand(manager), ['install', 'dependencies', 'deps'], `install dependencies with ${manager}`);
     if (!scripts.test) add(manager === 'npm' ? 'npm test' : `${runPrefix} test`, ['test'], 'default project test command');
+    if (deps.has('typescript')) {
+      const tsconfig = files.includes('config/tsconfig.json') ? 'config/tsconfig.json' : files.includes('tsconfig.json') ? 'tsconfig.json' : '';
+      add(tsconfig ? `npx tsc -p ${tsconfig} --noEmit` : 'npx tsc --noEmit', ['typescript', 'typecheck', 'tsc'], 'project TypeScript type-check');
+    }
+    if (deps.has('eslint')) add('npx eslint .', ['eslint', 'lint', 'javascript'], 'project ESLint lint');
+    if (deps.has('prettier')) add('npx prettier . --check', ['prettier', 'format', 'check'], 'project Prettier check');
+    if (deps.has('vitest')) add('npx vitest run', ['vitest', 'test'], 'project Vitest tests');
+    if (deps.has('jest')) add('npx jest --runInBand', ['jest', 'test'], 'project Jest tests');
+    if (deps.has('@playwright/test')) add('npx playwright test', ['playwright', 'e2e', 'browser', 'test'], 'project Playwright tests');
+    if (deps.has('ts-node')) add('npx ts-node --esm src/index.ts', ['typescript', 'dev', 'run'], 'run project TypeScript entry with ts-node');
+    if (deps.has('commander')) add('node dist/index.js --help', ['cli', 'help', 'dist'], 'run built CLI help');
   }
 
   if (files.includes('Dockerfile')) add('docker build -t local-app .', ['docker', 'build', 'image'], 'project Dockerfile build', 'devops');
@@ -555,6 +725,7 @@ async function detectProjectManager(cwd: string): Promise<string> {
 async function nearbyProjectFiles(cwd: string): Promise<string[]> {
   const names = [
     'package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb',
+    'tsconfig.json', 'config/tsconfig.json',
     'pyproject.toml', 'requirements.txt', 'poetry.lock', 'uv.lock',
     'Cargo.toml', 'go.mod', 'composer.json', 'artisan',
     'Dockerfile', 'docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml',
@@ -579,6 +750,21 @@ function projectInstallCommand(manager: string): string {
   if (manager === 'yarn') return 'yarn install';
   if (manager === 'bun') return 'bun install';
   return 'npm install';
+}
+
+function packageScriptShortcut(manager: string, name: string): string | null {
+  if (manager !== 'npm') return null;
+  if (['test', 'start', 'stop', 'restart'].includes(name)) return `npm ${name}`;
+  return null;
+}
+
+function dependencyNames(pkg: any): Set<string> {
+  return new Set(Object.keys({
+    ...(pkg?.dependencies || {}),
+    ...(pkg?.devDependencies || {}),
+    ...(pkg?.optionalDependencies || {}),
+    ...(pkg?.peerDependencies || {}),
+  }));
 }
 
 function scriptTags(name: string, body: string): string[] {

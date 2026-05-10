@@ -33,7 +33,7 @@ import { DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS } from './assistant-output-cap.js'
 import { ttyResetBeforeReplPrompt } from './tty-repl-cue.js';
 import { maybePromptCliUpdate } from './cli-update-check.js';
 import { startYamxWebServer } from './web/server.js';
-import { ensureCommandIntelligenceDatabase, suggestCommands, type CommandSuggestion } from './command-intelligence.js';
+import { ensureCommandIntelligenceDatabase, suggestCommandFix, suggestCommands, type CommandSuggestion } from './command-intelligence.js';
 
 dotenv.config({ quiet: true });
 
@@ -789,20 +789,23 @@ async function createInputSession(): Promise<{
     stdout.write('\r\x1b[J');
   }
 
-  function renderPrompt(prompt: string, buffer: string, suggestions: CommandSuggestion[], selectedIndex: number): number {
+  function renderPrompt(prompt: string, buffer: string, cursor: number, suggestions: CommandSuggestion[], selectedIndex: number, selectionActive: boolean): number {
     const visible = suggestions.slice(0, 7);
     stdout.write('\r\x1b[0J\x1b[2K');
     stdout.write(`${prompt}${buffer}`);
-    if (visible.length === 0) return 0;
+    if (visible.length === 0) {
+      stdout.write(`\x1b[${stripAnsi(prompt).length + cursor + 1}G`);
+      return 0;
+    }
 
     stdout.write('\n');
     visible.forEach((item, index) => {
       const source = item.source === 'memory' ? 'memory' : item.reason;
       const line = `  ${item.command}  (${source})`;
-      stdout.write(index === selectedIndex ? chalk.inverse(line) + '\n' : chalk.dim(line) + '\n');
+      stdout.write(selectionActive && index === selectedIndex ? chalk.inverse(line) + '\n' : chalk.dim(line) + '\n');
     });
     stdout.write(`\x1b[${visible.length + 1}A`);
-    stdout.write(`\x1b[${stripAnsi(prompt).length + buffer.length + 1}G`);
+    stdout.write(`\x1b[${stripAnsi(prompt).length + cursor + 1}G`);
     return visible.length + 1;
   }
 
@@ -813,8 +816,10 @@ async function createInputSession(): Promise<{
       stdin.setRawMode(true);
 
       let buffer = '';
+      let cursor = 0;
       let suggestions: CommandSuggestion[] = [];
       let selectedIndex = 0;
+      let selectionActive = false;
       let acceptedSuggestionPrefix = '';
       let historyIndex = history.length;
       let refreshSeq = 0;
@@ -826,7 +831,13 @@ async function createInputSession(): Promise<{
 
       const redraw = () => {
         clearDropdown(renderedRows);
-        renderedRows = renderPrompt(prompt, buffer, suggestions, selectedIndex);
+        renderedRows = renderPrompt(prompt, buffer, cursor, suggestions, selectedIndex, selectionActive);
+      };
+
+      const markEdit = () => {
+        if (acceptedSuggestionPrefix && cursor <= acceptedSuggestionPrefix.length) {
+          acceptedSuggestionPrefix = '';
+        }
       };
 
       const refreshSuggestions = () => {
@@ -834,6 +845,7 @@ async function createInputSession(): Promise<{
         if (acceptedSuggestionPrefix && buffer.startsWith(acceptedSuggestionPrefix)) {
           suggestions = [];
           selectedIndex = 0;
+          selectionActive = false;
           redraw();
           return;
         }
@@ -843,6 +855,7 @@ async function createInputSession(): Promise<{
         if (buffer.trim().length < 3) {
           suggestions = [];
           selectedIndex = 0;
+          selectionActive = false;
           redraw();
           return;
         }
@@ -851,12 +864,14 @@ async function createInputSession(): Promise<{
             if (seq !== refreshSeq || closed) return;
             suggestions = next;
             selectedIndex = Math.min(selectedIndex, Math.max(0, suggestions.length - 1));
+            selectionActive = false;
             redraw();
           })
           .catch(() => {
             if (seq !== refreshSeq || closed) return;
             suggestions = [];
             selectedIndex = 0;
+            selectionActive = false;
             redraw();
           });
       };
@@ -876,11 +891,13 @@ async function createInputSession(): Promise<{
           return;
         }
         if (key?.name === 'return' || key?.name === 'enter') {
-          if (suggestions[selectedIndex]) {
+          if (selectionActive && suggestions[selectedIndex]) {
             buffer = suggestions[selectedIndex].command;
+            cursor = buffer.length;
             acceptedSuggestionPrefix = buffer;
             suggestions = [];
             selectedIndex = 0;
+            selectionActive = false;
             redraw();
             return;
           }
@@ -888,7 +905,20 @@ async function createInputSession(): Promise<{
           return;
         }
         if (key?.name === 'backspace') {
-          buffer = buffer.slice(0, -1);
+          if (cursor <= 0) return;
+          markEdit();
+          buffer = buffer.slice(0, cursor - 1) + buffer.slice(cursor);
+          cursor--;
+          selectionActive = false;
+          historyIndex = history.length;
+          refreshSuggestions();
+          return;
+        }
+        if (key?.name === 'delete') {
+          if (cursor >= buffer.length) return;
+          markEdit();
+          buffer = buffer.slice(0, cursor) + buffer.slice(cursor + 1);
+          selectionActive = false;
           historyIndex = history.length;
           refreshSuggestions();
           return;
@@ -896,20 +926,26 @@ async function createInputSession(): Promise<{
         if (key?.name === 'tab') {
           if (suggestions[selectedIndex]) {
             buffer = suggestions[selectedIndex].command;
+            cursor = buffer.length;
             acceptedSuggestionPrefix = buffer;
             suggestions = [];
             selectedIndex = 0;
+            selectionActive = false;
             redraw();
           }
           return;
         }
         if (key?.name === 'up') {
           if (suggestions.length > 0) {
-            selectedIndex = selectedIndex <= 0 ? suggestions.length - 1 : selectedIndex - 1;
+            selectedIndex = selectionActive
+              ? (selectedIndex <= 0 ? suggestions.length - 1 : selectedIndex - 1)
+              : 0;
+            selectionActive = true;
             redraw();
           } else if (history.length > 0) {
             historyIndex = Math.max(0, historyIndex - 1);
             buffer = history[historyIndex] || buffer;
+            cursor = buffer.length;
             acceptedSuggestionPrefix = '';
             refreshSuggestions();
           }
@@ -917,19 +953,57 @@ async function createInputSession(): Promise<{
         }
         if (key?.name === 'down') {
           if (suggestions.length > 0) {
-            selectedIndex = (selectedIndex + 1) % suggestions.length;
+            selectedIndex = selectionActive ? (selectedIndex + 1) % suggestions.length : 0;
+            selectionActive = true;
             redraw();
           } else if (history.length > 0) {
             historyIndex = Math.min(history.length, historyIndex + 1);
             buffer = historyIndex >= history.length ? '' : history[historyIndex];
+            cursor = buffer.length;
             acceptedSuggestionPrefix = '';
             refreshSuggestions();
           }
           return;
         }
-        if (key?.name === 'escape' || key?.name === 'left' || key?.name === 'right') return;
+        if (key?.name === 'left') {
+          cursor = Math.max(0, cursor - 1);
+          selectionActive = false;
+          redraw();
+          return;
+        }
+        if (key?.name === 'right') {
+          cursor = Math.min(buffer.length, cursor + 1);
+          selectionActive = false;
+          redraw();
+          return;
+        }
+        if (key?.name === 'home' || (key?.ctrl && key?.name === 'a')) {
+          cursor = 0;
+          selectionActive = false;
+          redraw();
+          return;
+        }
+        if (key?.name === 'end' || (key?.ctrl && key?.name === 'e')) {
+          cursor = buffer.length;
+          selectionActive = false;
+          redraw();
+          return;
+        }
+        if (key?.ctrl && key?.name === 'u') {
+          buffer = buffer.slice(cursor);
+          cursor = 0;
+          acceptedSuggestionPrefix = '';
+          selectionActive = false;
+          historyIndex = history.length;
+          refreshSuggestions();
+          return;
+        }
+        if (key?.name === 'escape') return;
         if (typeof str === 'string' && str >= ' ' && !str.includes('\r') && !str.includes('\n')) {
-          buffer += str;
+          markEdit();
+          buffer = buffer.slice(0, cursor) + str + buffer.slice(cursor);
+          cursor += str.length;
+          selectionActive = false;
           historyIndex = history.length;
           refreshSuggestions();
         }
@@ -989,20 +1063,58 @@ async function executeDirectCommand(
   ui.cueTTYAfterBulkOutput();
 
   if (diagnoseOnFailure && isDirectShellFailure(result)) {
-    ui.neuralStatus('recover', 'direct shell command failed; asking agent to diagnose and continue');
+    const offlineFix = await suggestCommandFix(command).catch(() => null);
+    if (offlineFix && offlineFix.command !== command && !(runCommand.isDangerous?.({ command: offlineFix.command }) ?? false)) {
+      ui.info(`Offline command intelligence suggests: ${offlineFix.command}`);
+      ui.toolCall('run_command', { command: offlineFix.command });
+      const fixStarted = Date.now();
+      const fixedResult = await runCommand.execute({ command: offlineFix.command });
+      ui.toolResult('run_command', fixedResult, Date.now() - fixStarted);
+      ui.cueTTYAfterBulkOutput();
+      if (!isDirectShellFailure(fixedResult)) return;
+
+      await askAgentToRecoverFromDirectShellFailure(agent, command, result, offlineFix.command, fixedResult);
+      return;
+    }
+
+    await askAgentToRecoverFromDirectShellFailure(agent, command, result);
+  }
+}
+
+async function askAgentToRecoverFromDirectShellFailure(
+  agent: Agent,
+  command: string,
+  result: string,
+  offlineFixCommand?: string,
+  offlineFixResult?: string
+): Promise<void> {
+  const ui = agent.getUI();
+  ui.neuralStatus('recover', offlineFixCommand
+    ? 'offline correction also failed; asking agent to diagnose and continue'
+    : 'direct shell command failed; asking agent to diagnose and continue');
     await agent.chat([
       '<yamx_direct_shell_failure>',
       `command=${command}`,
       `cwd=${process.cwd()}`,
       'The user ran this as a direct YamX shell command. It failed.',
+      offlineFixCommand
+        ? `YamX already tried the best offline command-intelligence correction: ${offlineFixCommand}`
+        : 'YamX did not find a confident offline correction.',
       'Diagnose the failure from the output, then take the smallest useful next action inside YamX.',
+      'Prefer project-local commands, package scripts, and existing local command intelligence. If the needed command is not present locally, propose or run the correct new command according to policy.',
       'If a fix is safe and local, apply it and rerun the narrow verification. If the next action is destructive, privileged, or network/install related, respect tool approval policy.',
       '',
-      'Output:',
+      'Original output:',
       result.slice(0, 24_000),
+      ...(offlineFixCommand && offlineFixResult
+        ? [
+            '',
+            'Offline correction output:',
+            offlineFixResult.slice(0, 24_000),
+          ]
+        : []),
       '</yamx_direct_shell_failure>',
     ].join('\n'));
-  }
 }
 
 function isDirectShellFailure(result: string): boolean {

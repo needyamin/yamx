@@ -10,6 +10,7 @@ import chalk from 'chalk';
 import dotenv from 'dotenv';
 import fs from 'fs-extra';
 import readline from 'node:readline/promises';
+import { emitKeypressEvents } from 'node:readline';
 import os from 'node:os';
 import nodePath from 'node:path';
 import { createRequire } from 'node:module';
@@ -32,8 +33,9 @@ import { DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS } from './assistant-output-cap.js'
 import { ttyResetBeforeReplPrompt } from './tty-repl-cue.js';
 import { maybePromptCliUpdate } from './cli-update-check.js';
 import { startYamxWebServer } from './web/server.js';
+import { ensureCommandIntelligenceDatabase, suggestCommands, type CommandSuggestion } from './command-intelligence.js';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version?: string };
@@ -639,15 +641,35 @@ program.action(async (options) => {
     id: currentSession.id,
   }, getToolCount(), VERSION, councilOn);
 
+  const intelligencePath = await ensureCommandIntelligenceDatabase();
+
   if (currentSession.messages.length === 1) {
-    console.log(chalk.dim('  /help — slash commands | history or /history [n] — ~/.yamx/history\n'));
+    console.log(chalk.dim('  /help — slash commands | history or /history [n] — ~/.yamx/history'));
+    console.log(chalk.dim(`  Live command suggestions from ${nodePath.relative(process.cwd(), intelligencePath) || intelligencePath} after 3 chars\n`));
   } else {
     console.log(); // Just a spacer if resuming chat
   }
 
   const inputSession = await createInputSession();
+  let activeWork = false;
+  let lastStopRequestAt = 0;
 
   process.on('SIGINT', async () => {
+    if (activeWork) {
+      inputSession.clearPrompt?.();
+      const now = Date.now();
+      if (agent.isStopRequested() && now - lastStopRequestAt < 1600) {
+        console.log(chalk.dim('\nForce exit requested. Saving...'));
+        await saveToDisk().catch(() => undefined);
+        inputSession.close();
+        process.exit(130);
+      }
+      lastStopRequestAt = now;
+      agent.requestStop();
+      console.log(chalk.dim('\nPress Ctrl+C again quickly to force exit.'));
+      return;
+    }
+
     try {
       await saveToDisk();
       inputSession.close();
@@ -673,8 +695,13 @@ program.action(async (options) => {
     }
 
     if (input.startsWith('/')) {
-      await handleCommand(input, agent, provider, { store, session: currentSession, agent }, cfg, executeDirectCommand);
-      agent.getUI().cueTTYAfterBulkOutput();
+      activeWork = true;
+      try {
+        await handleCommand(input, agent, provider, { store, session: currentSession, agent }, cfg, executeDirectCommand);
+        agent.getUI().cueTTYAfterBulkOutput();
+      } finally {
+        activeWork = false;
+      }
       continue;
     }
 
@@ -688,17 +715,25 @@ program.action(async (options) => {
 
     const directCommand = parseDirectCommand(input);
     if (directCommand) {
-      await executeDirectCommand(directCommand, agent, options.autoApprove || cfg.settings?.autoApprove || false, true);
+      activeWork = true;
+      try {
+        await executeDirectCommand(directCommand, agent, options.autoApprove || cfg.settings?.autoApprove || false, true);
+      } finally {
+        activeWork = false;
+      }
       continue;
     }
 
     try {
+      activeWork = true;
       const agentInput = shouldAttachProjectIntel(input)
         ? await buildAgentInputWithProjectIntel(input)
         : input;
       await agent.chat(agentInput);
     } catch (error: any) {
       agent.getUI().error(`Fatal error: ${error.message}`);
+    } finally {
+      activeWork = false;
     }
   }
 });
@@ -706,6 +741,7 @@ program.action(async (options) => {
 async function createInputSession(): Promise<{
   question(prompt: string): Promise<string>;
   save(line: string): Promise<void>;
+  clearPrompt?: () => void;
   close(): void;
 }> {
   const historyPath = REPL_HISTORY_PATH;
@@ -714,33 +750,210 @@ async function createInputSession(): Promise<{
     .then((s) => s.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))
     .catch(() => [] as string[]);
 
-  const rl = readline.createInterface({
-    input: stdin,
-    output: stdout,
-    terminal: true,
-    historySize: 500,
-    removeHistoryDuplicates: true,
-  });
-
-  // readline keeps the newest entry first internally.
-  (rl as any).history = [...history].reverse();
-
   async function save(line: string): Promise<void> {
     const existing = await fs.readFile(historyPath, 'utf-8')
       .then((s) => s.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))
       .catch(() => [] as string[]);
     const next = [...existing.filter((item) => item !== line), line].slice(-500);
     await fs.writeFile(historyPath, `${next.join('\n')}\n`, 'utf-8');
+    history.splice(0, history.length, ...next);
+  }
+
+  if (!stdin.isTTY || !stdout.isTTY) {
+    const rl = readline.createInterface({
+      input: stdin,
+      output: stdout,
+      terminal: true,
+      historySize: 500,
+      removeHistoryDuplicates: true,
+    });
+
+    // readline keeps the newest entry first internally.
+    (rl as any).history = [...history].reverse();
+
+    return {
+      question: async (prompt: string) => {
+        ttyResetBeforeReplPrompt();
+        return rl.question(prompt);
+      },
+      save,
+      close: () => rl.close(),
+    };
+  }
+
+  let closed = false;
+  let renderedRows = 0;
+
+  function clearDropdown(rows: number): void {
+    if (rows <= 0) return;
+    stdout.write('\r\x1b[J');
+  }
+
+  function renderPrompt(prompt: string, buffer: string, suggestions: CommandSuggestion[], selectedIndex: number): number {
+    const visible = suggestions.slice(0, 7);
+    stdout.write('\r\x1b[0J\x1b[2K');
+    stdout.write(`${prompt}${buffer}`);
+    if (visible.length === 0) return 0;
+
+    stdout.write('\n');
+    visible.forEach((item, index) => {
+      const source = item.source === 'memory' ? 'memory' : item.reason;
+      const line = `  ${item.command}  (${source})`;
+      stdout.write(index === selectedIndex ? chalk.inverse(line) + '\n' : chalk.dim(line) + '\n');
+    });
+    stdout.write(`\x1b[${visible.length + 1}A`);
+    stdout.write(`\x1b[${stripAnsi(prompt).length + buffer.length + 1}G`);
+    return visible.length + 1;
   }
 
   return {
-    question: async (prompt: string) => {
+    question: (prompt: string) => new Promise<string>((resolve, reject) => {
       ttyResetBeforeReplPrompt();
-      return rl.question(prompt);
-    },
+      emitKeypressEvents(stdin);
+      stdin.setRawMode(true);
+
+      let buffer = '';
+      let suggestions: CommandSuggestion[] = [];
+      let selectedIndex = 0;
+      let acceptedSuggestionPrefix = '';
+      let historyIndex = history.length;
+      let refreshSeq = 0;
+
+      const cleanup = () => {
+        stdin.off('keypress', onKeypress);
+        stdin.setRawMode(false);
+      };
+
+      const redraw = () => {
+        clearDropdown(renderedRows);
+        renderedRows = renderPrompt(prompt, buffer, suggestions, selectedIndex);
+      };
+
+      const refreshSuggestions = () => {
+        const seq = ++refreshSeq;
+        if (acceptedSuggestionPrefix && buffer.startsWith(acceptedSuggestionPrefix)) {
+          suggestions = [];
+          selectedIndex = 0;
+          redraw();
+          return;
+        }
+        if (acceptedSuggestionPrefix && !buffer.startsWith(acceptedSuggestionPrefix)) {
+          acceptedSuggestionPrefix = '';
+        }
+        if (buffer.trim().length < 3) {
+          suggestions = [];
+          selectedIndex = 0;
+          redraw();
+          return;
+        }
+        suggestCommands(buffer, process.cwd(), 7)
+          .then((next) => {
+            if (seq !== refreshSeq || closed) return;
+            suggestions = next;
+            selectedIndex = Math.min(selectedIndex, Math.max(0, suggestions.length - 1));
+            redraw();
+          })
+          .catch(() => {
+            if (seq !== refreshSeq || closed) return;
+            suggestions = [];
+            selectedIndex = 0;
+            redraw();
+          });
+      };
+
+      const finish = (value: string) => {
+        clearDropdown(renderedRows);
+        stdout.write('\r\x1b[2K');
+        stdout.write(`${prompt}${value}\n`);
+        cleanup();
+        resolve(value);
+      };
+
+      const onKeypress = (str: string, key: any) => {
+        if (key?.ctrl && key?.name === 'c') {
+          cleanup();
+          reject(new Error('interrupted'));
+          return;
+        }
+        if (key?.name === 'return' || key?.name === 'enter') {
+          if (suggestions[selectedIndex]) {
+            buffer = suggestions[selectedIndex].command;
+            acceptedSuggestionPrefix = buffer;
+            suggestions = [];
+            selectedIndex = 0;
+            redraw();
+            return;
+          }
+          finish(buffer);
+          return;
+        }
+        if (key?.name === 'backspace') {
+          buffer = buffer.slice(0, -1);
+          historyIndex = history.length;
+          refreshSuggestions();
+          return;
+        }
+        if (key?.name === 'tab') {
+          if (suggestions[selectedIndex]) {
+            buffer = suggestions[selectedIndex].command;
+            acceptedSuggestionPrefix = buffer;
+            suggestions = [];
+            selectedIndex = 0;
+            redraw();
+          }
+          return;
+        }
+        if (key?.name === 'up') {
+          if (suggestions.length > 0) {
+            selectedIndex = selectedIndex <= 0 ? suggestions.length - 1 : selectedIndex - 1;
+            redraw();
+          } else if (history.length > 0) {
+            historyIndex = Math.max(0, historyIndex - 1);
+            buffer = history[historyIndex] || buffer;
+            acceptedSuggestionPrefix = '';
+            refreshSuggestions();
+          }
+          return;
+        }
+        if (key?.name === 'down') {
+          if (suggestions.length > 0) {
+            selectedIndex = (selectedIndex + 1) % suggestions.length;
+            redraw();
+          } else if (history.length > 0) {
+            historyIndex = Math.min(history.length, historyIndex + 1);
+            buffer = historyIndex >= history.length ? '' : history[historyIndex];
+            acceptedSuggestionPrefix = '';
+            refreshSuggestions();
+          }
+          return;
+        }
+        if (key?.name === 'escape' || key?.name === 'left' || key?.name === 'right') return;
+        if (typeof str === 'string' && str >= ' ' && !str.includes('\r') && !str.includes('\n')) {
+          buffer += str;
+          historyIndex = history.length;
+          refreshSuggestions();
+        }
+      };
+
+      stdin.on('keypress', onKeypress);
+      redraw();
+    }),
     save,
-    close: () => rl.close(),
+    close: () => {
+      closed = true;
+      clearDropdown(renderedRows);
+      if (stdin.isTTY) stdin.setRawMode(false);
+    },
+    clearPrompt: () => {
+      clearDropdown(renderedRows);
+      stdout.write('\r\x1b[2K');
+      renderedRows = 0;
+    },
   };
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, '');
 }
 
 async function executeDirectCommand(

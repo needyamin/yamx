@@ -274,6 +274,7 @@ export class UI {
       ['Session', [
         ['/clear', 'Clear chat history'],
         ['/compact', 'Compress old context'],
+        ['/stop', 'Request stop/cancel for active work'],
         ['/history [n]', 'Numbered YamX prompts (~/.yamx/history); last n lines'],
         ['/exit', 'Save and quit'],
       ]],

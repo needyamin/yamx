@@ -87,6 +87,16 @@ export async function formatCommandMemoryForPrompt(cwd: string, limit = 14): Pro
   }).join('\n');
 }
 
+export async function getCommandMemoryRecords(cwd: string, limit = 80): Promise<CommandRecord[]> {
+  const file = await readMemoryFile();
+  const records = file.projects[PROJECT_ROOT] || [];
+  if (records.length === 0) return [];
+
+  const rel = relativeProjectPath(cwd);
+  const focused = records.filter((record) => record.cwd === rel || record.cwd === '.');
+  return (focused.length ? focused : records).slice(0, limit);
+}
+
 async function readMemoryFile(): Promise<CommandMemoryFile> {
   try {
     const data = await fs.readJSON(MEMORY_PATH);

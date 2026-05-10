@@ -53,6 +53,15 @@ export async function handleCommand(
     case '/compact':
       await agent.compact();
       break;
+    case '/stop':
+    case '/cancel':
+      if (agent.isStopRequested()) {
+        ui.warn('A stop request is already pending.');
+      } else {
+        agent.requestStop();
+        ui.info('Stop requested for the active YamX turn. During active work, Ctrl+C is the fastest way to stop.');
+      }
+      break;
     case '/undo':
       await agent.undo();
       break;

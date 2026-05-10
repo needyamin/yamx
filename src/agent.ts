@@ -27,6 +27,13 @@ const MAX_TOOL_ITERATIONS = 40; // Safety: prevent infinite loops
 const MAX_RETRIES = 3; // Retry on transient API failures
 const RETRY_DELAYS = [1000, 3000, 8000]; // Exponential backoff (ms)
 
+class AgentStopRequested extends Error {
+  constructor() {
+    super('Stopped by user.');
+    this.name = 'AgentStopRequested';
+  }
+}
+
 export interface AgentOptions {
   autoApprove?: boolean;
   stream?: boolean;
@@ -71,13 +78,17 @@ export class Agent {
   private turnStartTime = 0;
   private toolCallCounts = new Map<string, number>();
   private hooks = new HookManager();
+  private stopRequested = false;
+  private stopWaiters = new Set<() => void>();
 
   /** Retry wrapper for API calls */
   private async withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      this.throwIfStopped();
       try {
-        return await fn();
+        return await this.cancellable(fn());
       } catch (error: any) {
+        if (error instanceof AgentStopRequested) throw error;
         const isRetryable =
           error.status === 429 ||
           error.status === 500 ||
@@ -93,13 +104,44 @@ export class Agent {
         if (isRetryable && attempt < MAX_RETRIES - 1) {
           const delay = RETRY_DELAYS[attempt];
           this.ui.warn(`${label} failed (${error.message}). Retrying in ${delay / 1000}s… (${attempt + 1}/${MAX_RETRIES})`);
-          await new Promise(r => setTimeout(r, delay));
+          await this.cancellable(new Promise(r => setTimeout(r, delay)));
           continue;
         }
         throw error;
       }
     }
     throw new Error('Max retries exceeded');
+  }
+
+  requestStop(): void {
+    if (this.stopRequested) return;
+    this.stopRequested = true;
+    this.ui.stopSpinner();
+    this.ui.cancelAssistantMarkdownStream();
+    this.ui.warn('Stop requested. Finishing the current safe boundary...');
+    for (const waiter of [...this.stopWaiters]) waiter();
+  }
+
+  isStopRequested(): boolean {
+    return this.stopRequested;
+  }
+
+  private throwIfStopped(): void {
+    if (this.stopRequested) throw new AgentStopRequested();
+  }
+
+  private cancellable<T>(promise: Promise<T>): Promise<T> {
+    if (this.stopRequested) return Promise.reject(new AgentStopRequested());
+
+    let waiter: (() => void) | null = null;
+    const stopPromise = new Promise<T>((_, reject) => {
+      waiter = () => reject(new AgentStopRequested());
+      this.stopWaiters.add(waiter);
+    });
+
+    return Promise.race([promise, stopPromise]).finally(() => {
+      if (waiter) this.stopWaiters.delete(waiter);
+    });
   }
 
   constructor(provider: Provider, systemPrompt: string, options: AgentOptions = {}) {
@@ -217,13 +259,16 @@ export class Agent {
 
   /** Main chat entry point */
   async chat(userInput: string): Promise<void> {
+    this.stopRequested = false;
     try {
       await this.ensureContextBudget();
+      this.throwIfStopped();
       const latestIntent = classifyUserIntent(userInput);
       this.history.push({ role: 'user', content: userInput });
       this.history.push({ role: 'user', content: buildCurrentIntentMessage(latestIntent) });
 
       if (this.options.preflightRuntimeProbes !== false && latestIntent.kind !== 'conversation') {
+        this.throwIfStopped();
         const preflightBlob = await maybeRuntimePreflightMessage(userInput);
         if (preflightBlob) {
           this.ui.neuralStatus('preflight', 'attached read-only local probes to context');
@@ -241,10 +286,12 @@ export class Agent {
       let iterations = 0;
 
       while (iterations < MAX_TOOL_ITERATIONS) {
+        this.throwIfStopped();
         iterations++;
 
         if (this.options.stream) {
           const result = await this.streamResponse();
+          this.throwIfStopped();
           if (!result.tool_calls || result.tool_calls.length === 0) {
             break; // No more tools, done
           }
@@ -254,6 +301,7 @@ export class Agent {
           if (!shouldContinue) break;
         } else {
           const result = await this.completeResponse();
+          this.throwIfStopped();
           if (!result.tool_calls || result.tool_calls.length === 0) {
             break;
           }
@@ -273,12 +321,26 @@ export class Agent {
       }
 
       await Promise.resolve(this.options.onPersist?.());
+    } catch (error: any) {
+      if (error instanceof AgentStopRequested) {
+        this.history.push({
+          role: 'assistant',
+          content: '[Stopped by user before the turn completed.]',
+        });
+        this.ui.warn('Stopped current YamX turn.');
+        await Promise.resolve(this.options.onPersist?.());
+        return;
+      }
+      throw error;
     } finally {
+      this.stopRequested = false;
+      this.stopWaiters.clear();
       this.ui.cueTTYAfterBulkOutput();
     }
   }
 
   private async runModelCouncil(userInput: string, intentKind = classifyUserIntent(userInput).kind): Promise<void> {
+    this.throwIfStopped();
     if (this.options.modelCouncilEnabled === false || this.options.modelCouncilMode === 'off') return;
     if (intentKind === 'conversation' || intentKind === 'empty') {
       this.ui.neuralStatus('council', 'skipped council for non-task turn');
@@ -335,6 +397,7 @@ export class Agent {
           }),
         'Model council'
       );
+      this.throwIfStopped();
 
       this.ui.stopSpinner();
       if (result.usage) {
@@ -350,6 +413,7 @@ export class Agent {
       });
     } catch (error: any) {
       this.ui.stopSpinner();
+      if (error instanceof AgentStopRequested) throw error;
       this.ui.warn(`Model council skipped: ${error.message}`);
     }
   }
@@ -362,6 +426,7 @@ export class Agent {
 
   /** Non-streaming completion */
   private async completeResponse(): Promise<CompletionResult> {
+    this.throwIfStopped();
     this.ui.neuralStatus('model', 'sending context and tools to provider');
     this.ui.startThinking('Calling model API…');
 
@@ -372,6 +437,7 @@ export class Agent {
         maxTokens: this.options.maxTokens,
         temperature: this.options.temperature,
       }), 'API call');
+      this.throwIfStopped();
 
       this.ui.stopSpinner();
 
@@ -410,6 +476,7 @@ export class Agent {
       return result;
     } catch (error: any) {
       this.ui.stopSpinner();
+      if (error instanceof AgentStopRequested) throw error;
       this.ui.apiFailure('complete', error);
       return { content: null };
     }
@@ -417,6 +484,7 @@ export class Agent {
 
   /** Streaming completion with accumulated markdown rendering */
   private async streamResponse(): Promise<CompletionResult> {
+    this.throwIfStopped();
     this.ui.neuralStatus('model', 'streaming provider response');
     this.ui.startThinking('Waiting for streamed reply…');
 
@@ -433,7 +501,14 @@ export class Agent {
         temperature: this.options.temperature,
       });
 
-      for await (const chunk of stream) {
+      while (true) {
+        const next = await this.cancellable(stream.next());
+        if (next.done) break;
+        const chunk = next.value;
+        if (this.stopRequested) {
+          await stream.return?.(undefined as any).catch?.(() => undefined);
+          throw new AgentStopRequested();
+        }
         switch (chunk.type) {
           case 'text':
             if (firstText) {
@@ -537,6 +612,7 @@ export class Agent {
     } catch (error: any) {
       this.ui.cancelAssistantMarkdownStream();
       this.ui.stopSpinner();
+      if (error instanceof AgentStopRequested) throw error;
       this.ui.apiFailure('stream', error);
       return { content: null };
     }
@@ -570,6 +646,7 @@ export class Agent {
 
   /** Ask the active model for one executable-first substitution; null if unsafe or unparseable. */
   private async resolvePseudoShellCommand(command: string): Promise<string | null> {
+    this.throwIfStopped();
     const platform = `${process.platform} ${process.arch}`;
     const osHint =
       process.platform === 'win32'
@@ -598,6 +675,7 @@ export class Agent {
 
     try {
       const result = await this.withRetry(() => this.provider.complete(opts), 'Shell intent');
+      this.throwIfStopped();
       const line = this.stripOneShellLineFromCompletion(result.content || '');
       if (!line) return null;
       if (line === command.trim()) return null;
@@ -611,6 +689,7 @@ export class Agent {
   /** Process tool calls with approval flow */
   private async processToolCalls(toolCalls: ToolCall[]): Promise<boolean> {
     for (const tc of toolCalls) {
+      this.throwIfStopped();
       const tool = getTool(tc.function.name);
       if (!tool) {
         this.ui.error(`Unknown tool: ${tc.function.name}`);
@@ -649,6 +728,7 @@ export class Agent {
         this.ui.startThinking('Finding a concrete shell command…');
         let normalized: string | null = null;
         try {
+          this.throwIfStopped();
           normalized = await this.resolvePseudoShellCommand(args.command.trim());
         } finally {
           this.ui.stopSpinner();
@@ -783,6 +863,7 @@ export class Agent {
         }
 
         const result = await tool.execute(args);
+        this.throwIfStopped();
         const duration = Date.now() - startTime;
         this.ui.toolResult(tc.function.name, result, duration);
 

@@ -156,6 +156,32 @@ test('command memory records shell outcomes for project intelligence', async () 
   assert.match(memory, /\[ok\]/);
 });
 
+test('command intelligence seeds local json and suggests offline commands', async () => {
+  const { commandIntelligencePath, ensureCommandIntelligenceDatabase, suggestCommands } = await import('../dist/command-intelligence.js');
+  await fs.unlink(commandIntelligencePath()).catch(() => {});
+
+  const dbPath = await ensureCommandIntelligenceDatabase();
+  const raw = JSON.parse(await fs.readFile(dbPath, 'utf8'));
+  assert.equal(raw.version, 1);
+  assert.ok(raw.commands.some((entry) => entry.command === 'docker compose config'));
+  assert.ok(raw.commands.some((entry) => entry.command === 'gitleaks detect --source .'));
+
+  const docker = await suggestCommands('docker comp', process.cwd(), 5);
+  assert.ok(docker.some((entry) => entry.command === 'docker compose config'));
+
+  const security = await suggestCommands('secret scan', process.cwd(), 5);
+  assert.ok(security.some((entry) => entry.command === 'gitleaks detect --source .'));
+
+  const k8s = await suggestCommands('k8s pods', process.cwd(), 5);
+  assert.ok(k8s.some((entry) => entry.command.includes('kubectl get pods')));
+
+  const project = await suggestCommands('typecheck', process.cwd(), 7);
+  assert.ok(project.some((entry) => entry.command === 'npm run build' || entry.command.includes('tsc')));
+
+  const fuzzy = await suggestCommands('dockr cmpse logs', process.cwd(), 7);
+  assert.ok(fuzzy.some((entry) => entry.command === 'docker compose logs --tail=100'));
+});
+
 test('direct command parser catches commands but not tasks', async () => {
   const { parseDirectCommand } = await import('../dist/direct-command.js');
   assert.equal(parseDirectCommand('whoami'), 'whoami');
@@ -371,6 +397,22 @@ test('agent runs hidden model council before final response', async () => {
   await agent.chat('fix the thing');
   assert.equal(calls, 2);
   assert.ok(agent.getHistory().some((message) => String(message.content || '').includes('yamx_internal_model_council')));
+});
+
+test('agent stop request cancels active model council turn', async () => {
+  const { Agent } = await import('../dist/agent.js');
+  const provider = {
+    name: 'test',
+    modelId: 'test-model',
+    complete: async () => new Promise(() => {}),
+    stream: async function* () {},
+  };
+  const agent = new Agent(provider, 'system', { stream: false, modelCouncilEnabled: true, modelCouncilMode: 'always' });
+  const turn = agent.chat('fix the broken deployment pipeline');
+  setTimeout(() => agent.requestStop(), 20);
+  await turn;
+  assert.equal(agent.isStopRequested(), false);
+  assert.ok(agent.getHistory().some((message) => String(message.content || '').includes('Stopped by user')));
 });
 
 test('agent skips hidden model council for simple turns in adaptive mode', async () => {

@@ -35,6 +35,8 @@ It is not a general-purpose chat widget: the system behavior, defaults, and tool
 | **One-terminal workflow** | YamX keeps a guarded shell working directory, so `cd src` affects the next command while staying inside the project. Use `/pwd` and `/cd`, or just type normal shell lines. |
 | **AI shell recovery** | If a direct shell command fails, YamX feeds the command, cwd, and output back into the agent so the model can diagnose, fix, and retry in the same terminal. |
 | **Command memory** | YamX records successful and failed project commands in project-local `.yamx/command-memory.json` by default (override with `YAMX_HOME`) and feeds recent patterns into future diagnosis/setup turns. |
+| **Offline command suggestions** | YamX seeds project-local `.yamx/command-intelligence.json` with software, DevOps, network, and defensive security commands, then ranks those commands together with learned command memory in a live 7-item dropdown before any model call. |
+| **Interruptible turns** | Press **Ctrl+C** while YamX is thinking/using model council/streaming/tools to stop the active turn; press it again quickly to force exit. `/stop` and `/cancel` request the same stop from the prompt. |
 | **Safe automation** | Hooks, approval modes, and optional allow/deny shell patterns support controlled automation. |
 | **Terminal-friendly output** | Wrapping respects **left and right gutters** (scrollbar/host padding) so long lines and boxed **tool/results** panels are less likely to clip at the edges. **`run_command`** panels show **much more output** before summarizing—full text still reaches the agent. |
 | **REPL readability** | After bulk output (↑/↓ **history replay** included), YamX resets ANSI styling and emits a newline **cue** so the next **`YamX ›`** prompt sits on a clean line in narrow or Windows-hosted terminals. |
@@ -135,6 +137,8 @@ Browser AI turns run non-interactively: ordinary safe/write/network tool actions
 - **Persistent cwd** — Direct shell commands and `run_command` share a YamX working directory. `cd src` / `/cd src` changes where later shell commands run; attempts to leave the launch project are blocked.
 - **Direct shell recovery** — If a direct command or `/run ...` fails, YamX converts that failure into an agent repair turn with the original command and output, so diagnosis and fixes continue without opening another terminal.
 - **Command memory** — YamX learns which commands worked or failed in this project/cwd and uses that evidence in later `install it`, `diagnose it`, `run it`, and fix turns.
+- **Offline command suggestions** — On REPL startup, YamX ensures `.yamx/command-intelligence.json` exists. After 3 typed characters, YamX shows a live dropdown with the nearest 7 local suggestions from that JSON database plus `.yamx/command-memory.json`; use **Up/Down** to select and **Enter** or **Tab** to accept the highlighted suggestion. Suggestions are filtered for the current OS and do not spend model tokens.
+- **Stopping work** — While YamX is consulting model council, waiting on the model, streaming, or between tool calls, press **Ctrl+C** once to stop the active turn and return to the prompt. Press **Ctrl+C** again quickly to force exit. From an idle prompt, `/stop` or `/cancel` records a stop request, and `/exit` quits normally.
 - **Ops preflight** — Phrases like **“install python”** are not valid shell lines, so they go to the agent. Before that turn’s model call, YamX may already have run **`where` / `py -0` / `python --version`** (and similar) on **your OS** and appended `yamx_local_preflight`. Vague project-local asks like **“install it”**, **“diagnose it”**, or **“run this project”** append `yamx_project_preflight` with nearby scripts, lockfiles, package manager, git status, local bins, runtime probes, and candidate next commands. The model is instructed to use that evidence and propose concrete `run_command` steps on this machine, not generic setup prose. Disable via `settings.preflightRuntimeProbes` (see Configuration).
 - **Agent** — Natural-language requests go to the configured model with **tool calling**: the agent is steered toward **run / inspect / fix** rather than platform-wide install guides.
 
@@ -171,6 +175,7 @@ Security mode avoids malware, credential theft, persistence, evasion, destructiv
 | `~/.yamx/config.json` | Providers, keys, `settings` |
 | `~/.yamx/state.json` | Active session id |
 | `~/.yamx/sessions/*.json` | Chat history |
+| `.yamx/command-intelligence.json` | Project-local offline command suggestion database (seeded and merge-preserved) |
 | `.yamx/command-memory.json` | Project-local command outcomes (override base directory with `YAMX_HOME`) |
 
 Interactive editor:
@@ -217,7 +222,7 @@ If the provider rejects a request for **context limits**, YamX tries to surface 
 
 ## Slash commands (in-session)
 
-Examples: `/help`, `/exit` | `/quit`, `/clear`, `/compact`, `/undo`, `/model`, `/cost`, `/diff`, `/status`, `/pwd`, `/cd …`, `/log` | `/logs`, `/tools`, `/run …`, `/init`, `/remember`, `/memory`, `/skills`, `/agents`, `/agent …`, `/explore`, `/plan`, `/review`.
+Examples: `/help`, `/exit` | `/quit`, `/clear`, `/compact`, `/stop` | `/cancel`, `/undo`, `/model`, `/cost`, `/diff`, `/status`, `/pwd`, `/cd …`, `/log` | `/logs`, `/tools`, `/run …`, `/init`, `/remember`, `/memory`, `/skills`, `/agents`, `/agent …`, `/explore`, `/plan`, `/review`.
 
 Use `/help` in the REPL for the authoritative list.
 

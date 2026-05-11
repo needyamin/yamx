@@ -10,7 +10,7 @@ YamX is a terminal-first coding and operations agent designed for practical loca
 YamX is optimized for "do the work now" execution, not tutorial-style long answers.
 
 <img width="80" height="80" alt="YamX" src="https://github.com/user-attachments/assets/0d327064-4213-46c3-b2cf-5f69d0f87664" />
-<img width="1919" height="914" alt="YamX CLI" src="https://github.com/user-attachments/assets/34713749-e708-4bac-84d7-6bb9b4892658" />
+<img width="1919" height="909" alt="Image" src="https://github.com/user-attachments/assets/34a9336e-e428-4edf-b63b-067eb1a6d7ce" />
 
 ## Requirements
 

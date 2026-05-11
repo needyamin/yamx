@@ -121,12 +121,20 @@ yamx web --allow-dangerous
 
 Default bind is loopback (`127.0.0.1`). Keep it local unless you add your own auth/proxy controls.
 
-Panels:
+**Shell** (conversation) uses a responsive two-column layout on wide viewports (~8×4 proportions): the conversation fills the wider column; a scrollable **Sessions** rail sits beside it with **New**, **Refresh**, and **Expand** (opens the Sessions tab); each row exposes **Use**, **Rename**, and **Delete**. It mirrors `/api/sessions` with the Sessions tab. On narrower viewports those regions stack vertically.
+
+Inside the Conversation card:
+
+- **Execution mode · Provider** is a collapsible row (expanded with `[+]` / `[-]` like Execution lab). It configures execution mode (**auto**, **shell**, **agent**) and **Provider**, which PATCHes **`defaultProvider`**—the runtime cache resets on save so the next message picks it up.
+- A **provider readiness strip** reports whether an API key is required, whether YamX sees credentials (config or env vars), readiness for agent turns versus a warmed agent session, and a short remediation hint—the same server logic as credential checks in onboarding.
+- **Execution lab** remains a separate expandable block (shell runtime, timeouts, profiles, runbook).
+
+**Navigation panels**:
 
 - Shell
 - Settings
 - Sessions
-- Tools and API
+- Tools & API
 - Engineering readiness card (offline diagnostics and challenge suites)
 
 Detailed UI docs: [docs/docs.html#web](docs/docs.html#web)
@@ -141,7 +149,7 @@ Route discovery:
 
 Core endpoints:
 
-- `GET /api/state`
+- `GET /api/state` (cwd, resolved provider/model, optional `sessionId`, `allowDangerous`, plus readiness: `providerUsesApiKey`, `providerApiKeyConfigured`, `agentCanRun`, optional `providerHint`, `sessionWarm`)
 - `GET /api/info`
 - `GET /api/config`
 - `PATCH /api/config`

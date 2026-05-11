@@ -27,6 +27,21 @@ import inquirer from 'inquirer';
 const MAX_TOOL_ITERATIONS = 40; // Safety: prevent infinite loops
 const MAX_RETRIES = 3; // Retry on transient API failures
 const RETRY_DELAYS = [1000, 3000, 8000]; // Exponential backoff (ms)
+type EngineeringMode = 'balanced' | 'advanced' | 'elite';
+const ENGINEERING_MODE: EngineeringMode = resolveEngineeringMode();
+const TOOL_ITERATION_LIMIT = ENGINEERING_MODE === 'elite' ? 60 : ENGINEERING_MODE === 'advanced' ? 50 : MAX_TOOL_ITERATIONS;
+
+function resolveEngineeringMode(): EngineeringMode {
+  const raw = String(
+    process.env.YAMX_ENGINEERING_MODE
+    || process.env.YAMX_AGENT_LEVEL
+    || process.env.YAMX_PRO_MODE
+    || 'elite'
+  ).toLowerCase().trim();
+  if (['balanced', 'default', 'normal', 'base'].includes(raw)) return 'balanced';
+  if (['advanced', 'pro', 'high'].includes(raw)) return 'advanced';
+  return 'elite';
+}
 
 class AgentStopRequested extends Error {
   constructor() {
@@ -290,7 +305,7 @@ export class Agent {
 
       let iterations = 0;
 
-      while (iterations < MAX_TOOL_ITERATIONS) {
+      while (iterations < TOOL_ITERATION_LIMIT) {
         this.throwIfStopped();
         iterations++;
 
@@ -316,8 +331,8 @@ export class Agent {
         }
       }
 
-      if (iterations >= MAX_TOOL_ITERATIONS) {
-        this.ui.warn(`Reached maximum tool iterations (${MAX_TOOL_ITERATIONS}). Stopping.`);
+      if (iterations >= TOOL_ITERATION_LIMIT) {
+        this.ui.warn(`Reached maximum tool iterations (${TOOL_ITERATION_LIMIT}). Stopping.`);
       }
 
       if (this.options.verboseCli) {
@@ -424,6 +439,8 @@ export class Agent {
   }
 
   private shouldRunModelCouncil(userInput: string): boolean {
+    if (ENGINEERING_MODE === 'elite') return true;
+    if (ENGINEERING_MODE === 'advanced' && userInput.trim().length >= 40) return true;
     const text = userInput.toLowerCase();
     // Long inputs are likely complex tasks
     if (text.length > 400) return true;
@@ -927,11 +944,12 @@ export class Agent {
           }
         }
 
+        const enrichedError = this.buildFailureProtocolBlob(tc.function.name, `${errorMsg}\n${error?.stack || ''}`);
         this.history.push({
           role: 'tool',
           tool_call_id: tc.id,
           name: tc.function.name,
-          content: errorMsg,
+          content: enrichedError,
         });
       } finally {
         if (tc.function.name === 'run_command') {
@@ -962,7 +980,13 @@ export class Agent {
       'task_list',
       'task_tail',
     ]);
-    return readOnlyRepeatable.has(name) ? 2 : 1;
+    if (readOnlyRepeatable.has(name)) {
+      return ENGINEERING_MODE === 'elite' ? 3 : ENGINEERING_MODE === 'advanced' ? 2 : 2;
+    }
+    if (name === 'run_command') {
+      return ENGINEERING_MODE === 'elite' ? 2 : 1;
+    }
+    return 1;
   }
 
   private isUserVisibleRepeatWarning(name: string): boolean {
@@ -1024,7 +1048,35 @@ export class Agent {
       '2. If a background task or log file may exist, use task_tail or log_inspect mode=auto/latest-error/summary.',
       '3. Search the codebase for the exact symbol/error/config referenced by the logs.',
       '4. Apply the smallest fix, then rerun the narrow failing command.',
+      ENGINEERING_MODE === 'elite'
+        ? '5. After any patch/config change, run one strict verify command (typecheck/test/build target) before claiming success.'
+        : '5. Run a narrow verify command after the fix.',
       domainGuidance,
+      '</yamx_failure_protocol>',
+    ].join('\n');
+  }
+
+  private buildFailureProtocolBlob(toolName: string, rawResult: string): string {
+    const domain = this.classifyFailureDomain(rawResult);
+    const domainGuidance = this.failureDomainGuidance(domain);
+    const snippet = this.extractPrimaryErrorSnippet(rawResult);
+    const severity = this.estimateFailureSeverity(domain, rawResult);
+    const escalation = this.escalationHint(domain, rawResult);
+    return [
+      `[${toolName} failure detected]`,
+      `primary_error=${snippet}`,
+      '',
+      '<yamx_failure_protocol>',
+      `failure_domain=${domain}`,
+      `severity=${severity}`,
+      'The previous tool execution failed. Use evidence-driven repair only.',
+      'Next steps:',
+      '1. Confirm cwd, exact failing command, and first concrete error line.',
+      '2. Run one targeted diagnostic command tied to that failure (not broad reinstall).',
+      '3. Apply the smallest fix and rerun the narrow failing command.',
+      '4. Verify with one explicit check command before success.',
+      domainGuidance,
+      escalation,
       '</yamx_failure_protocol>',
     ].join('\n');
   }
@@ -1057,6 +1109,33 @@ export class Agent {
       case 'memory': return 'Domain hint: check for infinite loops, unbounded data structures, or large file reads. Consider streaming or pagination.';
       default: return 'Domain hint: focus on the first error line and trace from there.';
     }
+  }
+
+  private extractPrimaryErrorSnippet(result: string): string {
+    const lines = (result || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const firstSignal = lines.find((line) =>
+      /(error|exception|fatal|failed|failure|traceback|panic|enoent|eacces|eperm|econnrefused|eaddrinuse|syntaxerror|typeerror|referenceerror|not found|not recognized|timed out)/i.test(line)
+    );
+    const chosen = firstSignal || lines[0] || 'unknown error';
+    return chosen.replace(/\s+/g, ' ').slice(0, 260);
+  }
+
+  private estimateFailureSeverity(domain: string, result: string): 'low' | 'medium' | 'high' {
+    if (/segfault|core dump|panic|fatal|out of memory|ENOMEM|SIGKILL|SIGSEGV|SIGABRT/i.test(result)) return 'high';
+    if (['missing-dependency', 'missing-tool', 'port-conflict', 'build-failure', 'timeout', 'memory', 'network'].includes(domain)) return 'medium';
+    return 'low';
+  }
+
+  private escalationHint(domain: string, result: string): string {
+    if (ENGINEERING_MODE !== 'elite') return 'Escalation: if two fixes fail, broaden diagnostics with focused log/context reads.';
+    if (domain === 'network') return 'Escalation: if first probe fails, step through interface -> route -> DNS -> TCP -> TLS -> HTTP in order.';
+    if (domain === 'build-failure' || domain === 'code-error') return 'Escalation: if first fix fails, inspect the exact file:line and nearest related config before any dependency reinstall.';
+    if (domain === 'missing-tool' || domain === 'missing-dependency') return 'Escalation: verify PATH/package manager lockfile state before install/reinstall.';
+    if (/exit\s+2|exit\s+127|command not found|not recognized/i.test(result)) return 'Escalation: confirm shell selection and executable path, then retry with explicit binary.';
+    return 'Escalation: after one failed fix, switch from narrow retry to targeted file/config/log inspection.';
   }
 
   private isFailureResult(toolName: string, result: string): boolean {

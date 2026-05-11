@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YamX Docs</title>
+  <meta name="description" content="Combined YamX documentation: overview, CLI, Web UI, and HTTP API.">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+  <style>
+    .hero { background: linear-gradient(135deg, #1a1f1c 0%, #2d3632 100%); color: #e8eeea; }
+    .hero code { color: #9fdfae; background: rgba(0,0,0,.25); }
+    .section-card { border: 1px solid #dfe3e6; border-radius: .75rem; background: #fff; }
+    .method { font-size: .7rem; font-weight: 700; min-width: 4.5rem; text-align: center; }
+    .method-get { background: #cfe2ff; color: #084298; }
+    .method-post { background: #d1e7dd; color: #0f5132; }
+    .method-patch { background: #fff3cd; color: #664d03; }
+    .method-delete { background: #f8d7da; color: #842029; }
+    code.path { word-break: break-all; }
+    .anchor-offset { scroll-margin-top: 80px; }
+  </style>
+</head>
+<body class="bg-light">
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark border-bottom border-secondary sticky-top">
+    <div class="container">
+      <a class="navbar-brand fw-bold" href="#home">YamX docs</a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" aria-controls="nav" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="nav">
+        <ul class="navbar-nav me-auto">
+          <li class="nav-item"><a class="nav-link" href="#home">Home</a></li>
+          <li class="nav-item"><a class="nav-link" href="#cli">CLI</a></li>
+          <li class="nav-item"><a class="nav-link" href="#web">Web UI</a></li>
+          <li class="nav-item"><a class="nav-link" href="#api">HTTP API</a></li>
+          <li class="nav-item"><a class="nav-link" href="#context">Context Memory</a></li>
+        </ul>
+        <a class="btn btn-outline-light btn-sm" href="https://github.com/needyamin/yamx" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <header id="home" class="hero py-5 mb-4 anchor-offset">
+    <div class="container">
+      <h1 class="display-6 fw-bold mb-3">YamX documentation</h1>
+      <p class="lead mb-2">Terminal-first coding and ops agent with a local web control plane and a JSON HTTP API.</p>
+      <p class="mb-0 small opacity-75">This single file combines overview, CLI, Web UI, and API docs.</p>
+    </div>
+  </header>
+
+  <main class="container pb-5">
+    <section class="mb-5">
+      <div class="row g-4">
+        <div class="col-md-3">
+          <div class="card shadow-sm h-100">
+            <div class="card-body">
+              <h2 class="h5">CLI agent</h2>
+              <p class="text-secondary mb-3">REPL, flags, sessions, slash commands, config paths.</p>
+              <a href="#cli" class="btn btn-success btn-sm">Jump to CLI</a>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card shadow-sm h-100">
+            <div class="card-body">
+              <h2 class="h5">Web UI</h2>
+              <p class="text-secondary mb-3">Shell panel, settings tabs, session CRUD, tools and API explorer.</p>
+              <a href="#web" class="btn btn-success btn-sm">Jump to Web UI</a>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card shadow-sm h-100">
+            <div class="card-body">
+              <h2 class="h5">HTTP API</h2>
+              <p class="text-secondary mb-3">Endpoints for config, sessions, commands, tools, engineering checks.</p>
+              <a href="#api" class="btn btn-success btn-sm">Jump to API</a>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card shadow-sm h-100">
+            <div class="card-body">
+              <h2 class="h5">Context memory</h2>
+              <p class="text-secondary mb-3">Architecture and engineering memory for maintenance work.</p>
+              <a href="#context" class="btn btn-success btn-sm">Jump to Context</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="cli" class="mb-5 anchor-offset">
+      <div class="section-card p-4 p-lg-5">
+        <h2 class="mb-4">CLI reference</h2>
+
+        <h3 class="h5">Requirements</h3>
+        <p>Node.js <strong>18+</strong>.</p>
+
+        <h3 class="h5 mt-4">Install</h3>
+        <pre class="bg-dark text-light p-3 rounded small"><code>npm install -g @needyamin/yamx@latest
+yamx</code></pre>
+        <p class="text-secondary small mb-0">From repo: <code>npm install && npm link</code> - Ad-hoc: <code>npx @needyamin/yamx</code></p>
+
+        <h3 class="h5 mt-4">First run</h3>
+        <pre class="bg-dark text-light p-3 rounded small"><code>yamx --onboard    # provider, API key, default model
+yamx --diagnose   # config, keys (masked), connectivity
+yamx web          # local browser UI
+yamx              # REPL (sessions persist)</code></pre>
+
+        <h3 class="h5 mt-4">Core flags</h3>
+        <div class="table-responsive">
+          <table class="table table-bordered table-sm bg-white align-middle">
+            <thead class="table-light"><tr><th>Flag</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code>-p, --provider &lt;name&gt;</code></td><td><code>openai</code> - <code>anthropic</code> - <code>gemini</code> - <code>kimi</code> - <code>grok</code> - <code>openrouter</code> - <code>ollama</code></td></tr>
+              <tr><td><code>-m, --model &lt;name&gt;</code></td><td>Model id for the provider</td></tr>
+              <tr><td><code>-t, --temperature &lt;n&gt;</code></td><td>Sampling temperature</td></tr>
+              <tr><td><code>--max-tokens &lt;n&gt;</code></td><td>Generation cap</td></tr>
+              <tr><td><code>--auto-approve</code></td><td>Auto-approve tools (use with care)</td></tr>
+              <tr><td><code>--no-stream</code></td><td>Disable streaming output</td></tr>
+              <tr><td><code>--new-chat</code></td><td>Start a new session thread</td></tr>
+              <tr><td><code>--resume &lt;id&gt;</code></td><td>Resume saved session</td></tr>
+              <tr><td><code>--history</code></td><td>List saved threads</td></tr>
+              <tr><td><code>--clear-chat</code></td><td>Clear active thread</td></tr>
+              <tr><td><code>--delete-chat &lt;id&gt;</code></td><td>Delete one snapshot</td></tr>
+              <tr><td><code>--onboard</code></td><td>Interactive setup</td></tr>
+              <tr><td><code>--reset-config</code></td><td>Reset <code>~/.yamx/config.json</code> defaults</td></tr>
+              <tr><td><code>--diagnose</code></td><td>Health and config report</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="h5 mt-4">Subcommands</h3>
+        <ul>
+          <li><code>yamx config</code> - interactive configuration editor</li>
+          <li><code>yamx web [--host 127.0.0.1] [--port 8765] [-p provider] [-m model] [--allow-dangerous]</code> - local web UI + HTTP API</li>
+        </ul>
+
+        <h3 class="h5 mt-4">Data locations</h3>
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered bg-white align-middle">
+            <thead class="table-light"><tr><th>Path</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr><td><code>~/.yamx/config.json</code></td><td>Providers, keys, <code>settings</code></td></tr>
+              <tr><td><code>~/.yamx/state.json</code></td><td>Active session id</td></tr>
+              <tr><td><code>~/.yamx/sessions/*.json</code></td><td>Chat histories</td></tr>
+              <tr><td><code>.yamx/command-intelligence.json</code></td><td>Project offline command suggestions</td></tr>
+              <tr><td><code>.yamx/command-memory.json</code></td><td>Project command outcomes (<code>YAMX_HOME</code> overrides base)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="h5 mt-4">Slash commands</h3>
+        <p class="text-secondary mb-0">Examples: <code>/help</code>, <code>/exit</code>, <code>/clear</code>, <code>/compact</code>, <code>/stop</code>, <code>/pwd</code>, <code>/cd</code>, <code>/run</code>, <code>/model</code>, <code>/skills</code>, <code>/agents</code>. Use <code>/help</code> in REPL for the full list.</p>
+      </div>
+    </section>
+
+    <section id="web" class="mb-5 anchor-offset">
+      <div class="section-card p-4 p-lg-5">
+        <h2 class="mb-3">Web UI reference</h2>
+        <p class="lead text-secondary">A browser control plane served by YamX on <strong>127.0.0.1</strong> by default. Keep it loopback-only unless you add your own authentication.</p>
+
+        <h3 class="h5">Start</h3>
+        <pre class="bg-dark text-light p-3 rounded small"><code>yamx web
+yamx web --port 8787
+yamx web --host 127.0.0.1 --port 8765
+yamx web --allow-dangerous   # only if you understand tool policy risks</code></pre>
+        <p class="small text-secondary mb-0">Open the printed URL (example: <code>http://127.0.0.1:8765</code>).</p>
+
+        <h3 class="h5 mt-4">Layout</h3>
+        <div class="accordion" id="layout-acc">
+          <div class="accordion-item">
+            <h4 class="accordion-header"><button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#lay1">Sidebar navigation</button></h4>
+            <div id="lay1" class="accordion-collapse collapse show" data-bs-parent="#layout-acc">
+              <div class="accordion-body"><strong>Shell</strong>, <strong>Settings</strong>, <strong>Sessions</strong>, <strong>Tools and API</strong>. On narrow screens the sidebar is a drawer.</div>
+            </div>
+          </div>
+          <div class="accordion-item">
+            <h4 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#lay2">Shell</button></h4>
+            <div id="lay2" class="accordion-collapse collapse" data-bs-parent="#layout-acc">
+              <div class="accordion-body">Chat-like turns. Command-like input executes shell routing; non-command text routes to YamX agent with tools/session context.</div>
+            </div>
+          </div>
+          <div class="accordion-item">
+            <h4 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#lay3">Settings</button></h4>
+            <div id="lay3" class="accordion-collapse collapse" data-bs-parent="#layout-acc">
+              <div class="accordion-body">General, Providers, Behavior, Model council, Subagents, Shell policy. Saves to <code>~/.yamx/config.json</code>.</div>
+            </div>
+          </div>
+          <div class="accordion-item">
+            <h4 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#lay4">Sessions</button></h4>
+            <div id="lay4" class="accordion-collapse collapse" data-bs-parent="#layout-acc">
+              <div class="accordion-body">Create, refresh, activate, rename, delete. Uses the same session CRUD API.</div>
+            </div>
+          </div>
+          <div class="accordion-item">
+            <h4 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#lay5">Tools and API</button></h4>
+            <div id="lay5" class="accordion-collapse collapse" data-bs-parent="#layout-acc">
+              <div class="accordion-body">Grouped API reference, raw <code>/api/routes</code> JSON, tool registry with schema details, and engineering readiness panel.</div>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="h5 mt-4">Static assets</h3>
+        <ul class="mb-0">
+          <li><code>GET /</code> - HTML shell</li>
+          <li><code>GET /style.css</code> - theme</li>
+          <li><code>GET /app.js</code> - client script</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="api" class="mb-5 anchor-offset">
+      <div class="section-card p-4 p-lg-5">
+        <h2 class="mb-3">HTTP API reference</h2>
+        <p class="text-secondary">Base URL is your <code>yamx web</code> listen address (default <code>http://127.0.0.1:8765</code>). Write endpoints expect <code>Content-Type: application/json</code>. Discover runtime route metadata via <code>GET /api/routes</code>.</p>
+        <div class="alert alert-warning small" role="note">
+          <strong>Security:</strong> there is no built-in API token. Keep this local-only unless protected behind your own auth proxy.
+        </div>
+
+        <h3 class="h5 mt-4 mb-3">State and project</h3>
+        <div class="table-responsive mb-4">
+          <table class="table table-sm table-bordered bg-white align-middle">
+            <thead class="table-light"><tr><th style="width:5rem">Method</th><th>Path</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><span class="badge method method-get rounded-pill">GET</span></td><td><code class="path">/api/state</code></td><td><code>cwd</code>, <code>root</code>, <code>platform</code>, <code>allowDangerous</code>, <code>provider</code>, <code>model</code>, <code>sessionId</code></td></tr>
+              <tr><td><span class="badge method method-get rounded-pill">GET</span></td><td><code class="path">/api/info</code></td><td><code>version</code>, <code>node</code>, <code>projectRoot</code>, <code>configPath</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="h5 mb-3">Configuration</h3>
+        <div class="table-responsive mb-4">
+          <table class="table table-sm table-bordered bg-white align-middle">
+            <thead class="table-light"><tr><th style="width:5rem">Method</th><th>Path</th><th>Body and notes</th></tr></thead>
+            <tbody>
+              <tr><td><span class="badge method method-get rounded-pill">GET</span></td><td><code class="path">/api/config</code></td><td>Masked config; keys shown as placeholders</td></tr>
+              <tr><td><span class="badge method method-patch rounded-pill">PATCH</span></td><td><code class="path">/api/config</code></td><td>Partial YamX config merge</td></tr>
+              <tr><td><span class="badge method method-post rounded-pill">POST</span></td><td><code class="path">/api/config/reset</code></td><td><code>{}</code> reset defaults</td></tr>
+              <tr><td><span class="badge method method-post rounded-pill">POST</span></td><td><code class="path">/api/runtime/reload</code></td><td><code>{}</code> clear in-memory cache</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="h5 mb-3">Sessions (CRUD)</h3>
+        <div class="table-responsive mb-4">
+          <table class="table table-sm table-bordered bg-white align-middle">
+            <thead class="table-light"><tr><th style="width:5rem">Method</th><th>Path</th><th>Body and query</th></tr></thead>
+            <tbody>
+              <tr><td><span class="badge method method-get rounded-pill">GET</span></td><td><code class="path">/api/sessions</code></td><td>List + <code>activeSessionId</code></td></tr>
+              <tr><td><span class="badge method method-post rounded-pill">POST</span></td><td><code class="path">/api/sessions</code></td><td><code>{ "title"?, "cwd"?, "activate"?: true }</code></td></tr>
+              <tr><td><span class="badge method method-get rounded-pill">GET</span></td><td><code class="path">/api/sessions/:id</code></td><td><code>?full=1</code> includes <code>messages</code></td></tr>
+              <tr><td><span class="badge method method-patch rounded-pill">PATCH</span></td><td><code class="path">/api/sessions/:id</code></td><td><code>{ "title" }</code></td></tr>
+              <tr><td><span class="badge method method-delete rounded-pill">DELETE</span></td><td><code class="path">/api/sessions/:id</code></td><td>Deletes session file</td></tr>
+              <tr><td><span class="badge method method-post rounded-pill">POST</span></td><td><code class="path">/api/sessions/active</code></td><td><code>{ "id": "&lt;uuid&gt;" }</code> or <code>{ "id": null }</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="h5 mb-3">Agent and tools</h3>
+        <div class="table-responsive mb-4">
+          <table class="table table-sm table-bordered bg-white align-middle">
+            <thead class="table-light"><tr><th style="width:5rem">Method</th><th>Path</th><th>Body</th></tr></thead>
+            <tbody>
+              <tr><td><span class="badge method method-get rounded-pill">GET</span></td><td><code class="path">/api/tools</code></td><td>Tool count/categories/definitions</td></tr>
+              <tr><td><span class="badge method method-get rounded-pill">GET</span></td><td><code class="path">/api/engineering/readiness</code></td><td>Offline readiness snapshot (<code>?force=1</code> optional)</td></tr>
+              <tr><td><span class="badge method method-post rounded-pill">POST</span></td><td><code class="path">/api/engineering/challenge</code></td><td><code>{ "suite"?, "profile"?, "force"? }</code></td></tr>
+              <tr><td><span class="badge method method-post rounded-pill">POST</span></td><td><code class="path">/api/command</code></td><td><code>{ "command", "shell"?, "cwd"? }</code></td></tr>
+              <tr><td><span class="badge method method-post rounded-pill">POST</span></td><td><code class="path">/api/chat</code></td><td><code>{ "message" }</code> or <code>{ "command" }</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="h5 mb-3">Discovery</h3>
+        <div class="table-responsive mb-4">
+          <table class="table table-sm table-bordered bg-white align-middle">
+            <tbody>
+              <tr><td style="width:5rem"><span class="badge method method-get rounded-pill">GET</span></td><td><code class="path">/api/routes</code></td><td><code>{ ok, groups[], routes[] }</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="h5 mb-3">Examples</h3>
+        <p class="small text-uppercase text-secondary mb-1">Create session</p>
+        <pre class="bg-dark text-light p-3 rounded small mb-3"><code>curl -s -X POST http://127.0.0.1:8765/api/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"title":"From API","activate":true}'</code></pre>
+        <p class="small text-uppercase text-secondary mb-1">Patch config</p>
+        <pre class="bg-dark text-light p-3 rounded small mb-0"><code>curl -s -X PATCH http://127.0.0.1:8765/api/config \
+  -H "Content-Type: application/json" \
+  -d '{"defaultProvider":"openai","settings":{"verboseCli":false}}'</code></pre>
+      </div>
+    </section>
+
+    <section id="context" class="anchor-offset">
+      <div class="section-card p-4 p-lg-5">
+        <h2 class="mb-3">Context memory</h2>
+        <p class="mb-3">Project-level engineering memory is kept in:</p>
+        <p class="mb-0"><a href="context-memory.md"><code>docs/context-memory.md</code></a></p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="border-top py-4 bg-white mt-auto">
+    <div class="container small text-secondary">
+      <p class="mb-0">YamX - ISC - <a href="https://github.com/needyamin/yamx" class="link-secondary">github.com/needyamin/yamx</a></p>
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+</body>
+</html>

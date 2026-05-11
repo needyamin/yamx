@@ -649,12 +649,7 @@ program.action(async (options) => {
 
   const intelligencePath = await ensureCommandIntelligenceDatabase();
 
-  if (currentSession.messages.length === 1) {
-    console.log(chalk.dim('  /help — slash commands | history or /history [n] — ~/.yamx/history'));
-    console.log(chalk.dim(`  Live suggestions (${nodePath.relative(process.cwd(), intelligencePath) || intelligencePath}) after 3 chars · ↑/↓ choose row · Tab/Enter apply · Ctrl+↑/↓ session history · Esc dismiss\n`));
-  } else {
-    console.log(); // Just a spacer if resuming chat
-  }
+  console.log(); // spacer after banner
 
   const inputSession = await createInputSession();
   let activeWork = false;

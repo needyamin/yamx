@@ -27,6 +27,12 @@ import { classifyUserIntent } from '../intent.js';
 import { loadMergeSaveConfig, publicConfigView, resetConfigToDefaults } from './config-handlers.js';
 import { getToolCount, getToolDefinitions, getToolsByCategory } from '../tools/registry.js';
 import { WEB_CSS, WEB_HTML, WEB_JS } from './ui.js';
+import {
+  getEngineeringReadiness,
+  normalizeEngineeringProfile,
+  normalizeEngineeringSuite,
+  runEngineeringChallenge,
+} from './engineering-diagnostics.js';
 
 const require = createRequire(import.meta.url);
 
@@ -542,6 +548,21 @@ async function handleRequest(
       });
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/engineering/readiness') {
+      const force = url.searchParams.get('force');
+      const report = await getEngineeringReadiness(force === '1' || force === 'true');
+      return sendJson(res, 200, { ok: true, report });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/engineering/challenge') {
+      const body = await readJsonBody(req);
+      const suite = normalizeEngineeringSuite(body.suite);
+      const profile = normalizeEngineeringProfile(body.profile);
+      const force = body.force === true;
+      const report = await runEngineeringChallenge({ suite, profile, force });
+      return sendJson(res, 200, { ok: true, report });
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/sessions') {
       const store = new SessionStore();
       await store.init();
@@ -644,6 +665,13 @@ async function handleRequest(
           name: 'Agent & tools',
           endpoints: [
             { method: 'GET', path: '/api/tools', note: 'definitions + categories' },
+            { method: 'GET', path: '/api/engineering/readiness', note: 'offline readiness snapshot + scores' },
+            {
+              method: 'POST',
+              path: '/api/engineering/challenge',
+              body: '{ suite?, profile?, force? }',
+              note: 'run suite: vm/fullstack/devops/network/security/all',
+            },
             { method: 'POST', path: '/api/command', body: '{ command }', note: 'shell or chat' },
             { method: 'POST', path: '/api/chat', body: '{ message }', note: 'agent only' },
           ],

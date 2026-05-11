@@ -41,6 +41,30 @@ export interface CommandFixSuggestion extends CommandSuggestion {
 
 const DB_PATH = path.join(process.env.YAMX_HOME || path.join(PROJECT_ROOT, '.yamx'), 'command-intelligence.json');
 
+type IntelligenceTier = 'balanced' | 'advanced' | 'top';
+
+const INTELLIGENCE_TIER: IntelligenceTier = resolveIntelligenceTier();
+const TOP_TIER = INTELLIGENCE_TIER === 'top';
+const ADVANCED_TIER = TOP_TIER || INTELLIGENCE_TIER === 'advanced';
+const MEMORY_SUGGESTION_WINDOW = TOP_TIER ? 140 : ADVANCED_TIER ? 110 : 80;
+const PROJECT_SOURCE_BOOST = TOP_TIER ? 52 : ADVANCED_TIER ? 44 : 36;
+const LOCAL_FIRST_SAFETY_BOOST = TOP_TIER ? 10 : ADVANCED_TIER ? 8 : 6;
+const CAPABILITY_CACHE_TTL_MS = TOP_TIER ? 45_000 : ADVANCED_TIER ? 35_000 : 25_000;
+const CAPABILITY_MAX_DIRS = TOP_TIER ? 36 : ADVANCED_TIER ? 28 : 20;
+const CAPABILITY_MAX_FILES = TOP_TIER ? 6_000 : ADVANCED_TIER ? 4_500 : 3_000;
+
+function resolveIntelligenceTier(): IntelligenceTier {
+  const raw = String(
+    process.env.YAMX_INTELLIGENCE_LEVEL
+    || process.env.YAMX_INTELLIGENCE_TIER
+    || process.env.YAMX_OFFLINE_INTELLIGENCE
+    || 'top'
+  ).toLowerCase().trim();
+  if (['balanced', 'normal', 'default', 'base', 'low'].includes(raw)) return 'balanced';
+  if (['advanced', 'adv', 'high'].includes(raw)) return 'advanced';
+  return 'top';
+}
+
 /* ── Suggestion cache layer (eliminates disk I/O on every keystroke) ────── */
 let _cachedDbCommands: CommandKnowledge[] | null = null;
 let _cachedDbMtime = 0;
@@ -48,6 +72,14 @@ let _cachedProjectCwd = '';
 let _cachedProjectKnowledge: CommandKnowledge[] | null = null;
 let _cachedProjectAt = 0;
 const PROJECT_CACHE_TTL_MS = 8_000; // re-scan project files every 8s max
+let _cachedAvailableBinsCwd = '';
+let _cachedAvailableBins: Set<string> | null = null;
+let _cachedAvailableBinsAt = 0;
+
+const SHELL_BUILTINS = new Set([
+  'cd', 'pwd', 'dir', 'ls', 'echo', 'set', 'export', 'unset', 'history',
+  'type', 'alias', 'unalias', 'pushd', 'popd', 'where',
+]);
 
 async function getCachedDbCommands(): Promise<CommandKnowledge[]> {
   try {
@@ -80,6 +112,60 @@ async function getCachedProjectKnowledge(cwd: string): Promise<CommandKnowledge[
   return _cachedProjectKnowledge;
 }
 
+async function getCachedAvailableBinaries(cwd: string): Promise<Set<string>> {
+  const now = Date.now();
+  if (_cachedAvailableBins && _cachedAvailableBinsCwd === cwd && now - _cachedAvailableBinsAt < CAPABILITY_CACHE_TTL_MS) {
+    return _cachedAvailableBins;
+  }
+  _cachedAvailableBins = await collectAvailableBinaries(cwd).catch(() => new Set<string>());
+  _cachedAvailableBinsCwd = cwd;
+  _cachedAvailableBinsAt = now;
+  return _cachedAvailableBins;
+}
+
+async function collectAvailableBinaries(cwd: string): Promise<Set<string>> {
+  const bins = new Set<string>();
+  for (const builtin of SHELL_BUILTINS) bins.add(builtin);
+
+  const rawDirs = getLocalFirstPathEntries(cwd) || [];
+  const seenDirs = new Set<string>();
+  const dirs: string[] = [];
+  for (const dir of rawDirs) {
+    const key = path.resolve(dir);
+    if (seenDirs.has(key)) continue;
+    seenDirs.add(key);
+    dirs.push(key);
+    if (dirs.length >= CAPABILITY_MAX_DIRS) break;
+  }
+
+  const localNodeBin = path.join(cwd, 'node_modules', '.bin');
+  if (!seenDirs.has(path.resolve(localNodeBin))) dirs.unshift(localNodeBin);
+
+  let scannedFiles = 0;
+  for (const dir of dirs) {
+    if (scannedFiles >= CAPABILITY_MAX_FILES) break;
+    let entries: fs.Dirent[] = [];
+    try {
+      const stat = await fs.stat(dir).catch(() => null);
+      if (!stat?.isDirectory()) continue;
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const name = entry.name.toLowerCase();
+      if (!name) continue;
+      scannedFiles += 1;
+      bins.add(name);
+      bins.add(name.replace(/\.(cmd|exe|bat|ps1|com|sh)$/i, ''));
+      if (scannedFiles >= CAPABILITY_MAX_FILES) break;
+    }
+  }
+
+  return bins;
+}
+
 const SEED_COMMANDS: CommandKnowledge[] = [
   { command: 'git status --short', domain: 'software', tags: ['git', 'status', 'repo', 'check'], description: 'Compact repository status.' },
   { command: 'git diff --stat', domain: 'software', tags: ['git', 'diff', 'changes', 'review'], description: 'Summarize changed files.' },
@@ -95,6 +181,17 @@ const SEED_COMMANDS: CommandKnowledge[] = [
   { command: 'npm run dev', domain: 'software', tags: ['node', 'npm', 'dev', 'serve'], description: 'Start dev server.' },
   { command: 'node -v', domain: 'software', tags: ['node', 'version', 'runtime'], description: 'Check Node.js version.' },
   { command: 'npm -v', domain: 'software', tags: ['npm', 'version', 'runtime'], description: 'Check npm version.' },
+  { command: 'where python', domain: 'software', tags: ['python', 'where', 'path', 'runtime'], description: 'Locate Python executable on Windows.', platforms: ['win32'] },
+  { command: 'where py', domain: 'software', tags: ['python', 'launcher', 'where', 'path'], description: 'Locate Python launcher on Windows.', platforms: ['win32'] },
+  { command: 'py -0', domain: 'software', tags: ['python', 'launcher', 'version', 'runtime'], description: 'List installed Python launcher targets.', platforms: ['win32'] },
+  { command: 'py -V', domain: 'software', tags: ['python', 'launcher', 'version', 'runtime'], description: 'Show Python launcher version.', platforms: ['win32'] },
+  { command: 'where node', domain: 'software', tags: ['node', 'where', 'path', 'runtime'], description: 'Locate Node executable on Windows.', platforms: ['win32'] },
+  { command: 'where docker', domain: 'software', tags: ['docker', 'where', 'path', 'runtime'], description: 'Locate Docker executable on Windows.', platforms: ['win32'] },
+  { command: 'where git', domain: 'software', tags: ['git', 'where', 'path', 'runtime'], description: 'Locate Git executable on Windows.', platforms: ['win32'] },
+  { command: 'command -v python3', domain: 'software', tags: ['python', 'which', 'path', 'runtime'], description: 'Locate Python executable on Unix.', platforms: ['linux', 'darwin', 'freebsd', 'openbsd'] },
+  { command: 'command -v node', domain: 'software', tags: ['node', 'which', 'path', 'runtime'], description: 'Locate Node executable on Unix.', platforms: ['linux', 'darwin', 'freebsd', 'openbsd'] },
+  { command: 'command -v docker', domain: 'software', tags: ['docker', 'which', 'path', 'runtime'], description: 'Locate Docker executable on Unix.', platforms: ['linux', 'darwin', 'freebsd', 'openbsd'] },
+  { command: 'command -v git', domain: 'software', tags: ['git', 'which', 'path', 'runtime'], description: 'Locate Git executable on Unix.', platforms: ['linux', 'darwin', 'freebsd', 'openbsd'] },
   { command: 'python --version', domain: 'software', tags: ['python', 'version', 'runtime'], description: 'Check Python version.' },
   { command: 'python -m pytest', domain: 'software', tags: ['python', 'test', 'pytest'], description: 'Run Python tests.' },
   { command: 'pip install -r requirements.txt', domain: 'software', tags: ['python', 'pip', 'install', 'deps'], description: 'Install Python requirements.' },
@@ -262,6 +359,9 @@ const ADVANCED_COMMANDS: CommandKnowledge[] = [
   { command: 'nc -vz example.com 443', domain: 'network', tags: ['tcp', 'port', 'probe'], description: 'TCP port reachability probe.', platforms: ['linux', 'darwin', 'freebsd', 'openbsd'] },
   { command: 'lsof -i -P -n', domain: 'network', tags: ['ports', 'listeners', 'process'], description: 'List open network files.' },
   { command: 'Get-NetTCPConnection', domain: 'network', tags: ['powershell', 'tcp', 'connections'], description: 'List Windows TCP connections.', platforms: ['win32'] },
+  { command: 'Get-NetIPConfiguration', domain: 'network', tags: ['powershell', 'network', 'ip', 'dns'], description: 'Show Windows network interface configuration.', platforms: ['win32'] },
+  { command: 'netsh interface ip show config', domain: 'network', tags: ['windows', 'network', 'ip', 'config'], description: 'Show Windows IP interface config.', platforms: ['win32'] },
+  { command: 'Get-NetRoute -AddressFamily IPv4', domain: 'network', tags: ['powershell', 'network', 'route'], description: 'Show Windows IPv4 routing table.', platforms: ['win32'] },
 
   // Security and supply chain
   { command: 'gitleaks detect --source . --redact', domain: 'security', tags: ['security', 'secrets', 'redact', 'git'], description: 'Scan secrets with redacted output.' },
@@ -304,6 +404,11 @@ const ADVANCED_COMMANDS: CommandKnowledge[] = [
   { command: 'dmesg -T | tail -n 100', domain: 'observability', tags: ['linux', 'kernel', 'logs'], description: 'Recent kernel logs.', platforms: ['linux'] },
   { command: 'wevtutil qe Application /c:50 /f:text', domain: 'observability', tags: ['windows', 'eventlog', 'application'], description: 'Read recent Windows Application events.', platforms: ['win32'] },
   { command: 'Get-EventLog -LogName Application -Newest 50', domain: 'observability', tags: ['powershell', 'eventlog', 'windows'], description: 'Read recent Windows Application events.', platforms: ['win32'] },
+  { command: 'Get-Service | Sort-Object Status,DisplayName', domain: 'observability', tags: ['powershell', 'windows', 'service', 'status'], description: 'List Windows services sorted by status.', platforms: ['win32'] },
+  { command: 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 20', domain: 'observability', tags: ['powershell', 'process', 'cpu', 'performance'], description: 'Top CPU processes (Windows).', platforms: ['win32'] },
+  { command: 'Get-Process | Sort-Object WorkingSet -Descending | Select-Object -First 20', domain: 'observability', tags: ['powershell', 'process', 'memory', 'performance'], description: 'Top memory processes (Windows).', platforms: ['win32'] },
+  { command: 'Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber,LastBootUpTime', domain: 'system', tags: ['windows', 'system', 'version', 'uptime'], description: 'Show Windows version and last boot time.', platforms: ['win32'] },
+  { command: 'Get-Item Env:Path', domain: 'system', tags: ['windows', 'path', 'environment'], description: 'Show Windows PATH environment variable.', platforms: ['win32'] },
 
   // Mobile, desktop, AI
   { command: 'adb devices', domain: 'mobile', tags: ['android', 'adb', 'devices'], description: 'List Android devices.' },
@@ -372,6 +477,23 @@ const QUERY_ALIASES: Record<string, string[]> = {
   turbo: ['monorepo', 'build', 'cache'],
   peer: ['npm', 'pnpm', 'install', 'dependencies'],
   flaky: ['test', 'retry', 'jest', 'vitest'],
+  server: ['service', 'status', 'logs', 'process', 'port', 'config'],
+  service: ['status', 'logs', 'process', 'port', 'config', 'dependencies'],
+  offline: ['local', 'status', 'version', 'diagnose', 'logs'],
+  local: ['status', 'version', 'which', 'where', 'check'],
+  diagnose: ['doctor', 'status', 'logs', 'check', 'verify'],
+  repair: ['diagnose', 'fix', 'verify', 'test'],
+  incident: ['status', 'logs', 'describe', 'netstat', 'ss'],
+  runtime: ['version', 'which', 'where', 'path'],
+  path: ['which', 'where', 'version', 'runtime'],
+  eperm: ['permissions', 'icacls', 'chmod', 'chown', 'status'],
+  eaddrinuse: ['netstat', 'ss', 'lsof', 'port', 'process'],
+  refused: ['port', 'netstat', 'curl', 'logs', 'status'],
+  timeout: ['ping', 'curl', 'traceroute', 'dns', 'logs'],
+  dockerized: ['docker', 'compose', 'container', 'logs', 'status'],
+  k3s: ['kubernetes', 'kubectl', 'pods', 'nodes'],
+  brew: ['install', 'version', 'status'],
+  winget: ['install', 'search', 'version'],
 };
 
 let cachedKnownTerms: string[] | null = null;
@@ -398,10 +520,11 @@ export async function suggestCommands(input: string, cwd = process.cwd(), limit 
   const query = normalizeQuery(input);
   if (!query || query.startsWith('/')) return [];
 
-  const [dbCommands, memory, project] = await Promise.all([
+  const [dbCommands, memory, project, availableBins] = await Promise.all([
     getCachedDbCommands(),
-    getCommandMemoryRecords(cwd, 80).catch(() => []),
+    getCommandMemoryRecords(cwd, MEMORY_SUGGESTION_WINDOW).catch(() => []),
     getCachedProjectKnowledge(cwd),
+    getCachedAvailableBinaries(cwd),
   ]);
   const suggestions = new Map<string, CommandSuggestion>();
 
@@ -411,6 +534,10 @@ export async function suggestCommands(input: string, cwd = process.cwd(), limit 
   const queryDomain = inferDomain(expandedQuery);
   const cliIntentBlob = `${queryLower} ${expandedQuery.toLowerCase()}`;
   const cliIntent = inferCliIntentMode(cliIntentBlob);
+  const runtimeProbeTarget = inferRuntimeProbeTarget(cliIntentBlob);
+  const queryTokens = expandedQuery.split(/\s+/).filter(Boolean);
+  const lowSignalQuery = queryTokens.length <= 1 && queryLower.length < 8;
+  const serverIncidentHint = isServerIncidentIntent(cliIntentBlob);
   const isProjectEntry = new Set(project);
   const cwdRel = workspaceRelCwd(cwd);
 
@@ -425,16 +552,22 @@ export async function suggestCommands(input: string, cwd = process.cwd(), limit 
       // Base prefix score high enough to always outrank fuzzy (which maxes ~140)
       // Coverage bonus rewards longer typed prefixes, exact match gets +40
       const prefixScore = 160 + Math.round(coverage * 60) + (cmdLower === queryLower ? 40 : 0)
-        + (source === 'project' ? 36 : 0)
+        + (source === 'project' ? PROJECT_SOURCE_BOOST : 0)
         + (entry.platforms?.includes(process.platform) ? 10 : 0)
-        + intentModeScoreBoost(cliIntent, entry.command, entry.description);
+        + commandAvailabilityBoost(entry.command, availableBins)
+        + intentModeScoreBoost(cliIntent, entry.command, entry.description)
+        + runtimeProbeBoost(runtimeProbeTarget, entry.command)
+        + serverIncidentStageBoost(serverIncidentHint, entry.command)
+        - incidentDomainPenalty(serverIncidentHint, entry.domain)
+        - runtimeTargetMismatchPenalty(runtimeProbeTarget, entry.command)
+        - commandRiskPenalty(entry.command, cliIntent, lowSignalQuery, serverIncidentHint, queryTokens);
       const existing = suggestions.get(entry.command);
       if (!existing || prefixScore > existing.score) {
         suggestions.set(entry.command, {
           command: entry.command,
           score: prefixScore,
           source,
-          reason: source === 'project' ? entry.description : entry.domain,
+          reason: source === 'project' ? entry.description : commandCategoryLabel(entry),
         });
       }
       continue;
@@ -442,15 +575,22 @@ export async function suggestCommands(input: string, cwd = process.cwd(), limit 
     const score = scoreKnowledge(entry, query, expandedQuery, queryDomain, cliIntent);
     if (score <= 0) continue;
     const source: 'project' | 'database' = isProjectEntry.has(entry) ? 'project' : 'database';
-    const sourceBoost = source === 'project' ? 36 : 0;
+    const sourceBoost = source === 'project' ? PROJECT_SOURCE_BOOST : 0;
+    const capabilityBoost = commandAvailabilityBoost(entry.command, availableBins);
+    const safetyBoost = lowSignalQuery && isReadOnlyCommand(entry.command) ? LOCAL_FIRST_SAFETY_BOOST : 0;
+    const runtimeBoost = runtimeProbeBoost(runtimeProbeTarget, entry.command);
+    const incidentBoost = serverIncidentStageBoost(serverIncidentHint, entry.command);
+    const incidentPenalty = incidentDomainPenalty(serverIncidentHint, entry.domain);
+    const runtimeMismatchPenalty = runtimeTargetMismatchPenalty(runtimeProbeTarget, entry.command);
+    const riskPenalty = commandRiskPenalty(entry.command, cliIntent, lowSignalQuery, serverIncidentHint, queryTokens);
     const existing = suggestions.get(entry.command);
-    const total = score + sourceBoost;
+    const total = score + sourceBoost + capabilityBoost + safetyBoost + runtimeBoost + incidentBoost - incidentPenalty - runtimeMismatchPenalty - riskPenalty;
     if (!existing || total > existing.score) {
       suggestions.set(entry.command, {
         command: entry.command,
         score: total,
         source,
-        reason: source === 'project' ? entry.description : entry.domain,
+        reason: source === 'project' ? entry.description : commandCategoryLabel(entry),
       });
     }
   }
@@ -466,6 +606,14 @@ export async function suggestCommands(input: string, cwd = process.cwd(), limit 
     const affinityBoost = Math.round(affinity * 42);
     const streakPenalty = record.failures > record.successes && record.runs >= 3 ? 10 : 0;
     const intentMemBoost = intentModeScoreBoost(cliIntent, record.command, '');
+    const signalBoost = memorySignalBoost(record.lastSignal, queryTokens);
+    const capabilityBoost = commandAvailabilityBoost(record.command, availableBins);
+    const safetyBoost = lowSignalQuery && isReadOnlyCommand(record.command) ? LOCAL_FIRST_SAFETY_BOOST : 0;
+    const runtimeBoost = runtimeProbeBoost(runtimeProbeTarget, record.command);
+    const incidentBoost = serverIncidentStageBoost(serverIncidentHint, record.command);
+    const runtimeMismatchPenalty = runtimeTargetMismatchPenalty(runtimeProbeTarget, record.command);
+    const repeatFailurePenalty = memoryFailurePenalty(record.successes, record.failures, record.runs, cliIntent);
+    const riskPenalty = commandRiskPenalty(record.command, cliIntent, lowSignalQuery, serverIncidentHint, queryTokens);
     const score =
       baseScore
       + affinityBoost
@@ -473,11 +621,17 @@ export async function suggestCommands(input: string, cwd = process.cwd(), limit 
       + reliabilityBoost
       - streakPenalty
       + intentMemBoost
+      + signalBoost
+      + capabilityBoost
+      + safetyBoost
+      + runtimeBoost
+      + incidentBoost
       + 15;
+    const total = score - runtimeMismatchPenalty - repeatFailurePenalty - riskPenalty;
     const existing = suggestions.get(record.command);
     const candidate: CommandSuggestion = {
       command: record.command,
-      score,
+      score: total,
       source: 'memory',
       reason: record.lastExit === 0 ? 'worked before' : 'seen before',
     };
@@ -556,11 +710,12 @@ function scoreKnowledge(
   // Build searchable text (cheap string concat, no regex)
   const text = `${entry.command} ${entry.domain} ${entry.tags.join(' ')} ${entry.description}`.toLowerCase();
   const textScore = Math.max(scoreText(text, query), scoreText(text, expandedQuery));
+  const coverageBoost = tokenCoverageBoost(text, expandedQuery);
   const domainBoost = queryDomain && entry.domain === queryDomain ? 28 : 0;
   const platformBoost = entry.platforms?.includes(process.platform) ? 10 : 0;
   const safetyBoost = /\b(status|list|show|check|validate|lint|test|logs?|describe|diff|dry-run|plan|version)\b/i.test(entry.command) ? 6 : 0;
   const intentBoost = intentModeScoreBoost(cliIntent, entry.command, entry.description);
-  return commandScore + textScore + domainBoost + platformBoost + safetyBoost + intentBoost;
+  return commandScore + textScore + coverageBoost + domainBoost + platformBoost + safetyBoost + intentBoost;
 }
 
 function scoreText(text: string, query: string): number {
@@ -587,6 +742,19 @@ function scoreText(text: string, query: string): number {
     }
   }
   return score >= Math.max(14, Math.min(40, tokens.length * 10)) ? score : 0;
+}
+
+function tokenCoverageBoost(text: string, query: string): number {
+  const tokens = query.split(/\s+/).filter((token) => token.length >= 3);
+  if (tokens.length === 0) return 0;
+  const lower = text.toLowerCase();
+  let hits = 0;
+  for (const token of tokens) {
+    if (lower.includes(token)) hits++;
+  }
+  if (hits === 0) return -8;
+  const ratio = hits / tokens.length;
+  return Math.round(ratio * 22);
 }
 
 function escapeRegex(value: string): string {
@@ -649,6 +817,181 @@ function intentModeScoreBoost(mode: CliIntentMode, cmd: string, description: str
   }
 }
 
+function isServerIncidentIntent(blob: string): boolean {
+  return /\b(server|service|api|backend|frontend|nginx|apache|worker|daemon|unreachable|down|latency|timeout|500|502|503|504|connection refused)\b/.test(blob);
+}
+
+type RuntimeProbeTarget = 'python' | 'node' | 'docker' | 'git' | 'java' | 'rust' | null;
+
+function inferRuntimeProbeTarget(blob: string): RuntimeProbeTarget {
+  const b = blob.toLowerCase();
+  const wantsRuntimeHelp =
+    /\b(install|get|setup|set up|do i have|which|version|path|not found|not recognized|missing)\b/.test(b)
+    || fuzzyTokenMatch(b, ['install', 'setup', 'version', 'which', 'path', 'missing', 'recognized']);
+  if (!wantsRuntimeHelp) return null;
+  if (/\b(python|py)\b/.test(b) || fuzzyTokenMatch(b, ['python', 'py'])) return 'python';
+  if (/\b(node|npm)\b/.test(b) || fuzzyTokenMatch(b, ['node', 'npm'])) return 'node';
+  if (/\b(docker|compose)\b/.test(b) || fuzzyTokenMatch(b, ['docker', 'compose'])) return 'docker';
+  if (/\bgit\b/.test(b) || fuzzyTokenMatch(b, ['git'])) return 'git';
+  if (/\b(java|jdk|javac)\b/.test(b) || fuzzyTokenMatch(b, ['java', 'jdk', 'javac'])) return 'java';
+  if (/\b(rust|rustc|cargo)\b/.test(b) || fuzzyTokenMatch(b, ['rust', 'rustc', 'cargo'])) return 'rust';
+  return null;
+}
+
+function runtimeProbeBoost(target: RuntimeProbeTarget, command: string): number {
+  if (!target) return 0;
+  const c = command.toLowerCase();
+  const targetMatch =
+    (target === 'python' && /\b(python|py)\b/.test(c))
+    || (target === 'node' && /\b(node|npm)\b/.test(c))
+    || (target === 'docker' && /\bdocker\b/.test(c))
+    || (target === 'git' && /\bgit\b/.test(c))
+    || (target === 'java' && /\b(java|javac|jdk)\b/.test(c))
+    || (target === 'rust' && /\b(rust|rustc|cargo)\b/.test(c));
+  if (!targetMatch) {
+    if (/\binstall\b/.test(c)) return -36;
+    return 0;
+  }
+  const probe = /\b(where|which|command -v|--version|-v\b|version|py -0|py -v|status)\b/.test(c);
+  const installish = /\b(install|setup|uninstall|upgrade|update)\b/.test(c);
+  const destructive = /\b(remove|delete|destroy|drop|prune)\b/.test(c);
+  if (probe) return 46;
+  if (installish) return -120;
+  if (destructive) return -36;
+  return 8;
+}
+
+function runtimeTargetMismatchPenalty(target: RuntimeProbeTarget, command: string): number {
+  if (!target) return 0;
+  const c = command.toLowerCase();
+  const installish = /\b(install|setup|uninstall|upgrade|update|add)\b/.test(c);
+  if (!installish) return 0;
+  if (commandMentionsRuntimeTarget(target, c)) return 0;
+  if (isReadOnlyCommand(c)) return 0;
+  return TOP_TIER ? 72 : ADVANCED_TIER ? 56 : 40;
+}
+
+function commandMentionsRuntimeTarget(target: RuntimeProbeTarget, lowerCommand: string): boolean {
+  if (target === 'python') return /\b(python|py|pip|pytest)\b/.test(lowerCommand);
+  if (target === 'node') return /\b(node|npm|pnpm|yarn|bun)\b/.test(lowerCommand);
+  if (target === 'docker') return /\b(docker|compose|container)\b/.test(lowerCommand);
+  if (target === 'git') return /\bgit\b/.test(lowerCommand);
+  if (target === 'java') return /\b(java|javac|jdk|mvn|gradle)\b/.test(lowerCommand);
+  if (target === 'rust') return /\b(rust|rustc|cargo)\b/.test(lowerCommand);
+  return false;
+}
+
+function commandAvailabilityBoost(command: string, availableBins: Set<string>): number {
+  const binary = commandPrimaryBinary(command);
+  if (!binary) return 0;
+  if (SHELL_BUILTINS.has(binary)) return 3;
+  return availableBins.has(binary) ? (TOP_TIER ? 14 : ADVANCED_TIER ? 11 : 8) : 0;
+}
+
+function commandPrimaryBinary(command: string): string | null {
+  const tokens = command.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return null;
+  let token = tokens[0].replace(/^['"]|['"]$/g, '');
+  if (token === 'sudo' || token === 'env' || token === 'time') token = (tokens[1] || '').replace(/^['"]|['"]$/g, '');
+  if (!token) return null;
+  token = token.replace(/\\/g, '/');
+  token = path.basename(token).toLowerCase();
+  token = token.replace(/\.(cmd|exe|bat|ps1|com|sh)$/i, '');
+  return token || null;
+}
+
+function fuzzyTokenMatch(blob: string, candidates: string[]): boolean {
+  const tokens = blob.split(/[^a-z0-9.+#-]+/).filter((token) => token.length >= 2);
+  for (const token of tokens) {
+    for (const candidate of candidates) {
+      const threshold = Math.max(0.72, typoSimilarityThreshold(candidate) - 0.04);
+      if (stringSimilarity(token, candidate) >= threshold) return true;
+    }
+  }
+  return false;
+}
+
+function serverIncidentStageBoost(serverIncident: boolean, command: string): number {
+  if (!serverIncident) return 0;
+  const cmd = command.toLowerCase();
+  if (/\b(get-process|tasklist|ps aux|systemctl status|docker ps|docker compose ps|kubectl get pods|pm2 status)\b/.test(cmd)) return 28;
+  if (/\b(log|logs|journalctl|tail|kubectl logs|docker logs|compose logs|eventlog|dmesg)\b/.test(cmd)) return 24;
+  if (/\b(config|validate|lint|describe|inspect|show)\b/.test(cmd)) return 20;
+  if (/\b(netstat|ss |ss -|lsof|test-netconnection|nc -v|curl -i|curl -v|ping|traceroute|tracert)\b/.test(cmd)) return 16;
+  if (/\b(whoami|id|ls -l|icacls|chmod|chown)\b/.test(cmd)) return 12;
+  if (/\b(install|npm ls|pip check|cargo audit|go mod|composer install)\b/.test(cmd)) return 10;
+  if (/\b(version|--version|runtime|node -v|python --version|java -version)\b/.test(cmd)) return 8;
+  return 0;
+}
+
+function incidentDomainPenalty(serverIncident: boolean, domain: Domain): number {
+  if (!serverIncident) return 0;
+  return (domain === 'devops' || domain === 'observability' || domain === 'network' || domain === 'system') ? 0 : 18;
+}
+
+function commandRiskPenalty(
+  command: string,
+  mode: CliIntentMode,
+  lowSignalQuery: boolean,
+  serverIncident: boolean,
+  queryTokens: string[],
+): number {
+  let penalty = 0;
+  if (isPotentiallyDestructive(command)) {
+    if (mode === 'mutate') penalty += lowSignalQuery ? 8 : 5;
+    else if (mode === 'verify' || mode === 'diagnose' || mode === 'discover') penalty += lowSignalQuery ? 34 : 24;
+    else penalty += lowSignalQuery ? 30 : 20;
+  }
+  if (serverIncident && !isReadOnlyCommand(command)) penalty += 14;
+  penalty += queryTemplatePenalty(command, queryTokens);
+  return penalty;
+}
+
+function isPotentiallyDestructive(command: string): boolean {
+  const c = command.toLowerCase();
+  return /\b(rm\s+-rf|del\s+\/[sqf]|remove-item\b.*-recurse|git reset --hard|git clean -fd|drop\s+database|truncate\s+table|terraform destroy|helm uninstall|kubectl delete|docker system prune|docker image prune|npm uninstall|pip uninstall|cargo clean)\b/.test(c);
+}
+
+function isReadOnlyCommand(command: string): boolean {
+  const c = command.toLowerCase();
+  return /\b(status|list|show|get |describe|inspect|which|where|whoami|version|check|validate|lint|test|logs?|tail|diff|plan|doctor|ping|conninfo|dry-run)\b/.test(c);
+}
+
+function queryTemplatePenalty(command: string, queryTokens: string[]): number {
+  const cmd = command.toLowerCase();
+  let penalty = 0;
+  if (/\b(example\.com|playbook\.yml|tfplan|database\.sqlite)\b/.test(cmd)) penalty += 14;
+  if (/<[^>]+>/.test(cmd) || /\*\.(ya?ml|json|log)\b/.test(cmd)) penalty += 8;
+  if (queryTokens.some((token) => token.length >= 3 && cmd.includes(token))) penalty = Math.max(0, penalty - 8);
+  return penalty;
+}
+
+function memorySignalBoost(signal: string, queryTokens: string[]): number {
+  if (!signal) return 0;
+  const blob = signal.toLowerCase();
+  let hits = 0;
+  for (const token of queryTokens) {
+    if (token.length < 3) continue;
+    if (blob.includes(token)) hits++;
+  }
+  if (hits === 0) return 0;
+  return Math.min(18, hits * 5 + 3);
+}
+
+function memoryFailurePenalty(successes: number, failures: number, runs: number, mode: CliIntentMode): number {
+  if (runs < 3) return 0;
+  const rate = runs > 0 ? successes / runs : 0.5;
+  if (rate >= 0.45) return 0;
+  if (mode === 'diagnose') return Math.round((0.45 - rate) * 12);
+  return Math.round((0.45 - rate) * 20) + (failures > successes ? 6 : 0);
+}
+
+function commandCategoryLabel(entry: CommandKnowledge): string {
+  const orderedTags = ['diagnose', 'doctor', 'status', 'logs', 'verify', 'test', 'lint', 'build', 'install', 'deploy', 'security', 'network', 'database'];
+  const tag = orderedTags.find((t) => entry.tags.some((x) => x.toLowerCase() === t));
+  return tag ? `${entry.domain}:${tag}` : entry.domain;
+}
+
 function workspaceRelCwd(cwd: string): string {
   const rel = path.relative(PROJECT_ROOT, path.resolve(cwd));
   if (!rel) return '.';
@@ -692,7 +1035,11 @@ function expandQueryInner(query: string): string {
     if (token.length >= 3 && directAliases.length === 0) {
       const nearTerms = knownTerms
         .map((term) => ({ term, similarity: stringSimilarity(token, term) }))
-        .filter((item) => item.term !== token && item.similarity >= typoSimilarityThreshold(token))
+        .filter((item) =>
+          item.term !== token
+          && item.similarity >= typoSimilarityThreshold(token)
+          && !(item.term.startsWith(token) && item.term.length - token.length >= 4)
+        )
         .sort((a, b) => b.similarity - a.similarity)
         .slice(0, 3)
         .map((item) => item.term);
@@ -714,6 +1061,13 @@ function expandQueryInner(query: string): string {
     [/\bpeer\s+dep(endency)?\b/, 'npm ls pnpm why install'],
     [/\bflaky\s+test\b/, 'test vitest jest retry'],
     [/\bcicd\b|\bpipeline\b|\bgithub\s+actions\b/, 'gh run actions ci workflow'],
+    [/\boffline\b|\blocal[-\s]?first\b/, 'status version diagnose logs local'],
+    [/\binstall\s+(python|node|docker|git|java|jdk|rust)\b/, 'where which version path runtime'],
+    [/\bserver\s+(down|error|failing|crash|issue)\b|\bservice\s+(down|error|failing|issue)\b/, 'status logs config netstat port dependency runtime'],
+    [/\bcommand\s+not\s+found\b|\bnot\s+recognized\b/, 'where which path install runtime'],
+    [/\bpermission\s+denied\b|\beperm\b|\beacces\b/, 'permissions ownership whoami icacls chmod'],
+    [/\bconnection\s+refused\b|\bconnection\s+reset\b/, 'port netstat ss curl logs status'],
+    [/\bslow\b|\blatency\b|\btimeout\b/, 'ping traceroute curl dns logs status'],
   ];
   for (const [pattern, alias] of phraseAliases) {
     if (pattern.test(query)) additions.push(alias);

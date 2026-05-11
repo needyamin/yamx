@@ -130,6 +130,35 @@ export const WEB_HTML = `<!doctype html>
                   <label class="tool-filter-label">Filter <input type="search" id="tool-filter" class="tool-filter" placeholder="Name or description…" autocomplete="off"></label>
                   <div id="tools-mount"></div>
                 </div>
+                <div class="card engineering-card">
+                  <h3 class="h3">Engineering readiness</h3>
+                  <p class="muted">Offline-first diagnostics for VM baseline, full-stack/API, DevOps, network, and defensive security workflows.</p>
+                  <div class="engineering-controls">
+                    <label>Suite
+                      <select id="engineering-suite">
+                        <option value="all">all</option>
+                        <option value="vm">vm</option>
+                        <option value="fullstack">fullstack</option>
+                        <option value="devops">devops</option>
+                        <option value="network">network</option>
+                        <option value="security">security</option>
+                      </select>
+                    </label>
+                    <label>Profile
+                      <select id="engineering-profile">
+                        <option value="standard">standard</option>
+                        <option value="deep">deep</option>
+                      </select>
+                    </label>
+                    <div class="engineering-btns">
+                      <button type="button" id="btn-engineering-readiness">Readiness snapshot</button>
+                      <button type="button" id="btn-engineering-run" class="primary">Run challenge</button>
+                    </div>
+                  </div>
+                  <div id="engineering-status" class="status"></div>
+                  <div id="engineering-summary" class="engineering-summary muted"></div>
+                  <pre id="engineering-pre" class="code code-tight"></pre>
+                </div>
               </div>
             </div>
           </div>
@@ -769,6 +798,45 @@ button.danger-text {
   font: inherit;
 }
 
+.engineering-controls {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 10px;
+}
+.engineering-controls label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.engineering-controls select {
+  width: 100%;
+  max-width: 220px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+}
+.engineering-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.engineering-summary {
+  font-size: 12px;
+  line-height: 1.45;
+  margin-bottom: 10px;
+}
+.engineering-summary-grid {
+  display: grid;
+  gap: 6px;
+}
+.engineering-summary .ok { color: var(--accent); }
+.engineering-summary .warn { color: var(--warn); }
+.engineering-summary .bad { color: var(--bad); }
+
 details.tool-block {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1102,6 +1170,11 @@ export const WEB_JS = `
   const routesPre = document.getElementById('routes-pre');
   const toolsMount = document.getElementById('tools-mount');
   const toolFilter = document.getElementById('tool-filter');
+  const engineeringSuite = document.getElementById('engineering-suite');
+  const engineeringProfile = document.getElementById('engineering-profile');
+  const engineeringStatus = document.getElementById('engineering-status');
+  const engineeringSummary = document.getElementById('engineering-summary');
+  const engineeringPre = document.getElementById('engineering-pre');
   var toolsListCache = [];
 
   const PANEL_TITLES = {
@@ -1133,6 +1206,13 @@ export const WEB_JS = `
     sessionsStatus.textContent = msg || '';
     sessionsStatus.className = 'status show ' + (kind || '');
     if (!msg) sessionsStatus.className = 'status';
+  }
+
+  function setEngineeringStatus(msg, kind) {
+    if (!engineeringStatus) return;
+    engineeringStatus.textContent = msg || '';
+    engineeringStatus.className = 'status show ' + (kind || '');
+    if (!msg) engineeringStatus.className = 'status';
   }
 
   function getPath(obj, path) {
@@ -1759,6 +1839,77 @@ export const WEB_JS = `
     toolsMount.innerHTML = '<p class="muted tools-count">' + shown + ' / ' + toolsListCache.length + ' tools</p>' + html;
   }
 
+  function renderEngineeringReport(report) {
+    if (!engineeringSummary || !engineeringPre) return;
+    if (!report || typeof report !== 'object') {
+      engineeringSummary.innerHTML = '<span class="bad">No report.</span>';
+      engineeringPre.textContent = '';
+      return;
+    }
+
+    var counts = report.counts || {};
+    var scores = report.domainScores || {};
+    var vmEvidence = (report.vmHint && report.vmHint.evidence) ? report.vmHint.evidence : [];
+    var recs = Array.isArray(report.recommendations) ? report.recommendations : [];
+
+    var summary = '';
+    summary += '<div class="engineering-summary-grid">';
+    summary += '<div><strong>Suite:</strong> <code>' + escapeHtml(report.suite || 'all') + '</code> ';
+    summary += '<strong>Profile:</strong> <code>' + escapeHtml(report.profile || 'standard') + '</code></div>';
+    summary += '<div><strong>Overall:</strong> <span class="' + (report.overallScore >= 85 ? 'ok' : report.overallScore >= 60 ? 'warn' : 'bad') + '">' + Number(report.overallScore || 0) + '/100</span></div>';
+    summary += '<div><strong>Checks:</strong> <span class="ok">pass ' + Number(counts.pass || 0) + '</span> | <span class="warn">warn ' + Number(counts.warn || 0) + '</span> | <span class="bad">fail ' + Number(counts.fail || 0) + '</span></div>';
+    summary += '<div><strong>Required failures:</strong> <span class="' + (Number(counts.requiredFail || 0) === 0 ? 'ok' : 'bad') + '">' + Number(counts.requiredFail || 0) + '</span></div>';
+    summary += '<div><strong>Domain scores:</strong> vm=' + Number(scores.vm || 0) + ', fullstack=' + Number(scores.fullstack || 0) + ', devops=' + Number(scores.devops || 0) + ', network=' + Number(scores.network || 0) + ', security=' + Number(scores.security || 0) + '</div>';
+    summary += '<div><strong>VM signal:</strong> ' + ((report.vmHint && report.vmHint.likelyVirtualized) ? '<span class="warn">likely virtualized</span>' : '<span class="ok">no explicit VM signature</span>') + '</div>';
+    if (vmEvidence.length) summary += '<div><strong>VM evidence:</strong> ' + escapeHtml(String(vmEvidence[0])) + '</div>';
+    if (recs.length) summary += '<div><strong>Top recommendation:</strong> ' + escapeHtml(String(recs[0])) + '</div>';
+    summary += '</div>';
+    engineeringSummary.innerHTML = summary;
+
+    engineeringPre.textContent = JSON.stringify(report, null, 2);
+  }
+
+  async function loadEngineeringReadiness(force) {
+    if (!engineeringPre) return;
+    setEngineeringStatus('Loading readinessâ€¦', 'ok');
+    if (!engineeringSummary) return;
+    engineeringSummary.innerHTML = '';
+    engineeringPre.textContent = 'Loadingâ€¦';
+    try {
+      var res = await fetch('/api/engineering/readiness' + (force ? '?force=1' : ''));
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok || !data.ok) throw new Error((data && data.error) || 'readiness failed');
+      renderEngineeringReport(data.report || {});
+      setEngineeringStatus((data.report && data.report.ok) ? 'Readiness passed.' : 'Readiness has gaps.', (data.report && data.report.ok) ? 'ok' : 'err');
+    } catch (e) {
+      setEngineeringStatus('Readiness failed: ' + e.message, 'err');
+      engineeringPre.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  async function runEngineeringChallenge(force) {
+    if (!engineeringPre) return;
+    var suite = engineeringSuite && engineeringSuite.value ? engineeringSuite.value : 'all';
+    var profile = engineeringProfile && engineeringProfile.value ? engineeringProfile.value : 'standard';
+    setEngineeringStatus('Running challengeâ€¦', 'ok');
+    if (engineeringSummary) engineeringSummary.innerHTML = '';
+    engineeringPre.textContent = 'Runningâ€¦';
+    try {
+      var res = await fetch('/api/engineering/challenge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ suite: suite, profile: profile, force: !!force })
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok || !data.ok) throw new Error((data && data.error) || 'challenge failed');
+      renderEngineeringReport(data.report || {});
+      setEngineeringStatus((data.report && data.report.ok) ? 'Challenge passed for required checks.' : 'Challenge finished with required gaps.', (data.report && data.report.ok) ? 'ok' : 'err');
+    } catch (e) {
+      setEngineeringStatus('Challenge failed: ' + e.message, 'err');
+      engineeringPre.textContent = 'Error: ' + e.message;
+    }
+  }
+
   async function sessionRowAction(ev) {
     var btn = ev.currentTarget;
     var act = btn.dataset.act;
@@ -1892,15 +2043,35 @@ export const WEB_JS = `
       var j2 = await r2.json();
       toolsListCache = j2.tools || [];
       renderToolsList(toolFilter ? toolFilter.value : '');
+      await loadEngineeringReadiness(false);
     } catch (e) {
       if (apiDocMount) apiDocMount.textContent = 'Error: ' + e.message;
       routesPre.textContent = 'Error: ' + e.message;
+      if (engineeringPre) engineeringPre.textContent = 'Error: ' + e.message;
     }
   }
 
   if (toolFilter) {
     toolFilter.addEventListener('input', function () {
       renderToolsList(toolFilter.value);
+    });
+  }
+
+  var btnEngineeringReadiness = document.getElementById('btn-engineering-readiness');
+  if (btnEngineeringReadiness) {
+    btnEngineeringReadiness.addEventListener('click', function () {
+      loadEngineeringReadiness(true).catch(function (e) {
+        setEngineeringStatus(e.message || String(e), 'err');
+      });
+    });
+  }
+
+  var btnEngineeringRun = document.getElementById('btn-engineering-run');
+  if (btnEngineeringRun) {
+    btnEngineeringRun.addEventListener('click', function () {
+      runEngineeringChallenge(true).catch(function (e) {
+        setEngineeringStatus(e.message || String(e), 'err');
+      });
     });
   }
 

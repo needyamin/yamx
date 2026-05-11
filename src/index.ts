@@ -20,7 +20,7 @@ import { Config, type YamConfig } from './config/index.js';
 import { ContextEngine } from './context.js';
 import { UI } from './ui.js';
 import { Provider, Message } from './providers/base.js';
-import { createProvider, normalizeProviderName, resolveCloudApiKey, type ProviderName } from './providers/factory.js';
+import { createProvider, normalizeProviderName, resolveCloudApiKey, hasCloudApiKey, type ProviderName } from './providers/factory.js';
 import { execSync } from 'child_process';
 import { SessionStore, type ChatSession } from './session-store.js';
 import { getToolCount } from './tools/registry.js';
@@ -140,21 +140,6 @@ function envKeyForProvider(providerId: string): string {
   }
 }
 
-/** Cloud providers need an API key; local Ollama does not by default. */
-function providerUsesApiKey(p: ProviderName): boolean {
-  return p !== 'ollama';
-}
-
-function hasCloudApiKey(cfg: YamConfig, provider: ProviderName): boolean {
-  if (!providerUsesApiKey(provider)) return true;
-  const key = resolveCloudApiKey(cfg, provider as Exclude<ProviderName, 'ollama'>);
-  return !!String(key || '').trim();
-}
-
-/**
- * True when the user needs interactive setup before a normal chat run:
- * no ~/.yamx/config.json yet, or no key (config + env) for the resolved default/cloud provider.
- */
 function needsAutoOnboarding(
   configFileExists: boolean,
   cfg: YamConfig,

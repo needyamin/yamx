@@ -38,6 +38,18 @@ export function resolveCloudApiKey(cfg: any, provider: Exclude<ProviderName, 'ol
   }
 }
 
+/** Cloud providers need an API key; Ollama does not. */
+export function providerUsesCloudApiKey(p: ProviderName): boolean {
+  return p !== 'ollama';
+}
+
+/** True when config + env has a credential for this provider (always true for Ollama). */
+export function hasCloudApiKey(cfg: any, provider: ProviderName): boolean {
+  if (!providerUsesCloudApiKey(provider)) return true;
+  const key = resolveCloudApiKey(cfg, provider as Exclude<ProviderName, 'ollama'>);
+  return Boolean(key && String(key).trim());
+}
+
 export function createProvider(name: string, model: string | undefined, cfg: any): Provider {
   const provider = normalizeProviderName(name);
   switch (provider) {

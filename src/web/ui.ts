@@ -2,7 +2,9 @@ export const WEB_HTML = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#05100a">
   <title>YamX Web</title>
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -11,31 +13,31 @@ export const WEB_HTML = `<!doctype html>
     <aside class="sidebar" id="sidebar" aria-label="Main navigation">
       <div class="sidebar-brand">
         <div class="brand">YamX</div>
-        <div class="brand-tag">Web</div>
+        <div class="brand-tag">Execution Console</div>
       </div>
       <div class="sidebar-meta">
-        <div class="sub" id="cwd" title="Working directory">cwd: .</div>
+        <div class="sub" id="cwd" title="Working directory and model (when loaded)">cwd: .</div>
         <span class="ver" id="app-ver"></span>
       </div>
       <nav class="sidebar-nav" role="tablist" aria-orientation="vertical">
         <button type="button" class="nav-item active" data-panel="terminal" role="tab" aria-selected="true">
-          <span class="nav-ico" aria-hidden="true">▸</span>
+          <span class="nav-ico" aria-hidden="true">[>]</span>
           <span class="nav-label">Shell</span>
         </button>
         <button type="button" class="nav-item" data-panel="settings" role="tab" aria-selected="false">
-          <span class="nav-ico" aria-hidden="true">◎</span>
+          <span class="nav-ico" aria-hidden="true">[*]</span>
           <span class="nav-label">Settings</span>
         </button>
         <button type="button" class="nav-item" data-panel="sessions" role="tab" aria-selected="false">
-          <span class="nav-ico" aria-hidden="true">◇</span>
+          <span class="nav-ico" aria-hidden="true">[#]</span>
           <span class="nav-label">Sessions</span>
         </button>
         <button type="button" class="nav-item" data-panel="tools" role="tab" aria-selected="false">
-          <span class="nav-ico" aria-hidden="true">⌘</span>
+          <span class="nav-ico" aria-hidden="true">[+]</span>
           <span class="nav-label">Tools &amp; API</span>
         </button>
       </nav>
-      <p class="sidebar-hint muted">Local control plane · bind stays on loopback</p>
+      <p class="sidebar-hint muted">Local control plane | bind stays on loopback</p>
     </aside>
     <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
 
@@ -55,25 +57,110 @@ export const WEB_HTML = `<!doctype html>
         <section id="panel-terminal" class="panel panel-shell active" role="tabpanel" aria-labelledby="tab-terminal-label">
           <span id="tab-terminal-label" class="sr-only">Shell</span>
           <div class="shell-stage">
-            <div class="shell-card" role="region" aria-label="YamX shell">
-              <div class="terminal-workspace">
-                <div class="terminal-chrome">
+            <div class="shell-split">
+              <div class="shell-split-main">
+                <div class="shell-card" role="region" aria-label="YamX shell">
+                  <div class="terminal-workspace">
+                    <div class="terminal-chrome">
                   <span class="chrome-title">Conversation</span>
-                  <span class="chrome-hint muted">You · instant · reply when ready</span>
+                  <span class="chrome-hint muted">You | instant | reply when ready</span>
                 </div>
+                <details class="execution-lab" id="execution-quick">
+                  <summary>Execution mode · Provider</summary>
+                  <div class="execution-toolbar" role="group" aria-label="Execution controls">
+                    <label class="mode-select-wrap">Execution mode
+                      <select id="command-mode" class="mode-select" aria-label="Execution mode">
+                        <option value="auto">auto</option>
+                        <option value="shell">shell</option>
+                        <option value="agent">agent</option>
+                      </select>
+                    </label>
+                    <label class="mode-select-wrap">Provider
+                      <select id="provider-quick" class="mode-select" aria-label="Default LLM provider" title="Switch default provider (saved to config; next chat uses it)"></select>
+                    </label>
+                  </div>
+                  <div class="provider-readiness-row" id="provider-readiness" role="status" aria-live="polite">Loading provider status...</div>
+                </details>
+                <details class="execution-lab" id="execution-lab">
+                  <summary>Execution lab</summary>
+                  <div class="execution-lab-grid">
+                    <label>Shell runtime
+                      <select id="shell-runtime">
+                        <option value="auto">auto</option>
+                        <option value="cmd">cmd</option>
+                        <option value="powershell">powershell</option>
+                        <option value="pwsh">pwsh</option>
+                        <option value="bash">bash</option>
+                        <option value="sh">sh</option>
+                        <option value="zsh">zsh</option>
+                        <option value="fish">fish</option>
+                      </select>
+                    </label>
+                    <label>Timeout (seconds)
+                      <input id="timeout-sec" type="number" min="1" max="600" step="1" value="120" inputmode="numeric">
+                    </label>
+                    <label>Output cap (chars)
+                      <input id="max-chars" type="number" min="1000" max="500000" step="1000" value="80000" inputmode="numeric">
+                    </label>
+                    <label>CWD override (optional)
+                      <input id="cwd-override" type="text" placeholder=". | subdir | path inside project">
+                    </label>
+                  </div>
+                  <div class="execution-profiles" id="execution-profiles">
+                    <span class="exec-profile-label">Profiles:</span>
+                    <button type="button" class="exec-profile" data-profile="balanced">balanced</button>
+                    <button type="button" class="exec-profile" data-profile="fast">fast</button>
+                    <button type="button" class="exec-profile" data-profile="deep">deep</button>
+                    <button type="button" class="exec-profile" data-profile="forensics">forensics</button>
+                  </div>
+                  <div class="runbook-block">
+                    <label class="runbook-label" for="runbook-input">Runbook (one step per line; prefix with <code>agent:</code> for AI step)</label>
+                    <textarea id="runbook-input" spellcheck="false" placeholder="git status&#10;npm run build&#10;agent: Summarize failures and next action."></textarea>
+                    <div class="runbook-row">
+                      <label class="inline-check"><input type="checkbox" id="runbook-continue"> Continue on error</label>
+                      <button type="button" id="btn-runbook-sample">Load sample</button>
+                      <button type="button" id="btn-runbook-clear">Clear</button>
+                      <button type="button" id="btn-runbook-run" class="primary">Run runbook</button>
+                    </div>
+                  </div>
+                </details>
                 <main class="terminal" id="terminal" aria-live="polite">
-              <div class="terminal-empty" id="terminal-empty">
-                <div class="empty-icon" aria-hidden="true">◇</div>
-                <p class="empty-title">Start a turn</p>
-                <p class="muted empty-hint">Your message appears here right away. YamX or the shell replies below when ready.</p>
+                  <div class="terminal-empty" id="terminal-empty">
+                    <div class="empty-icon" aria-hidden="true">[#]</div>
+                    <p class="empty-title">Start a turn</p>
+                    <p class="muted empty-hint">Your message appears here right away. YamX or the shell replies below when ready.</p>
+                  </div>
+                    </main>
+                    <div class="terminal-tools" id="terminal-tools">
+                      <button type="button" id="btn-clear-terminal">Clear terminal</button>
+                      <button type="button" id="btn-copy-last-output">Copy last output</button>
+                      <button type="button" id="btn-export-transcript">Export transcript</button>
+                    </div>
+                    <form class="commandbar" id="command-form">
+                      <span class="prompt" aria-hidden="true">&gt;</span>
+                      <input id="command-input" name="command" autocomplete="off" spellcheck="false" placeholder="Type command or task..." autofocus aria-label="Message or command">
+                      <button type="submit" title="Send to YamX">Send</button>
+                    </form>
+                  </div>
+                </div>
               </div>
-            </main>
-                <form class="commandbar" id="command-form">
-                  <span class="prompt" aria-hidden="true">&gt;</span>
-                  <input id="command-input" name="command" autocomplete="off" spellcheck="false" placeholder="Message YamX…" autofocus aria-label="Message or command">
-                  <button type="submit" title="Send to YamX">Send</button>
-                </form>
-              </div>
+              <aside class="shell-split-side" aria-label="Chat sessions sidebar">
+                <div class="shell-sessions-panel">
+                  <header class="shell-sessions-head">
+                    <span class="shell-sessions-title">Sessions</span>
+                    <span class="shell-sessions-caption muted">~/.yamx/sessions · active switches on next agent message</span>
+                  </header>
+                  <div id="shell-sessions-status" class="status"></div>
+                  <div class="shell-sessions-toolbar">
+                    <button type="button" class="primary compact js-session-new">New</button>
+                    <button type="button" class="compact js-session-refresh">Refresh</button>
+                    <button type="button" class="compact muted-link js-open-sessions-tab" title="Full sessions tab">Expand</button>
+                  </div>
+                  <div class="shell-sessions-scroll table-wrap">
+                    <div id="shell-sessions-mount"></div>
+                  </div>
+                </div>
+              </aside>
             </div>
           </div>
         </section>
@@ -101,8 +188,8 @@ export const WEB_HTML = `<!doctype html>
               <p class="lead">Chat sessions in <code>~/.yamx/sessions/</code>. Full CRUD via this UI or the API. Changing the active session reloads the web agent on the next message.</p>
               <div id="sessions-status" class="status"></div>
               <div class="sessions-toolbar">
-                <button type="button" id="btn-new-session" class="primary">New session</button>
-                <button type="button" id="btn-refresh-sessions">Refresh</button>
+                <button type="button" id="btn-new-session" class="primary js-session-new">New session</button>
+                <button type="button" id="btn-refresh-sessions" class="js-session-refresh">Refresh</button>
               </div>
               <div class="table-wrap">
                 <div id="sessions-mount"></div>
@@ -114,25 +201,33 @@ export const WEB_HTML = `<!doctype html>
         <section id="panel-tools" class="panel" role="tabpanel" aria-labelledby="tab-tools-label">
           <span id="tab-tools-label" class="sr-only">Tools and API</span>
           <div class="panel-scroll">
-            <div class="panel-inner panel-inner-wide">
-              <div class="split-cards">
-                <div class="card api-doc-card">
-                  <h3 class="h3">HTTP API reference</h3>
-                  <p class="muted">Grouped endpoints. Row copies the path. Expand for raw OpenAPI-style export.</p>
-                  <div id="api-doc-mount" class="api-doc-mount"></div>
-                  <details class="raw-api-details">
-                    <summary>Raw <code>/api/routes</code> JSON</summary>
-                    <pre id="routes-pre" class="code code-tight"></pre>
-                  </details>
+            <div class="panel-inner panel-inner-wide panel-inner-tools">
+              <div class="tools-api-stack">
+                <div class="split-cards tools-api-grid tools-api-grid-dual">
+                  <div class="card api-doc-card">
+                    <div class="card-header">
+                      <h3 class="h3">HTTP API reference</h3>
+                      <p class="muted card-lead">Grouped endpoints. Row copies the path. Expand for raw OpenAPI-style export.</p>
+                    </div>
+                    <div id="api-doc-mount" class="api-doc-mount"></div>
+                    <details class="raw-api-details">
+                      <summary>Raw <code>/api/routes</code> JSON</summary>
+                      <pre id="routes-pre" class="code code-tight routes-json"></pre>
+                    </details>
+                  </div>
+                  <div class="card tools-card">
+                    <div class="card-header">
+                      <h3 class="h3">Tool registry</h3>
+                      <label class="tool-filter-label">Filter <input type="search" id="tool-filter" class="tool-filter" placeholder="Name or description..." autocomplete="off"></label>
+                    </div>
+                    <div id="tools-mount" class="tools-mount"></div>
+                  </div>
                 </div>
-                <div class="card tools-card">
-                  <h3 class="h3">Tool registry</h3>
-                  <label class="tool-filter-label">Filter <input type="search" id="tool-filter" class="tool-filter" placeholder="Name or description…" autocomplete="off"></label>
-                  <div id="tools-mount"></div>
-                </div>
-                <div class="card engineering-card">
-                  <h3 class="h3">Engineering readiness</h3>
-                  <p class="muted">Offline-first diagnostics for VM baseline, full-stack/API, DevOps, network, and defensive security workflows.</p>
+                <div class="card engineering-card engineering-card-wide">
+                  <div class="card-header engineering-card-header">
+                    <h3 class="h3">Engineering readiness</h3>
+                    <p class="muted card-lead engineering-card-lead">Offline-first diagnostics for VM baseline, full-stack/API, DevOps, network, and defensive security workflows.</p>
+                  </div>
                   <div class="engineering-controls">
                     <label>Suite
                       <select id="engineering-suite">
@@ -157,7 +252,7 @@ export const WEB_HTML = `<!doctype html>
                   </div>
                   <div id="engineering-status" class="status"></div>
                   <div id="engineering-summary" class="engineering-summary muted"></div>
-                  <pre id="engineering-pre" class="code code-tight"></pre>
+                  <pre id="engineering-pre" class="code code-tight engineering-json"></pre>
                 </div>
               </div>
             </div>
@@ -172,32 +267,83 @@ export const WEB_HTML = `<!doctype html>
 
 export const WEB_CSS = `:root {
   color-scheme: dark;
-  --bg: #0d0f0e;
-  --panel: #141816;
-  --panel-2: #1a1f1c;
-  --line: #2d3632;
-  --text: #e8eeea;
-  --muted: #8a9a91;
-  --accent: #5ee17a;
-  --accent-dim: #3fb95c;
-  --warn: #e6c86e;
-  --bad: #f07178;
-  --shadow: rgba(0, 0, 0, .35);
-  --sidebar-w: 248px;
-  --mainbar-h: 52px;
+  --bg: #040807;
+  --bg-elevated: #0a120f;
+  --panel: #0c1512;
+  --panel-2: #101c18;
+  --line: #1e3d2f;
+  --text: #b4f5cc;
+  --muted: #4d8063;
+  --accent: #00ff88;
+  --accent-dim: #00c770;
+  --accent-soft: rgba(0, 255, 136, 0.15);
+  --cyan: #2ef3d9;
+  --terminal-bg: #020805;
+  --reply-shell: #5cff9a;
+  --reply-chat: #7afcff;
+  --warn: #ffe04d;
+  --bad: #ff4d7d;
+  --shadow: rgba(0, 0, 0, 0.5);
+  --shadow-deep: rgba(0, 0, 0, 0.72);
+  --glow: 0 0 18px rgba(0, 255, 136, 0.22);
+  --sidebar-w: 264px;
+  --mainbar-h: 56px;
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --pad-inline: clamp(12px, 2.8vw, 22px);
+  --pad-panel-y: clamp(18px, 3.5vw, 32px);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --font-mono: "Cascadia Code", "JetBrains Mono", "Fira Code", Consolas, monospace;
+  --font-ui: "Cascadia Code", "Segoe UI", "Noto Sans", sans-serif;
 }
 
 * { box-sizing: border-box; }
 
-html, body {
+html {
+  overflow-x: clip;
   height: 100%;
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 14px/1.45 system-ui, Segoe UI, Roboto, Ubuntu, sans-serif;
+  background-color: var(--bg);
+  color-scheme: dark;
 }
 
-body { min-width: 280px; }
+html, body {
+  margin: 0;
+  background-color: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 var(--font-ui);
+}
+
+body {
+  min-width: 280px;
+  min-height: 100%;
+  min-height: 100dvh;
+  overflow-x: clip;
+  -webkit-text-size-adjust: 100%;
+  background-color: var(--bg);
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  min-height: 100dvh;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 2px,
+      rgba(0, 255, 136, 0.028) 2px,
+      rgba(0, 255, 136, 0.028) 4px
+    ),
+    radial-gradient(55% 42% at 50% -8%, rgba(0, 255, 136, 0.09), transparent 58%),
+    radial-gradient(45% 35% at 102% 96%, rgba(46, 243, 217, 0.06), transparent 52%),
+    linear-gradient(168deg, #030604 0%, var(--bg) 45%, #010302 100%);
+  z-index: 0;
+}
 
 .sr-only {
   position: absolute;
@@ -212,10 +358,11 @@ body { min-width: 280px; }
 }
 
 code {
-  font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  background: var(--panel-2);
+  font: 13px var(--font-mono);
+  background: rgba(0, 255, 136, 0.08);
   padding: 1px 6px;
   border-radius: 4px;
+  border: 1px solid rgba(0, 255, 136, 0.22);
 }
 
 /* App shell: sidebar + main */
@@ -224,6 +371,12 @@ code {
   min-height: 100dvh;
   display: flex;
   align-items: stretch;
+  position: relative;
+  z-index: 1;
+  padding-top: var(--safe-top);
+  padding-right: var(--safe-right);
+  padding-bottom: var(--safe-bottom);
+  padding-left: var(--safe-left);
 }
 
 .sidebar {
@@ -232,10 +385,10 @@ code {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 18px 14px;
-  background: var(--panel);
-  border-right: 1px solid var(--line);
-  box-shadow: 4px 0 24px var(--shadow);
+  padding: 20px 14px 22px;
+  background: linear-gradient(180deg, #0b1512 0%, #08100d 52%, var(--terminal-bg) 100%);
+  border-right: 1px solid rgba(0, 255, 136, 0.18);
+  box-shadow: 4px 0 28px var(--shadow-deep);
 }
 
 .sidebar-brand {
@@ -244,14 +397,22 @@ code {
   gap: 8px;
   flex-wrap: wrap;
 }
-.brand { font-weight: 800; font-size: 1.15rem; letter-spacing: -0.02em; }
+.brand {
+  font-weight: 800;
+  font-size: 1.18rem;
+  letter-spacing: 0.04em;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  text-transform: uppercase;
+  text-shadow: 0 0 20px rgba(0, 255, 136, 0.45), var(--glow);
+}
 .brand-tag {
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: .12em;
-  color: var(--accent);
-  opacity: .9;
+  letter-spacing: .14em;
+  color: var(--cyan);
+  opacity: .95;
 }
 
 .sidebar-meta {
@@ -264,8 +425,9 @@ code {
   font-size: 11px;
   line-height: 1.35;
   overflow-wrap: anywhere;
+  font-family: var(--font-mono);
 }
-.ver { font-size: 10px; color: var(--muted); opacity: .85; }
+.ver { font-size: 10px; color: var(--muted); opacity: .85; font-family: var(--font-mono); }
 
 .sidebar-nav {
   display: flex;
@@ -284,34 +446,36 @@ code {
   margin: 0;
   padding: 10px 12px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
   color: var(--muted);
   font: inherit;
   text-align: left;
   cursor: pointer;
   min-height: 42px;
-  transition: background .12s, color .12s, border-color .12s;
+  transition: background .12s, color .12s, border-color .12s, box-shadow .15s;
 }
 .nav-item:hover {
-  color: var(--text);
-  background: rgba(94, 225, 122, .08);
-  border-color: rgba(45, 54, 50, .6);
+  color: var(--accent-dim);
+  background: rgba(0, 255, 136, 0.08);
+  border-color: rgba(0, 255, 136, 0.25);
+  box-shadow: 0 0 12px rgba(0, 255, 136, 0.12);
 }
 .nav-item.active {
   color: var(--accent);
-  background: var(--panel-2);
-  border-color: var(--line);
+  background: rgba(0, 255, 136, 0.12);
+  border-color: rgba(0, 255, 136, 0.45);
   font-weight: 600;
+  text-shadow: 0 0 10px rgba(0, 255, 136, 0.35);
 }
 .nav-ico {
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   width: 1.25rem;
-  opacity: .75;
+  opacity: .85;
 }
-.nav-item.active .nav-ico { opacity: 1; }
-.nav-label { flex: 1; min-width: 0; }
+.nav-item.active .nav-ico { opacity: 1; color: var(--accent); }
+.nav-label { flex: 1; min-width: 0; font-family: var(--font-mono); }
 
 .sidebar-hint {
   margin: 0;
@@ -319,6 +483,7 @@ code {
   line-height: 1.4;
   padding-top: 8px;
   border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
 }
 
 .sidebar-backdrop {
@@ -326,7 +491,9 @@ code {
   position: fixed;
   inset: 0;
   z-index: 90;
-  background: rgba(0, 0, 0, .45);
+  background: rgba(1, 8, 4, 0.72);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   opacity: 0;
   transition: opacity .2s ease;
 }
@@ -341,19 +508,22 @@ code {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--bg);
+  background: transparent;
 }
 
 .mainbar {
   flex-shrink: 0;
-  height: var(--mainbar-h);
+  min-height: var(--mainbar-h);
+  height: auto;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 14px 0 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-  box-shadow: 0 1px 10px var(--shadow);
+  gap: 10px;
+  row-gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 14px 8px 10px;
+  border-bottom: 1px solid rgba(0, 255, 136, 0.2);
+  background: linear-gradient(180deg, #0c1613 0%, #09100e 100%);
+  box-shadow: 0 4px 24px var(--shadow);
 }
 
 .menu-toggle {
@@ -365,27 +535,31 @@ code {
   padding: 0;
   margin: 0;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--panel-2);
-  color: var(--text);
+  color: var(--accent);
   cursor: pointer;
 }
-.menu-toggle:hover { border-color: var(--accent-dim); }
+.menu-toggle:hover { border-color: var(--accent-dim); box-shadow: var(--glow); }
 .burger {
   display: block;
   width: 18px;
   height: 2px;
-  background: var(--text);
+  background: var(--accent);
   border-radius: 1px;
-  box-shadow: 0 -6px 0 var(--text), 0 6px 0 var(--text);
+  box-shadow: 0 -6px 0 var(--accent), 0 6px 0 var(--accent);
 }
 
 .mainbar-title {
   flex: 1;
   font-weight: 700;
-  font-size: 1rem;
-  letter-spacing: -0.02em;
+  font-size: 1.03rem;
+  letter-spacing: 0.06em;
   min-width: 0;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  text-transform: uppercase;
+  text-shadow: 0 0 12px rgba(0, 255, 136, 0.25);
 }
 .mainbar-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 
@@ -393,15 +567,17 @@ code {
   min-width: 72px;
   text-align: center;
   padding: 5px 10px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
+  border: 1px solid rgba(0, 255, 136, 0.35);
+  background: rgba(0, 255, 136, 0.08);
   color: var(--muted);
-  border-radius: 6px;
+  border-radius: 999px;
   font-size: 12px;
   white-space: nowrap;
+  font-weight: 600;
+  font-family: var(--font-mono);
 }
-.pill.ok { color: var(--accent); border-color: var(--accent-dim); }
-.pill.bad { color: var(--bad); }
+.pill.ok { color: var(--accent); border-color: var(--accent); text-shadow: 0 0 8px rgba(0, 255, 136, 0.4); }
+.pill.bad { color: var(--bad); border-color: rgba(255, 77, 125, 0.5); text-shadow: 0 0 8px rgba(255, 77, 125, 0.35); }
 
 .main-body {
   flex: 1;
@@ -418,7 +594,21 @@ code {
   flex-direction: column;
   overflow: hidden;
 }
-.panel.active { display: flex; }
+.panel.active {
+  display: flex;
+  animation: yamx-panel-in .22s ease;
+}
+
+@keyframes yamx-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 
 .panel-scroll {
   flex: 1;
@@ -428,45 +618,170 @@ code {
 }
 
 .panel-inner {
-  padding: 20px 22px 32px;
+  width: 100%;
+  padding: var(--pad-panel-y) var(--pad-inline) clamp(28px, 5vw, 40px);
   max-width: 960px;
   margin: 0 auto;
 }
 .panel-inner-wide { max-width: 1200px; }
 .panel-inner-settings { max-width: 920px; }
 
-.panel-shell {
-  background: radial-gradient(ellipse 120% 80% at 50% -20%, rgba(94, 225, 122, 0.06), transparent 55%),
+.panel:not(.panel-shell) .panel-scroll {
+  background:
+    radial-gradient(ellipse 90% 65% at 50% -28%, rgba(0, 255, 136, 0.06), transparent 54%),
+    radial-gradient(ellipse 70% 50% at -5% 95%, rgba(46, 243, 217, 0.04), transparent 48%),
     var(--bg);
 }
 
-/* Centered shell card — scroll happens inside .terminal only */
+.panel-shell {
+  background:
+    radial-gradient(ellipse 120% 80% at 50% -18%, rgba(0, 255, 136, 0.07), transparent 58%),
+    radial-gradient(ellipse 80% 55% at 100% 48%, rgba(46, 243, 217, 0.04), transparent 50%),
+    var(--bg);
+}
+
+/* Shell: 12-col vibe - main ~8, sessions sidebar ~4 */
+.shell-split {
+  display: grid;
+  grid-template-columns: minmax(0, 8fr) minmax(248px, 4fr);
+  gap: clamp(14px, 2.2vw, 22px);
+  align-items: stretch;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+}
+.shell-split-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.shell-split-side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.shell-split-main .shell-card {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+}
+
+.shell-sessions-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(0, 255, 136, 0.26);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(165deg, #0a1411 0%, var(--panel) 44%, #050a08 100%);
+  box-shadow:
+    0 0 20px rgba(0, 255, 136, 0.06),
+    0 12px 36px var(--shadow-deep),
+    inset 0 1px 0 rgba(0, 255, 136, 0.05);
+  overflow: hidden;
+}
+.shell-sessions-head {
+  flex-shrink: 0;
+  padding: 11px 14px 10px;
+  border-bottom: 1px solid rgba(0, 255, 136, 0.14);
+}
+.shell-sessions-title {
+  display: block;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: var(--accent);
+  text-shadow: 0 0 8px rgba(0, 255, 136, 0.22);
+}
+.shell-sessions-caption {
+  display: block;
+  font-size: 10px;
+  line-height: 1.38;
+  margin-top: 5px;
+}
+.shell-sessions-toolbar {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.shell-sessions-toolbar button.compact {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+button.muted-link {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--cyan);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  text-decoration: underline;
+  padding: 4px 0;
+}
+button.muted-link:hover {
+  color: var(--accent);
+}
+.shell-sessions-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 8px 12px;
+  -webkit-overflow-scrolling: touch;
+}
+.shell-sessions-panel table.sessions {
+  font-size: 11px;
+}
+.shell-sessions-panel table.sessions th,
+.shell-sessions-panel table.sessions td {
+  padding: 5px 6px;
+}
+.shell-sessions-panel .session-actions {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+}
+.shell-sessions-panel .session-actions button {
+  padding: 4px 6px;
+  font-size: 10px;
+  min-height: 0;
+}
+
+/* Centered shell card - scroll happens inside .terminal only */
 .shell-stage {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   justify-content: stretch;
-  padding: clamp(12px, 2.5vw, 22px) clamp(12px, 3vw, 26px) clamp(14px, 2.5vh, 26px);
+  padding: clamp(10px, 2.2vw, 22px) clamp(10px, 2.8vw, 26px) clamp(12px, 2.2vh, 28px);
   overflow: hidden;
 }
 
 .shell-card {
   width: 100%;
-  max-width: 880px;
+  max-width: 980px;
+  margin: 0 auto;
   flex: 1 1 auto;
-  min-height: min(420px, 52vh);
-  max-height: min(86vh, calc(100dvh - var(--mainbar-h) - 48px));
+  min-height: min(380px, 50vh);
+  max-height: min(86vh, calc(100dvh - var(--mainbar-h) - var(--safe-top) - var(--safe-bottom) - 52px));
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--panel);
+  border: 1px solid rgba(0, 255, 136, 0.28);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(165deg, #0a1411 0%, var(--panel) 42%, #050a08 100%);
   box-shadow:
-    0 4px 6px rgba(0, 0, 0, 0.12),
-    0 16px 48px rgba(0, 0, 0, 0.38),
-    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+    0 0 24px rgba(0, 255, 136, 0.08),
+    0 16px 48px var(--shadow-deep),
+    inset 0 1px 0 rgba(0, 255, 136, 0.06);
   overflow: hidden;
 }
 
@@ -476,7 +791,7 @@ code {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background: var(--terminal-bg);
 }
 
 .terminal-chrome {
@@ -484,14 +799,170 @@ code {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 16px;
+  gap: 10px;
+  flex-wrap: wrap;
+  row-gap: 6px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(0, 255, 136, 0.2);
+  background: linear-gradient(180deg, #0d1815 0%, #080f0c 100%);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.chrome-title { font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: .1em; text-shadow: 0 0 8px rgba(0, 255, 136, 0.35); }
+.chrome-hint { font-size: 11px; }
+
+.execution-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--line);
-  background: var(--panel);
+  background: rgba(0, 255, 136, 0.04);
+  font-family: var(--font-mono);
+}
+.mode-select-wrap {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.mode-select {
+  min-width: 120px;
+  height: 32px;
+  border: 1px solid rgba(0, 255, 136, 0.35);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--accent);
+  padding: 0 9px;
+  font: 12px var(--font-mono);
+}
+/* Provider select: wider for ids like openrouter */
+.execution-toolbar #provider-quick.mode-select {
+  min-width: 140px;
+  max-width: min(228px, 100%);
+}
+.provider-readiness-row {
+  padding: 6px 14px 10px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(0, 28, 18, 0.42);
+  font-size: 11px;
+  line-height: 1.45;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.provider-readiness-row.provider-readiness-ok {
+  color: var(--reply-shell);
+}
+.provider-readiness-row.provider-readiness-bad {
+  color: var(--bad);
+  text-shadow: 0 0 10px rgba(255, 77, 125, 0.25);
+}
+.execution-lab .provider-readiness-row {
+  border-bottom: none;
+  padding-bottom: 12px;
+}
+.execution-lab {
+  border-bottom: 1px solid var(--line);
+  background: rgba(0, 35, 22, 0.45);
+}
+.execution-lab > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-family: var(--font-mono);
+  text-shadow: 0 0 10px rgba(0, 255, 136, 0.25);
+}
+.execution-lab > summary::-webkit-details-marker { display: none; }
+.execution-lab > summary::after {
+  content: '[+]';
+  float: right;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+.execution-lab[open] > summary::after {
+  content: '[-]';
+}
+.execution-lab-grid {
+  padding: 0 14px 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.execution-lab-grid label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+.execution-lab-grid select,
+.execution-lab-grid input,
+.runbook-block textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--reply-shell);
+  padding: 8px 10px;
+  font: 12px var(--font-mono);
+}
+.execution-profiles {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 0 14px 12px;
+}
+.exec-profile-label {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+.exec-profile {
+  height: 30px;
+  min-width: 0;
+  padding: 0 10px;
+  border-radius: 999px;
   font-size: 11px;
 }
-.chrome-title { font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
-.chrome-hint { font-size: 11px; }
+.runbook-block {
+  border-top: 1px dashed rgba(0, 255, 136, 0.25);
+  padding: 10px 14px 14px;
+}
+.runbook-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+#runbook-input {
+  min-height: 96px;
+  resize: vertical;
+}
+.runbook-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.runbook-row button {
+  height: 32px;
+  min-width: 0;
+  font-size: 12px;
+  padding: 0 10px;
+}
 
 .table-wrap {
   overflow-x: auto;
@@ -506,12 +977,262 @@ code {
   align-items: start;
 }
 .card {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 14px 16px 18px;
-  background: var(--panel);
+  border: 1px solid rgba(0, 255, 136, 0.2);
+  border-radius: var(--radius-md);
+  padding: 15px 16px 18px;
+  background: linear-gradient(165deg, rgba(12, 24, 18, 0.95) 0%, var(--panel) 55%, #080e0b 100%);
+  box-shadow:
+    0 0 14px rgba(0, 255, 136, 0.06),
+    0 12px 36px var(--shadow-deep);
+  opacity: 0;
+  transform: translateY(6px);
+  animation: yamx-card-in .36s ease forwards;
 }
 .card .h3 { margin: 0 0 8px; }
+
+.split-cards .card:nth-child(2) { animation-delay: .06s; }
+.split-cards .card:nth-child(3) { animation-delay: .12s; }
+
+/* Tools & API — full main-column width (ID beats .panel-inner / .panel-inner-wide max-width caps) */
+#panel-tools .panel-inner {
+  min-width: 0;
+  max-width: none;
+  width: 100%;
+  box-sizing: border-box;
+  padding-inline: clamp(10px, 1.6vw, 16px); /* narrower gutter than generic panels → more usable width */
+}
+
+.tools-api-stack {
+  --tools-api-gap: clamp(18px, 2.2vw, 26px);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--tools-api-gap);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.split-cards.tools-api-grid {
+  gap: var(--tools-api-gap);
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+.split-cards.tools-api-grid.tools-api-grid-dual {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.split-cards.tools-api-grid > .card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  min-height: min(320px, 44vh);
+  padding: clamp(14px, 1.9vw, 20px) clamp(15px, 2.1vw, 20px) clamp(16px, 2.4vw, 22px);
+  box-sizing: border-box;
+}
+
+.split-cards.tools-api-grid .card-header {
+  flex-shrink: 0;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.split-cards.tools-api-grid .card-header .h3 {
+  margin: 0 0 6px;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.split-cards.tools-api-grid .card-lead {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 64ch;
+}
+
+.tools-card .card-header .h3 {
+  margin-bottom: 10px;
+}
+
+.tools-card .card-header .tool-filter-label {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.tools-card .tool-filter {
+  max-width: none;
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.api-doc-card .api-doc-mount {
+  flex: 1 1 auto;
+  margin-top: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  min-height: 220px;
+  max-height: min(52vh, 480px);
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid rgba(0, 255, 136, 0.15);
+  border-radius: 10px;
+  background: var(--terminal-bg);
+  box-shadow: inset 0 0 40px rgba(0, 255, 136, 0.04);
+  -webkit-overflow-scrolling: touch;
+}
+
+.api-doc-card .api-group:last-child {
+  margin-bottom: 0;
+}
+
+.api-doc-card .raw-api-details {
+  margin-top: 14px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.api-doc-card .routes-json {
+  max-height: 200px;
+}
+
+.tools-mount {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  min-height: 240px;
+  max-height: min(52vh, 480px);
+  overflow-y: auto;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  padding: 8px 10px 12px;
+  border: 1px solid rgba(0, 255, 136, 0.15);
+  border-radius: 10px;
+  background: var(--terminal-bg);
+  box-shadow: inset 0 0 40px rgba(0, 255, 136, 0.04);
+  -webkit-overflow-scrolling: touch;
+}
+
+.tools-count {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.tools-mount details.tool-block:last-child {
+  margin-bottom: 0;
+}
+
+.engineering-card-wide {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  align-self: stretch;
+  animation-delay: 0.12s;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: clamp(14px, 1.9vw, 20px) clamp(15px, 2.1vw, 22px) clamp(16px, 2.4vw, 24px);
+  box-sizing: border-box;
+  overflow-x: clip;
+}
+
+.engineering-card-wide .engineering-card-header {
+  flex-shrink: 0;
+}
+
+.engineering-card-wide .engineering-card-header .h3 {
+  margin: 0 0 8px;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.engineering-card-wide .engineering-card-lead {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  max-width: none;
+  width: 100%;
+  hyphens: auto;
+  overflow-wrap: break-word;
+}
+
+.engineering-card-wide .engineering-controls {
+  max-width: 100%;
+}
+
+.engineering-card-wide .engineering-summary {
+  max-width: 100%;
+}
+
+.engineering-card-wide .engineering-summary-grid {
+  max-width: 100%;
+}
+
+.engineering-card-wide .engineering-json {
+  width: 100%;
+  max-width: none;
+  min-height: min(140px, 26vh);
+  max-height: min(52vh, 560px);
+  margin-top: 12px;
+  flex: 0 1 auto;
+  box-sizing: border-box;
+}
+
+.engineering-card .engineering-controls {
+  margin: 0 0 10px;
+  flex-shrink: 0;
+}
+
+.engineering-card .engineering-summary {
+  flex-shrink: 0;
+  margin-bottom: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.engineering-json {
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: min(38vh, 300px);
+  margin-top: 10px;
+}
+
+@media (min-width: 700px) {
+  .split-cards.tools-api-grid.tools-api-grid-dual {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@keyframes yamx-card-in {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 
 /* Settings: horizontal section tabs */
 .settings-shell {
@@ -552,14 +1273,14 @@ code {
 
 .settings-tab:hover {
   color: var(--text);
-  border-color: rgba(94, 225, 122, 0.35);
-  background: rgba(94, 225, 122, 0.06);
+  border-color: rgba(0, 255, 136, 0.4);
+  background: rgba(0, 255, 136, 0.08);
 }
 
 .settings-tab.active {
   color: var(--accent);
   border-color: var(--accent-dim);
-  background: rgba(94, 225, 122, 0.1);
+  background: var(--accent-soft);
   font-weight: 600;
 }
 
@@ -596,8 +1317,8 @@ code {
   display: none;
 }
 .status.show { display: block; }
-.status.ok { background: rgba(94, 225, 122, .12); color: var(--accent); }
-.status.err { background: rgba(240, 113, 120, .12); color: var(--bad); }
+.status.ok { background: var(--accent-soft); color: var(--accent-dim); }
+.status.err { background: rgba(255, 77, 125, 0.12); color: var(--bad); }
 
 .form-grid {
   display: grid;
@@ -655,7 +1376,7 @@ code {
   border-radius: 6px;
   background: var(--panel-2);
   color: var(--text);
-  font: 13px ui-monospace, Menlo, Consolas, monospace;
+  font: 13px "Cascadia Code", "JetBrains Mono", "Fira Code", Consolas, monospace;
 }
 .field textarea { min-height: 64px; resize: vertical; }
 .field input[type="checkbox"] {
@@ -671,14 +1392,22 @@ code {
   gap: 10px;
 }
 button.primary {
-  background: #1e4d2e;
-  border-color: var(--accent-dim);
-  color: var(--text);
+  background: linear-gradient(180deg, #00ff94 0%, #00aa66 52%, #007748 100%);
+  border-color: rgba(0, 255, 136, 0.55);
+  color: #041208;
+  font-weight: 700;
+  text-shadow: none;
+  box-shadow: 0 0 16px rgba(0, 255, 136, 0.35);
+}
+button.primary:hover {
+  background: linear-gradient(180deg, #5cffb0 0%, #00c978 52%, #008f54 100%);
+  border-color: var(--accent);
+  color: #020604;
 }
 button.danger {
-  background: #4a2226;
-  border-color: #8b4048;
-  color: #ffc9cc;
+  background: rgba(80, 8, 20, 0.45);
+  border-color: rgba(255, 77, 125, 0.5);
+  color: #ffa8bc;
 }
 button.small {
   padding: 6px 12px;
@@ -696,7 +1425,7 @@ table.sessions th, table.sessions td {
   padding: 8px 10px;
   border-bottom: 1px solid var(--line);
 }
-table.sessions tr.active { background: rgba(94, 225, 122, .08); }
+table.sessions tr.active { background: var(--accent-soft); }
 table.sessions button {
   padding: 4px 10px;
   font-size: 12px;
@@ -724,13 +1453,13 @@ table.sessions td.session-actions {
 }
 
 button.danger-text {
-  background: rgba(74, 34, 38, 0.6);
-  border-color: #8b4048;
-  color: #ffc9cc;
+  background: rgba(80, 8, 20, 0.35);
+  border-color: rgba(255, 77, 125, 0.45);
+  color: var(--bad);
 }
 
-.api-doc-mount { margin-top: 10px; }
-.api-group { margin-bottom: 18px; }
+.api-doc-mount { margin-top: 10px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.api-group { margin-bottom: 18px; min-width: 0; max-width: 100%; }
 .api-group-title {
   margin: 0 0 8px;
   font-size: 11px;
@@ -740,14 +1469,35 @@ button.danger-text {
 }
 .api-table {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   border-collapse: collapse;
   font-size: 12px;
+  table-layout: fixed;
+}
+.api-table th:first-child,
+.api-table td:first-child {
+  width: 4.5rem;
+}
+.api-table th:nth-child(2),
+.api-table td:nth-child(2) {
+  width: 34%;
+}
+.api-table th:nth-child(3),
+.api-table td:nth-child(3) {
+  width: 20%;
+}
+.api-table th:nth-child(4),
+.api-table td:nth-child(4) {
+  width: auto;
 }
 .api-table th, .api-table td {
   text-align: left;
   padding: 8px 10px;
   border-bottom: 1px solid var(--line);
   vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .api-table th {
   color: var(--muted);
@@ -757,7 +1507,7 @@ button.danger-text {
   letter-spacing: 0.04em;
 }
 .api-row { cursor: pointer; }
-.api-row:hover { background: rgba(94, 225, 122, 0.06); }
+.api-row:hover { background: var(--accent-soft); }
 .http-method {
   display: inline-block;
   min-width: 54px;
@@ -766,13 +1516,13 @@ button.danger-text {
   font-weight: 700;
   font-size: 10px;
   text-align: center;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
 }
-.http-method.m-get { background: rgba(126, 184, 255, 0.14); color: #9dc8ff; }
-.http-method.m-post { background: rgba(94, 225, 122, 0.14); color: var(--accent); }
-.http-method.m-patch { background: rgba(230, 200, 110, 0.14); color: var(--warn); }
-.http-method.m-delete { background: rgba(240, 113, 120, 0.14); color: #ff9a9a; }
-.api-path code { font-size: 12px; word-break: break-all; }
+.http-method.m-get { background: rgba(46, 243, 217, 0.12); color: var(--cyan); border: 1px solid rgba(46, 243, 217, 0.35); }
+.http-method.m-post { background: rgba(0, 255, 136, 0.12); color: var(--accent); border: 1px solid rgba(0, 255, 136, 0.38); }
+.http-method.m-patch { background: rgba(255, 224, 77, 0.1); color: var(--warn); border: 1px solid rgba(255, 224, 77, 0.35); }
+.http-method.m-delete { background: rgba(255, 77, 125, 0.12); color: var(--bad); border: 1px solid rgba(255, 77, 125, 0.38); }
+.api-path code { font-size: 11px; word-break: break-word; line-height: 1.35; }
 .api-body-hint { font-size: 11px; color: var(--muted); }
 .raw-api-details { margin-top: 14px; }
 .raw-api-details summary { cursor: pointer; color: var(--muted); }
@@ -800,21 +1550,25 @@ button.danger-text {
 
 .engineering-controls {
   display: grid;
-  gap: 10px;
-  margin: 10px 0 10px;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  align-items: end;
+  margin: 12px 0 12px;
 }
 .engineering-controls label {
   display: grid;
-  gap: 4px;
+  gap: 5px;
   font-size: 12px;
   color: var(--muted);
+  min-width: 0;
 }
 .engineering-controls select {
   width: 100%;
-  max-width: 220px;
-  padding: 8px 10px;
+  min-width: 0;
+  max-width: none;
+  padding: 9px 10px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--panel-2);
   color: var(--text);
   font: inherit;
@@ -823,6 +1577,22 @@ button.danger-text {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  grid-column: 1 / -1;
+}
+@media (min-width: 640px) and (max-width: 899px) {
+  .engineering-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (min-width: 900px) {
+  .engineering-controls {
+    grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) auto;
+  }
+  .engineering-btns {
+    grid-column: auto;
+    justify-self: start;
+    align-self: end;
+  }
 }
 .engineering-summary {
   font-size: 12px;
@@ -842,6 +1612,9 @@ details.tool-block {
   border-radius: 8px;
   margin-bottom: 8px;
   background: var(--panel);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 details.tool-block summary {
   padding: 10px 12px;
@@ -851,18 +1624,27 @@ details.tool-block summary {
 details.tool-block summary::-webkit-details-marker { display: none; }
 .tool-name { font-weight: 600; color: var(--accent); }
 .tool-desc { font-size: 12px; color: var(--muted); margin-top: 4px; font-weight: 400; }
-.tool-schema { margin: 0 12px 12px; max-height: 200px; font-size: 11px; }
+.tool-schema {
+  margin: 0 12px 12px;
+  max-height: 220px;
+  max-width: calc(100% - 24px);
+  font-size: 11px;
+  overflow: auto;
+  box-sizing: border-box;
+}
 .tool-hidden { display: none !important; }
 
 pre.code {
-  background: var(--panel-2);
-  border: 1px solid var(--line);
+  background: var(--terminal-bg);
+  border: 1px solid rgba(0, 255, 136, 0.22);
   padding: 12px;
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: auto;
   font-size: 12px;
   line-height: 1.4;
   max-height: min(50vh, 360px);
+  color: var(--reply-shell);
+  font-family: var(--font-mono);
 }
 
 .terminal {
@@ -872,8 +1654,18 @@ pre.code {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 14px 16px 24px;
-  background: var(--bg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 3px,
+      rgba(0, 255, 136, 0.02) 3px,
+      rgba(0, 255, 136, 0.02) 6px
+    ),
+    radial-gradient(70% 50% at 50% -5%, rgba(0, 255, 136, 0.04), transparent),
+    var(--terminal-bg);
+  font-family: var(--font-mono);
+  color: var(--muted);
   -webkit-overflow-scrolling: touch;
 }
 
@@ -897,23 +1689,27 @@ pre.code {
   margin: 0 0 8px;
   font-size: 1rem;
   font-weight: 600;
-  color: var(--text);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  text-shadow: 0 0 12px rgba(0, 255, 136, 0.35);
 }
 .empty-hint { margin: 0; max-width: 36ch; font-size: 13px; line-height: 1.45; }
 
 .entry {
   margin: 0 0 14px;
   padding-bottom: 14px;
-  border-bottom: 1px solid rgba(45, 54, 50, .55);
+  border-bottom: 1px solid rgba(0, 255, 136, 0.12);
 }
 .entry.turn {
   margin: 0 0 14px;
   padding: 14px 14px 16px;
   border-bottom: none;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: rgba(26, 31, 28, 0.5);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+  border-radius: 14px;
+  border: 1px solid rgba(0, 255, 136, 0.2);
+  background: rgba(8, 16, 12, 0.85);
+  box-shadow:
+    inset 0 0 48px rgba(0, 255, 136, 0.03),
+    0 0 20px rgba(0, 255, 136, 0.06);
 }
 
 .user-prompt {
@@ -926,9 +1722,10 @@ pre.code {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--accent);
-  font-family: system-ui, Segoe UI, Roboto, sans-serif;
+  letter-spacing: 0.14em;
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  text-shadow: 0 0 10px rgba(46, 243, 217, 0.45);
 }
 .user-text {
   margin: 0;
@@ -938,10 +1735,13 @@ pre.code {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   padding: 10px 12px;
-  background: var(--panel-2);
+  background: rgba(46, 243, 217, 0.06);
   border-radius: 8px;
-  border-left: 3px solid var(--accent-dim);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  border-left: 3px solid var(--cyan);
+  font-family: var(--font-mono);
+  border-top: 1px solid rgba(46, 243, 217, 0.12);
+  border-right: 1px solid rgba(46, 243, 217, 0.08);
+  border-bottom: 1px solid rgba(46, 243, 217, 0.08);
 }
 
 .assistant { position: relative; }
@@ -952,12 +1752,12 @@ pre.code {
   gap: 10px;
   flex-wrap: wrap;
   padding: 10px 12px;
-  background: rgba(94, 225, 122, 0.07);
+  background: rgba(0, 255, 136, 0.06);
   border-radius: 8px;
-  border: 1px dashed rgba(94, 225, 122, 0.28);
-  color: var(--muted);
+  border: 1px dashed rgba(0, 255, 136, 0.4);
+  color: var(--accent-dim);
   font-size: 13px;
-  font-family: system-ui, Segoe UI, Roboto, sans-serif;
+  font-family: var(--font-mono);
 }
 
 .spinner {
@@ -991,23 +1791,26 @@ pre.code {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   padding: 3px 9px;
   border-radius: 999px;
-  background: rgba(94, 225, 122, 0.12);
-  border: 1px solid rgba(94, 225, 122, 0.35);
+  background: rgba(0, 255, 136, 0.12);
+  border: 1px solid rgba(0, 255, 136, 0.45);
   color: var(--accent);
-  font-family: system-ui, Segoe UI, Roboto, sans-serif;
+  font-family: var(--font-mono);
+  text-shadow: 0 0 8px rgba(0, 255, 136, 0.55);
 }
 .kind-chip.shell {
-  color: #8ec5ff;
-  background: rgba(126, 184, 255, 0.1);
-  border-color: rgba(126, 184, 255, 0.35);
+  color: var(--cyan);
+  background: rgba(46, 243, 217, 0.1);
+  border-color: rgba(46, 243, 217, 0.45);
+  text-shadow: 0 0 10px rgba(46, 243, 217, 0.5);
 }
 .kind-chip.err {
   color: var(--bad);
-  background: rgba(240, 113, 120, 0.12);
-  border-color: rgba(240, 113, 120, 0.4);
+  background: rgba(255, 77, 125, 0.1);
+  border-color: rgba(255, 77, 125, 0.5);
+  text-shadow: 0 0 8px rgba(255, 77, 125, 0.45);
 }
 
 /* Legacy single-block layout (if ever used) */
@@ -1029,6 +1832,35 @@ pre.out {
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  color: var(--reply-shell);
+  font-size: 13px;
+  line-height: 1.5;
+  text-shadow: 0 0 1px rgba(92, 255, 154, 0.35);
+}
+.entry.turn:has(.kind-chip:not(.shell):not(.err)) pre.out {
+  color: var(--reply-chat);
+  text-shadow: 0 0 1px rgba(122, 252, 255, 0.35);
+}
+.entry.turn:has(.kind-chip.err) pre.out {
+  color: var(--bad);
+  text-shadow: none;
+}
+.terminal-tools {
+  flex-shrink: 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  border-top: 1px solid rgba(0, 255, 136, 0.2);
+  background: #080e0b;
+  font-family: var(--font-mono);
+}
+.terminal-tools button {
+  height: 32px;
+  min-width: 0;
+  font-size: 12px;
+  padding: 0 10px;
 }
 
 .commandbar {
@@ -1038,36 +1870,59 @@ pre.out {
   gap: 10px;
   align-items: center;
   padding: 12px 16px;
-  border-top: 1px solid var(--line);
-  background: var(--panel);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  padding-bottom: max(12px, var(--safe-bottom));
+  border-top: 1px solid rgba(0, 255, 136, 0.25);
+  background: linear-gradient(180deg, #0a110e 0%, #050807 100%);
+  font-family: var(--font-mono);
 }
-.prompt { color: var(--accent); font-weight: 700; }
+.prompt { color: var(--accent); font-weight: 700; text-shadow: 0 0 10px rgba(0, 255, 136, 0.5); }
 .commandbar input {
   width: 100%;
   min-width: 0;
-  height: 38px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  color: var(--text);
-  border-radius: 6px;
+  height: 50px;
+  border: 1px solid rgba(0, 255, 136, 0.35);
+  background: var(--terminal-bg);
+  color: var(--reply-shell);
+  border-radius: 10px;
   padding: 0 11px;
   font: inherit;
   outline: none;
 }
-.commandbar input:focus { border-color: var(--accent); }
+.commandbar input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(0, 255, 136, 0.25), 0 0 16px rgba(0, 255, 136, 0.15);
+}
 
 button {
   height: 38px;
   min-width: 64px;
-  border: 1px solid #4d5a52;
-  border-radius: 6px;
-  background: #243128;
-  color: var(--text);
+  border: 1px solid rgba(0, 255, 136, 0.35);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--accent-dim);
   font: inherit;
+  font-family: var(--font-mono);
   cursor: pointer;
+  transition: background .16s, border-color .16s, transform .08s ease, box-shadow .15s;
+}
+button:hover {
+  background: rgba(0, 255, 136, 0.1);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 12px rgba(0, 255, 136, 0.15);
+}
+button:active {
+  transform: translateY(1px);
 }
 button:disabled { opacity: .55; cursor: wait; }
+button:focus-visible,
+.menu-toggle:focus-visible,
+.nav-item:focus-visible,
+.mode-select:focus-visible,
+.commandbar input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 .settings-tablist .settings-tab {
   height: auto;
@@ -1075,8 +1930,14 @@ button:disabled { opacity: .55; cursor: wait; }
 
 .menu-toggle { min-width: unset; }
 
+@media (max-width: 1024px) {
+  :root {
+    --sidebar-w: 236px;
+  }
+}
+
 @media (max-width: 900px) {
-  .split-cards {
+  .tools-api-grid.tools-api-grid-dual {
     grid-template-columns: 1fr;
   }
 }
@@ -1088,14 +1949,16 @@ button:disabled { opacity: .55; cursor: wait; }
   .sidebar {
     position: fixed;
     top: 0;
-    left: 0;
+    left: env(safe-area-inset-left, 0);
     bottom: 0;
     z-index: 100;
-    width: min(300px, 88vw);
+    width: min(300px, calc(88vw - env(safe-area-inset-left, 0px)));
     max-width: 100%;
     transform: translateX(-102%);
     transition: transform 0.22s ease;
-    box-shadow: 8px 0 32px rgba(0, 0, 0, 0.45);
+    box-shadow: 12px 0 40px rgba(28, 45, 58, 0.28);
+    padding-top: max(20px, var(--safe-top));
+    padding-bottom: max(22px, var(--safe-bottom));
   }
   .sidebar.open {
     transform: translateX(0);
@@ -1119,6 +1982,14 @@ button:disabled { opacity: .55; cursor: wait; }
     padding: 6px 8px;
   }
 
+  .shell-split {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .shell-sessions-panel {
+    max-height: min(52vh, 420px);
+  }
+
   .chrome-hint { display: none; }
 
   .shell-stage {
@@ -1127,26 +1998,95 @@ button:disabled { opacity: .55; cursor: wait; }
   }
   .shell-card {
     max-width: 100%;
-    max-height: min(82vh, calc(100dvh - var(--mainbar-h) - 44px));
+    max-height: min(82vh, calc(100dvh - var(--mainbar-h) - var(--safe-top) - var(--safe-bottom) - 52px));
     border-radius: 12px;
     min-height: min(300px, 48vh);
+  }
+
+  .execution-toolbar {
+    padding: 10px 12px;
+  }
+  .provider-readiness-row {
+    padding: 6px 12px 10px;
+  }
+  .execution-lab-grid {
+    grid-template-columns: 1fr;
+  }
+  .mode-select {
+    width: 100%;
+    max-width: 220px;
+  }
+  .runbook-row .inline-check {
+    width: 100%;
   }
 }
 
 @media (max-width: 560px) {
+  .mainbar {
+    padding-left: 8px;
+    padding-right: 12px;
+  }
+  .execution-lab > summary {
+    padding: 10px 12px;
+  }
+  .execution-lab-grid,
+  .execution-profiles,
+  .runbook-block {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .execution-profiles {
+    gap: 6px;
+  }
+  .exec-profile {
+    height: 28px;
+    padding: 0 8px;
+    font-size: 10px;
+  }
+  .terminal-tools {
+    padding: 8px 12px;
+    gap: 6px;
+  }
+  .terminal-tools button {
+    height: 30px;
+    font-size: 11px;
+    padding: 0 8px;
+  }
   .commandbar {
-    grid-template-columns: auto 1fr;
+    grid-template-columns: auto 1fr auto;
     padding: 10px 12px;
     gap: 8px;
-  }
-  .commandbar button {
-    grid-column: 1 / -1;
-    justify-self: stretch;
-    width: 100%;
   }
   .btn-row button {
     width: 100%;
     justify-self: stretch;
+  }
+
+  .split-cards.tools-api-grid.tools-api-grid-dual > .card {
+    min-height: 0;
+  }
+  .api-doc-card .api-doc-mount,
+  .tools-mount {
+    max-height: min(50vh, 360px);
+    min-height: 160px;
+  }
+  .engineering-card-wide .engineering-json {
+    max-height: min(42vh, 280px);
+    min-height: 96px;
+  }
+}
+
+@media (max-width: 400px) {
+  .commandbar {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .commandbar .prompt {
+    display: none;
+  }
+  .commandbar button[type="submit"] {
+    width: 100%;
+    min-width: 0;
   }
 }`;
 
@@ -1158,6 +2098,8 @@ export const WEB_JS = `
   const state = document.getElementById('state');
   const cwd = document.getElementById('cwd');
   const appVer = document.getElementById('app-ver');
+  const providerQuick = document.getElementById('provider-quick');
+  const providerReadiness = document.getElementById('provider-readiness');
   const sidebar = document.getElementById('sidebar');
   const sidebarBackdrop = document.getElementById('sidebar-backdrop');
   const menuToggle = document.getElementById('menu-toggle');
@@ -1165,17 +2107,35 @@ export const WEB_JS = `
   const settingsMount = document.getElementById('settings-mount');
   const settingsStatus = document.getElementById('settings-status');
   const sessionsMount = document.getElementById('sessions-mount');
+  const shellSessionsMount = document.getElementById('shell-sessions-mount');
+  const shellSessionsStatus = document.getElementById('shell-sessions-status');
   const sessionsStatus = document.getElementById('sessions-status');
   const apiDocMount = document.getElementById('api-doc-mount');
   const routesPre = document.getElementById('routes-pre');
   const toolsMount = document.getElementById('tools-mount');
   const toolFilter = document.getElementById('tool-filter');
+  const commandMode = document.getElementById('command-mode');
+  const shellRuntime = document.getElementById('shell-runtime');
+  const timeoutSec = document.getElementById('timeout-sec');
+  const maxCharsInput = document.getElementById('max-chars');
+  const cwdOverride = document.getElementById('cwd-override');
+  const executionProfiles = document.getElementById('execution-profiles');
+  const runbookInput = document.getElementById('runbook-input');
+  const runbookContinue = document.getElementById('runbook-continue');
+  const btnRunbookSample = document.getElementById('btn-runbook-sample');
+  const btnRunbookClear = document.getElementById('btn-runbook-clear');
+  const btnRunbookRun = document.getElementById('btn-runbook-run');
+  const btnClearTerminal = document.getElementById('btn-clear-terminal');
+  const btnCopyLastOutput = document.getElementById('btn-copy-last-output');
+  const btnExportTranscript = document.getElementById('btn-export-transcript');
   const engineeringSuite = document.getElementById('engineering-suite');
   const engineeringProfile = document.getElementById('engineering-profile');
   const engineeringStatus = document.getElementById('engineering-status');
   const engineeringSummary = document.getElementById('engineering-summary');
   const engineeringPre = document.getElementById('engineering-pre');
+  const sendBtn = form.querySelector('button[type="submit"]') || form.querySelector('button');
   var toolsListCache = [];
+  var executionBusy = false;
 
   const PANEL_TITLES = {
     terminal: 'Shell',
@@ -1185,27 +2145,210 @@ export const WEB_JS = `
   };
 
   const PROVIDERS = ['openai', 'anthropic', 'gemini', 'kimi', 'grok', 'openrouter', 'ollama'];
+  const EXEC_PREFS_KEY = 'yamx.web.exec-prefs.v1';
+  const EXEC_DEFAULTS = {
+    shell: 'auto',
+    timeoutSec: 120,
+    maxChars: 80000,
+    cwd: '',
+    runbookContinue: false
+  };
+  const EXEC_PROFILE_PRESETS = {
+    balanced: { shell: 'auto', timeoutSec: 120, maxChars: 80000 },
+    fast: { shell: 'auto', timeoutSec: 45, maxChars: 30000 },
+    deep: { shell: 'auto', timeoutSec: 300, maxChars: 220000 },
+    forensics: { shell: 'auto', timeoutSec: 420, maxChars: 350000 }
+  };
+
+  function populateProviderQuickOptions() {
+    if (!providerQuick) return;
+    providerQuick.innerHTML = '';
+    PROVIDERS.forEach(function (name) {
+      var opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      providerQuick.appendChild(opt);
+    });
+  }
+
+  function syncProviderQuickSelect(providerName) {
+    if (!providerQuick) return;
+    var v = String(providerName || '').toLowerCase().trim();
+    if (!v) return;
+    if (PROVIDERS.indexOf(v) === -1) {
+      var found = false;
+      for (var i = 0; i < providerQuick.options.length; i++) {
+        if (providerQuick.options[i].value === v) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        var o = document.createElement('option');
+        o.value = v;
+        o.textContent = v;
+        providerQuick.appendChild(o);
+      }
+    }
+    providerQuick.value = v;
+  }
+
+  function renderProviderReadiness(data) {
+    if (!providerReadiness) return;
+    if (data.providerUsesApiKey !== true && data.providerUsesApiKey !== false) {
+      providerReadiness.textContent =
+        'Provider status unavailable (restart the YamX web server after upgrade).';
+      providerReadiness.className = 'provider-readiness-row';
+      return;
+    }
+    if (
+      typeof data.agentCanRun !== 'boolean' ||
+      typeof data.providerApiKeyConfigured !== 'boolean'
+    ) {
+      providerReadiness.textContent =
+        'Provider readiness incomplete (restart the YamX web server after upgrade).';
+      providerReadiness.className = 'provider-readiness-row';
+      return;
+    }
+
+    var usesKey = data.providerUsesApiKey === true;
+    var configured = !!data.providerApiKeyConfigured;
+    var canRun = !!data.agentCanRun;
+    var warm = !!data.sessionWarm;
+    var prov = String(data.provider || '').trim() || '?';
+    var model = String(data.model || '').trim();
+    var modelLbl = model ? model : 'provider default';
+    var hint = String(data.providerHint || '').trim();
+
+    var line;
+    var cls;
+    if (!usesKey) {
+      line =
+        prov +
+        ' / ' +
+        modelLbl +
+        ' · local (Ollama) · no cloud API key required · shell + agent use your local runtime';
+      cls = 'provider-readiness-ok';
+    } else if (warm) {
+      line =
+        prov +
+        ' / ' +
+        modelLbl +
+        ' · API key configured · agent session active — ready';
+      cls = 'provider-readiness-ok';
+    } else if (canRun && configured) {
+      line =
+        prov +
+        ' / ' +
+        modelLbl +
+        ' · API key configured — ready (first agent message opens the session)';
+      cls = 'provider-readiness-ok';
+    } else {
+      line =
+        prov +
+        ' / ' +
+        modelLbl +
+        ' · not configured — ' +
+        (hint || 'add an API key under Settings, Providers, or set the env var for this provider');
+      cls = 'provider-readiness-bad';
+    }
+    providerReadiness.textContent = line;
+    providerReadiness.className = 'provider-readiness-row ' + cls;
+  }
 
   function text(value) {
     return String(value == null ? '' : value);
   }
 
+  function clampInt(value, min, max, fallback) {
+    var n = parseInt(String(value == null ? '' : value), 10);
+    if (!isFinite(n)) return fallback;
+    if (n < min) return min;
+    if (n > max) return max;
+    return n;
+  }
+
+  function executionFormState() {
+    var timeout = clampInt(timeoutSec && timeoutSec.value, 1, 600, EXEC_DEFAULTS.timeoutSec);
+    var maxOut = clampInt(maxCharsInput && maxCharsInput.value, 1000, 500000, EXEC_DEFAULTS.maxChars);
+    var shell = String((shellRuntime && shellRuntime.value) || EXEC_DEFAULTS.shell).trim().toLowerCase();
+    var cwdRaw = String((cwdOverride && cwdOverride.value) || '').trim();
+    return {
+      shell: shell || EXEC_DEFAULTS.shell,
+      timeoutSec: timeout,
+      timeoutMs: timeout * 1000,
+      maxChars: maxOut,
+      cwd: cwdRaw,
+      runbookContinue: !!(runbookContinue && runbookContinue.checked)
+    };
+  }
+
+  function applyExecutionFormState(next) {
+    var merged = Object.assign({}, EXEC_DEFAULTS, next || {});
+    if (shellRuntime) shellRuntime.value = String(merged.shell || EXEC_DEFAULTS.shell);
+    if (timeoutSec) timeoutSec.value = String(clampInt(merged.timeoutSec, 1, 600, EXEC_DEFAULTS.timeoutSec));
+    if (maxCharsInput) maxCharsInput.value = String(clampInt(merged.maxChars, 1000, 500000, EXEC_DEFAULTS.maxChars));
+    if (cwdOverride) cwdOverride.value = String(merged.cwd || '');
+    if (runbookContinue) runbookContinue.checked = !!merged.runbookContinue;
+  }
+
+  function loadExecutionPrefs() {
+    try {
+      var raw = window.localStorage.getItem(EXEC_PREFS_KEY);
+      if (!raw) return;
+      var parsed = JSON.parse(raw);
+      applyExecutionFormState(parsed);
+    } catch (_err) {}
+  }
+
+  function saveExecutionPrefs() {
+    try {
+      var s = executionFormState();
+      window.localStorage.setItem(EXEC_PREFS_KEY, JSON.stringify({
+        shell: s.shell,
+        timeoutSec: s.timeoutSec,
+        maxChars: s.maxChars,
+        cwd: s.cwd,
+        runbookContinue: s.runbookContinue
+      }));
+    } catch (_err) {}
+  }
+
+  function applyExecutionProfile(name) {
+    var preset = EXEC_PROFILE_PRESETS[name];
+    if (!preset) return;
+    applyExecutionFormState({
+      shell: preset.shell,
+      timeoutSec: preset.timeoutSec,
+      maxChars: preset.maxChars
+    });
+    saveExecutionPrefs();
+    setState('profile: ' + name, 'ok');
+    setTimeout(function () { refreshState().catch(function () {}); }, 900);
+  }
+
   function setState(label, cls) {
+    if (!state) return;
     state.textContent = label;
     state.className = 'pill' + (cls ? ' ' + cls : '');
   }
 
   function setSettingsStatus(msg, kind) {
+    if (!settingsStatus) return;
     settingsStatus.textContent = msg || '';
     settingsStatus.className = 'status show ' + (kind || '');
     if (!msg) settingsStatus.className = 'status';
   }
 
   function setSessionsStatus(msg, kind) {
-    if (!sessionsStatus) return;
-    sessionsStatus.textContent = msg || '';
-    sessionsStatus.className = 'status show ' + (kind || '');
-    if (!msg) sessionsStatus.className = 'status';
+    function apply(el) {
+      if (!el) return;
+      el.textContent = msg || '';
+      el.className = 'status show ' + (kind || '');
+      if (!msg) el.className = 'status';
+    }
+    apply(sessionsStatus);
+    apply(shellSessionsStatus);
   }
 
   function setEngineeringStatus(msg, kind) {
@@ -1259,7 +2402,10 @@ export const WEB_JS = `
     if (name === 'settings') loadSettings();
     if (name === 'sessions') loadSessions();
     if (name === 'tools') loadToolsApi();
-    if (name === 'terminal') input.focus();
+    if (name === 'terminal') {
+      loadSessions();
+      if (input) input.focus();
+    }
   }
 
   document.querySelectorAll('.nav-item').forEach(function (btn) {
@@ -1289,10 +2435,39 @@ export const WEB_JS = `
 
   function pendingLabelFor(cmd) {
     var t = String(cmd || '').trim();
-    if (/^(npm|npx|pnpm|yarn|git|node|cd|dir|ls|pwd|curl|wget|python|py|go\\s|cargo\\s|dotnet\\s|docker\\s)/i.test(t)) return 'Running command…';
-    if (/^[a-zA-Z0-9_.\\/~+-]+$/.test(t) && t.length < 72 && !/\\s/.test(t)) return 'Running command…';
-    if (t.length > 96 || /[?]/.test(t) || /^(why|how|what|explain|write|create|fix|help|show|list|describe)\\b/i.test(t)) return 'YamX is responding…';
-    return 'Working…';
+    if (/^(npm|npx|pnpm|yarn|git|node|cd|dir|ls|pwd|curl|wget|python|py|go\\s|cargo\\s|dotnet\\s|docker\\s)/i.test(t)) return 'Running command...';
+    if (/^[a-zA-Z0-9_.\\/~+-]+$/.test(t) && t.length < 72 && !/\\s/.test(t)) return 'Running command...';
+    if (t.length > 96 || /[?]/.test(t) || /^(why|how|what|explain|write|create|fix|help|show|list|describe)\\b/i.test(t)) return 'YamX is responding...';
+    return 'Working...';
+  }
+  function executionModeValue(preferred) {
+    var mode = String(preferred || (commandMode && commandMode.value) || 'auto').trim().toLowerCase();
+    if (mode !== 'shell' && mode !== 'agent') return 'auto';
+    return mode;
+  }
+
+  function buildExecutionOverrides(overrides) {
+    var src = overrides || executionFormState();
+    var payload = {
+      shell: String(src.shell || '').trim().toLowerCase(),
+      timeoutMs: clampInt(src.timeoutMs, 1000, 600000, EXEC_DEFAULTS.timeoutSec * 1000),
+      maxChars: clampInt(src.maxChars, 1000, 500000, EXEC_DEFAULTS.maxChars),
+      cwd: String(src.cwd || '').trim()
+    };
+    if (!payload.shell || payload.shell === 'auto') delete payload.shell;
+    if (!payload.cwd) delete payload.cwd;
+    return payload;
+  }
+
+  function buildExecutionRequest(rawCommand, preferredMode, overrides) {
+    var mode = executionModeValue(preferredMode);
+    var ext = buildExecutionOverrides(overrides);
+    if (mode === 'agent') return { mode: mode, endpoint: '/api/chat', payload: { message: rawCommand } };
+    if (mode === 'shell') {
+      var forced = /^run:\\s+/i.test(rawCommand) ? rawCommand : ('run: ' + rawCommand);
+      return { mode: mode, endpoint: '/api/command', payload: Object.assign({ command: forced }, ext) };
+    }
+    return { mode: mode, endpoint: '/api/command', payload: Object.assign({ command: rawCommand }, ext) };
   }
 
   function metaLineText(result) {
@@ -1386,7 +2561,9 @@ export const WEB_JS = `
     const res = await fetch('/api/state');
     if (!res.ok) throw new Error('state failed');
     const data = await res.json();
-    cwd.textContent = 'cwd: ' + data.cwd + (data.provider ? ' | ' + data.provider + (data.model ? ' / ' + data.model : '') : '');
+    if (cwd) cwd.textContent = 'cwd: ' + data.cwd + (data.provider ? ' | ' + data.provider + (data.model ? ' / ' + data.model : '') : '');
+    syncProviderQuickSelect(data.provider);
+    renderProviderReadiness(data);
     setState(data.allowDangerous ? 'danger on' : 'ready', data.allowDangerous ? 'bad' : 'ok');
   }
 
@@ -1395,30 +2572,49 @@ export const WEB_JS = `
       const res = await fetch('/api/info');
       if (res.ok) {
         const j = await res.json();
-        appVer.textContent = 'v' + j.version + ' · ' + j.node;
+        if (appVer) appVer.textContent = 'v' + j.version + ' | ' + j.node;
       }
     } catch (e) {}
   }
 
-  form.addEventListener('submit', async function (event) {
-    event.preventDefault();
-    var command = input.value.trim();
-    if (!command) return;
-    input.value = '';
-    input.disabled = true;
-    var sendBtn = form.querySelector('button[type="submit"]') || form.querySelector('button');
-    sendBtn.disabled = true;
-    setState('running', '');
-    var turn = startTurn(command);
+  function setExecutionBusy(on) {
+    var busy = !!on;
+    executionBusy = busy;
+    var profileBtns = executionProfiles ? executionProfiles.querySelectorAll('button.exec-profile') : [];
+    if (input) input.disabled = busy;
+    if (sendBtn) sendBtn.disabled = busy;
+    if (commandMode) commandMode.disabled = busy;
+    if (shellRuntime) shellRuntime.disabled = busy;
+    if (timeoutSec) timeoutSec.disabled = busy;
+    if (maxCharsInput) maxCharsInput.disabled = busy;
+    if (cwdOverride) cwdOverride.disabled = busy;
+    if (runbookInput) runbookInput.disabled = busy;
+    if (runbookContinue) runbookContinue.disabled = busy;
+    if (btnRunbookRun) btnRunbookRun.disabled = busy;
+    if (btnRunbookSample) btnRunbookSample.disabled = busy;
+    if (btnRunbookClear) btnRunbookClear.disabled = busy;
+    if (btnClearTerminal) btnClearTerminal.disabled = busy;
+    if (btnCopyLastOutput) btnCopyLastOutput.disabled = busy;
+    if (btnExportTranscript) btnExportTranscript.disabled = busy;
+    if (providerQuick) providerQuick.disabled = busy;
+    profileBtns.forEach(function (btn) { btn.disabled = busy; });
+  }
+
+  async function executeTurn(rawCommand, preferredMode, overrides, displayCommand) {
+    var command = String(rawCommand || '').trim();
+    if (!command) return null;
+    var req = buildExecutionRequest(command, preferredMode, overrides);
+    setState(req.mode === 'agent' ? 'thinking' : 'running', '');
+    var turn = startTurn(displayCommand || command);
     try {
-      var res = await fetch('/api/command', {
+      var res = await fetch(req.endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ command: command })
+        body: JSON.stringify(req.payload)
       });
       var data = await res.json().catch(function () { return {}; });
       if (!res.ok) {
-        turn.finish({
+        var failure = {
           ok: false,
           kind: 'error',
           blocked: false,
@@ -1426,15 +2622,19 @@ export const WEB_JS = `
           output: (data && data.error) ? String(data.error) : 'HTTP ' + res.status,
           cwd: '.',
           allowDangerous: false
-        });
+        };
+        turn.finish(failure);
         setState('error', 'bad');
-      } else {
-        turn.finish(data);
-        cwd.textContent = 'cwd: ' + (data.cwd || '.') + (data.provider ? ' | ' + data.provider + (data.model ? ' / ' + data.model : '') : '');
-        setState(data.allowDangerous ? 'danger on' : 'ready', data.allowDangerous ? 'bad' : 'ok');
+        return failure;
       }
+      turn.finish(data);
+      if (cwd) cwd.textContent = 'cwd: ' + (data.cwd || '.') + (data.provider ? ' | ' + data.provider + (data.model ? ' / ' + data.model : '') : '');
+      syncProviderQuickSelect(data.provider);
+      setState(data.allowDangerous ? 'danger on' : 'ready', data.allowDangerous ? 'bad' : 'ok');
+      refreshState().catch(function () {});
+      return data;
     } catch (error) {
-      turn.finish({
+      var networkFail = {
         ok: false,
         kind: 'error',
         blocked: false,
@@ -1442,16 +2642,199 @@ export const WEB_JS = `
         output: 'Request failed: ' + (error && error.message ? error.message : String(error)),
         cwd: '.',
         allowDangerous: false
-      });
+      };
+      turn.finish(networkFail);
       setState('error', 'bad');
+      return networkFail;
+    }
+  }
+
+  form.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    var command = input.value.trim();
+    if (!command) return;
+    input.value = '';
+    saveExecutionPrefs();
+    setExecutionBusy(true);
+    try {
+      await executeTurn(command);
     } finally {
-      input.disabled = false;
-      sendBtn.disabled = false;
+      setExecutionBusy(false);
       input.focus();
     }
   });
 
+  function parseRunbookLines(raw) {
+    return String(raw || '')
+      .split(/\\r?\\n/)
+      .map(function (line) { return line.trim(); })
+      .filter(function (line) { return line && !/^#/.test(line); });
+  }
+
+  function parseRunbookStep(line) {
+    var row = String(line || '').trim();
+    if (!row) return null;
+    if (/^agent:\\s+/i.test(row)) return { mode: 'agent', command: row.replace(/^agent:\\s+/i, '').trim() };
+    if (/^shell:\\s+/i.test(row)) return { mode: 'shell', command: row.replace(/^shell:\\s+/i, '').trim() };
+    if (/^auto:\\s+/i.test(row)) return { mode: 'auto', command: row.replace(/^auto:\\s+/i, '').trim() };
+    return { mode: 'shell', command: row };
+  }
+
+  async function runRunbook() {
+    var lines = parseRunbookLines(runbookInput && runbookInput.value);
+    if (!lines.length) {
+      setState('runbook empty', 'bad');
+      setTimeout(function () { refreshState().catch(function () {}); }, 900);
+      return;
+    }
+    saveExecutionPrefs();
+    var baseExec = executionFormState();
+    var continueOnError = !!(runbookContinue && runbookContinue.checked);
+    var halted = false;
+    setExecutionBusy(true);
+    try {
+      for (var i = 0; i < lines.length; i++) {
+        var parsed = parseRunbookStep(lines[i]);
+        if (!parsed || !parsed.command) continue;
+        var label = '[step ' + (i + 1) + '/' + lines.length + '] ' + parsed.command;
+        var result = await executeTurn(parsed.command, parsed.mode, baseExec, label);
+        var failed = !result || result.kind === 'error' || result.ok === false || result.blocked || result.timedOut || (typeof result.code === 'number' && result.code !== 0);
+        if (failed && !continueOnError) {
+          halted = true;
+          setState('runbook halted', 'bad');
+          break;
+        }
+      }
+      if (!halted) setState('runbook done', 'ok');
+    } finally {
+      setExecutionBusy(false);
+      input.focus();
+    }
+  }
+
+  if (btnRunbookRun) {
+    btnRunbookRun.addEventListener('click', function () {
+      runRunbook().catch(function (err) {
+        setState('runbook error', 'bad');
+        startTurn('[runbook] failure').finish({
+          ok: false,
+          kind: 'error',
+          blocked: false,
+          code: 1,
+          output: String(err && err.message ? err.message : err),
+          cwd: '.',
+          allowDangerous: false
+        });
+      });
+    });
+  }
+
+  if (btnRunbookSample) {
+    btnRunbookSample.addEventListener('click', function () {
+      if (!runbookInput) return;
+      runbookInput.value = [
+        'git status',
+        'npm run build',
+        'docker ps',
+        'agent: Summarize results and recommend next action.'
+      ].join('\\n');
+    });
+  }
+
+  if (btnRunbookClear) {
+    btnRunbookClear.addEventListener('click', function () {
+      if (!runbookInput) return;
+      runbookInput.value = '';
+      runbookInput.focus();
+    });
+  }
+
+  function clearTerminalView() {
+    terminal.innerHTML = [
+      '<div class="terminal-empty" id="terminal-empty">',
+      '  <div class="empty-icon" aria-hidden="true">[#]</div>',
+      '  <p class="empty-title">Start a turn</p>',
+      '  <p class="muted empty-hint">Your message appears here right away. YamX or the shell replies below when ready.</p>',
+      '</div>'
+    ].join('');
+    terminal.scrollTop = 0;
+  }
+
+  function latestOutputText() {
+    var outputs = terminal.querySelectorAll('pre.out');
+    if (!outputs || outputs.length === 0) return '';
+    var last = outputs[outputs.length - 1];
+    return (last && last.textContent) ? String(last.textContent).trim() : '';
+  }
+
+  function buildTranscriptText() {
+    var rows = [];
+    var turns = terminal.querySelectorAll('.entry.turn');
+    rows.push('YamX Web Transcript');
+    rows.push('Generated: ' + new Date().toISOString());
+    rows.push('');
+    turns.forEach(function (turn, idx) {
+      var user = turn.querySelector('.user-text');
+      var kind = turn.querySelector('.kind-chip');
+      var meta = turn.querySelector('.meta');
+      var out = turn.querySelector('pre.out');
+      rows.push('Turn ' + (idx + 1));
+      rows.push('You: ' + (user && user.textContent ? user.textContent.trim() : ''));
+      rows.push('Kind: ' + (kind && kind.textContent ? kind.textContent.trim() : ''));
+      if (meta && meta.textContent) rows.push('Meta: ' + meta.textContent.trim());
+      rows.push('Output:');
+      rows.push(out && out.textContent ? out.textContent : '');
+      rows.push('---');
+    });
+    return rows.join('\\n');
+  }
+
+  if (btnClearTerminal) {
+    btnClearTerminal.addEventListener('click', function () {
+      clearTerminalView();
+      setState('terminal cleared', 'ok');
+      setTimeout(function () { refreshState().catch(function () {}); }, 800);
+    });
+  }
+
+  if (btnCopyLastOutput) {
+    btnCopyLastOutput.addEventListener('click', async function () {
+      var out = latestOutputText();
+      if (!out) {
+        setState('no output', 'bad');
+        setTimeout(function () { refreshState().catch(function () {}); }, 800);
+        return;
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(out);
+        setState('output copied', 'ok');
+        setTimeout(function () { refreshState().catch(function () {}); }, 800);
+      }
+    });
+  }
+
+  if (btnExportTranscript) {
+    btnExportTranscript.addEventListener('click', function () {
+      var textDump = buildTranscriptText();
+      var blob = new Blob([textDump], { type: 'text/plain;charset=utf-8' });
+      var stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      var link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'yamx-transcript-' + stamp + '.txt';
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(function () {
+        URL.revokeObjectURL(link.href);
+        link.remove();
+      }, 0);
+      setState('transcript exported', 'ok');
+      setTimeout(function () { refreshState().catch(function () {}); }, 900);
+    });
+  }
+
   function renderSettingsForm(cfg) {
+    if (!settingsMount) return;
+
     settingsMount.innerHTML = '';
 
     var shell = document.createElement('div');
@@ -1549,7 +2932,7 @@ export const WEB_JS = `
         var keyIn = document.createElement('input');
         keyIn.type = 'password';
         keyIn.autocomplete = 'new-password';
-        keyIn.placeholder = (prov.apiKeyPresent || prov.apiKey === '********') ? '•••••••• (enter new key to replace)' : 'API key (optional)';
+        keyIn.placeholder = (prov.apiKeyPresent || prov.apiKey === '********') ? '******** (enter new key to replace)' : 'API key (optional)';
         keyIn.dataset.cfgPath = 'providers.' + name + '.apiKey';
         keyIn.dataset.optionalSecret = '1';
         addField(sub, 'API key', keyIn);
@@ -1708,6 +3091,7 @@ export const WEB_JS = `
 
   function buildPatchFromForm() {
     var patch = { settings: {}, providers: {} };
+    if (!settingsMount) return patch;
     settingsMount.querySelectorAll('[data-cfg-path]').forEach(function (el) {
       var path = el.dataset.cfgPath;
       var parts = path.split('.');
@@ -1765,7 +3149,7 @@ export const WEB_JS = `
   }
 
   document.getElementById('btn-save-config').addEventListener('click', async function () {
-    setSettingsStatus('Saving…', 'ok');
+    setSettingsStatus('Saving...', 'ok');
     try {
       const patch = buildPatchFromForm();
       const res = await fetch('/api/config', {
@@ -1871,10 +3255,10 @@ export const WEB_JS = `
 
   async function loadEngineeringReadiness(force) {
     if (!engineeringPre) return;
-    setEngineeringStatus('Loading readinessâ€¦', 'ok');
+    setEngineeringStatus('Loading readiness...', 'ok');
     if (!engineeringSummary) return;
     engineeringSummary.innerHTML = '';
-    engineeringPre.textContent = 'Loadingâ€¦';
+    engineeringPre.textContent = 'Loading...';
     try {
       var res = await fetch('/api/engineering/readiness' + (force ? '?force=1' : ''));
       var data = await res.json().catch(function () { return {}; });
@@ -1891,9 +3275,9 @@ export const WEB_JS = `
     if (!engineeringPre) return;
     var suite = engineeringSuite && engineeringSuite.value ? engineeringSuite.value : 'all';
     var profile = engineeringProfile && engineeringProfile.value ? engineeringProfile.value : 'standard';
-    setEngineeringStatus('Running challengeâ€¦', 'ok');
+    setEngineeringStatus('Running challenge...', 'ok');
     if (engineeringSummary) engineeringSummary.innerHTML = '';
-    engineeringPre.textContent = 'Runningâ€¦';
+    engineeringPre.textContent = 'Running...';
     try {
       var res = await fetch('/api/engineering/challenge', {
         method: 'POST',
@@ -1953,48 +3337,60 @@ export const WEB_JS = `
     }
   }
 
+  function renderSessionsTable(mountEl, data) {
+    if (!mountEl) return;
+    var rows = '';
+    (data.sessions || []).forEach(function (s) {
+      var isActive = s.id === data.activeSessionId;
+      rows += '<tr' + (isActive ? ' class="active"' : '') + '>';
+      rows += '<td>' + escapeHtml(s.title) + '</td>';
+      rows += '<td>' + s.messageCount + '</td>';
+      rows += '<td>' + escapeHtml(s.updatedAt) + '</td>';
+      rows += '<td class="session-actions">';
+      rows += '<button type="button" data-act="active" data-sid="' + escapeHtml(s.id) + '"' + (isActive ? ' disabled' : '') + '>Use</button>';
+      rows += '<button type="button" data-act="rename" data-sid="' + escapeHtml(s.id) + '">Rename</button>';
+      rows += '<button type="button" class="danger-text" data-act="delete" data-sid="' + escapeHtml(s.id) + '">Delete</button>';
+      rows += '</td></tr>';
+    });
+    if (!data.sessions || data.sessions.length === 0) {
+      mountEl.innerHTML =
+        '<p class="muted">No sessions yet. Use <strong>New</strong> (or Sessions tab) to create one.</p>';
+      return;
+    }
+    mountEl.innerHTML =
+      '<table class="sessions"><thead><tr><th>Title</th><th>Msgs</th><th>Updated</th><th>Actions</th></tr></thead><tbody>' +
+      rows +
+      '</tbody></table>';
+    mountEl.querySelectorAll('button[data-act]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        sessionRowAction(e).catch(function (err) {
+          setSessionsStatus(err.message || String(err), 'err');
+        });
+      });
+    });
+  }
+
   async function loadSessions() {
-    sessionsMount.innerHTML = 'Loading…';
+    if (sessionsMount) sessionsMount.innerHTML = 'Loading...';
+    if (shellSessionsMount) shellSessionsMount.innerHTML = 'Loading...';
     setSessionsStatus('', '');
     try {
       var res = await fetch('/api/sessions');
       var data = await res.json();
       if (!res.ok) throw new Error(data.error || 'sessions failed');
-      var rows = '';
-      (data.sessions || []).forEach(function (s) {
-        var isActive = s.id === data.activeSessionId;
-        rows += '<tr' + (isActive ? ' class="active"' : '') + '>';
-        rows += '<td>' + escapeHtml(s.title) + '</td>';
-        rows += '<td>' + s.messageCount + '</td>';
-        rows += '<td>' + escapeHtml(s.updatedAt) + '</td>';
-        rows += '<td class="session-actions">';
-        rows += '<button type="button" data-act="active" data-sid="' + escapeHtml(s.id) + '"' + (isActive ? ' disabled' : '') + '>Use</button>';
-        rows += '<button type="button" data-act="rename" data-sid="' + escapeHtml(s.id) + '">Rename</button>';
-        rows += '<button type="button" class="danger-text" data-act="delete" data-sid="' + escapeHtml(s.id) + '">Delete</button>';
-        rows += '</td></tr>';
-      });
-      if (!data.sessions || data.sessions.length === 0) {
-        sessionsMount.innerHTML = '<p class="muted">No sessions yet. Create one with <strong>New session</strong>.</p>';
-      } else {
-        sessionsMount.innerHTML = '<table class="sessions"><thead><tr><th>Title</th><th>Msgs</th><th>Updated</th><th>Actions</th></tr></thead><tbody>' + rows + '</tbody></table>';
-        sessionsMount.querySelectorAll('button[data-act]').forEach(function (btn) {
-          btn.addEventListener('click', function (e) {
-            sessionRowAction(e).catch(function (err) {
-              setSessionsStatus(err.message || String(err), 'err');
-            });
-          });
-        });
-      }
+      renderSessionsTable(sessionsMount, data);
+      renderSessionsTable(shellSessionsMount, data);
     } catch (e) {
-      sessionsMount.innerHTML = '';
+      if (sessionsMount) sessionsMount.innerHTML = '';
+      if (shellSessionsMount) shellSessionsMount.innerHTML = '';
       setSessionsStatus('Error: ' + e.message, 'err');
     }
   }
 
-  document.getElementById('btn-new-session').addEventListener('click', async function () {
+  async function handleNewSessionClick() {
     var title = prompt('Optional title for the new session:', '');
     if (title === null) return;
-    setSessionsStatus('Creating…', 'ok');
+    setSessionsStatus('Creating...', 'ok');
     try {
       var r = await fetch('/api/sessions', {
         method: 'POST',
@@ -2008,13 +3404,27 @@ export const WEB_JS = `
     } catch (e) {
       setSessionsStatus(e.message, 'err');
     }
+  }
+
+  document.querySelectorAll('.js-session-new').forEach(function (btn) {
+    btn.addEventListener('click', handleNewSessionClick);
   });
 
-  document.getElementById('btn-refresh-sessions').addEventListener('click', loadSessions);
+  document.querySelectorAll('.js-session-refresh').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      loadSessions();
+    });
+  });
+
+  document.querySelectorAll('.js-open-sessions-tab').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      showPanel('sessions');
+    });
+  });
 
   async function loadToolsApi() {
-    if (apiDocMount) apiDocMount.innerHTML = 'Loading…';
-    routesPre.textContent = 'Loading…';
+    if (apiDocMount) apiDocMount.innerHTML = 'Loading...';
+    routesPre.textContent = 'Loading...';
     toolsMount.innerHTML = '';
     try {
       var r1 = await fetch('/api/routes');
@@ -2029,7 +3439,7 @@ export const WEB_JS = `
             docHtml += '<tr class="api-row" data-path="' + escapeHtml(e.path) + '">';
             docHtml += '<td><span class="' + httpMethodClass(e.method) + '">' + escapeHtml(e.method) + '</span></td>';
             docHtml += '<td class="api-path"><code>' + escapeHtml(e.path) + '</code></td>';
-            docHtml += '<td class="api-body-hint">' + (e.body ? '<code>' + escapeHtml(e.body) + '</code>' : '—') + '</td>';
+            docHtml += '<td class="api-body-hint">' + (e.body ? '<code>' + escapeHtml(e.body) + '</code>' : '-') + '</td>';
             docHtml += '<td>' + escapeHtml(e.note || '') + '</td>';
             docHtml += '</tr>';
           });
@@ -2050,6 +3460,24 @@ export const WEB_JS = `
       if (engineeringPre) engineeringPre.textContent = 'Error: ' + e.message;
     }
   }
+
+  if (executionProfiles) {
+    executionProfiles.querySelectorAll('button.exec-profile').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        applyExecutionProfile(btn.getAttribute('data-profile') || '');
+      });
+    });
+  }
+
+  [shellRuntime, timeoutSec, maxCharsInput, cwdOverride, runbookContinue].forEach(function (el) {
+    if (!el) return;
+    el.addEventListener('change', saveExecutionPrefs);
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+      el.addEventListener('input', function () {
+        if (el === cwdOverride) saveExecutionPrefs();
+      });
+    }
+  });
 
   if (toolFilter) {
     toolFilter.addEventListener('input', function () {
@@ -2086,7 +3514,45 @@ export const WEB_JS = `
     });
   }
 
-  refreshState().catch(function () { setState('error', 'bad'); });
+  if (providerQuick) {
+    populateProviderQuickOptions();
+    providerQuick.addEventListener('change', async function () {
+      var sel = String(providerQuick.value || '').trim();
+      if (!sel) return;
+      providerQuick.disabled = true;
+      setState('saving...', '');
+      try {
+        var res = await fetch('/api/config', {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ defaultProvider: sel })
+        });
+        var pdata = await res.json().catch(function () { return {}; });
+        if (!res.ok) throw new Error((pdata && pdata.error) ? String(pdata.error) : 'PATCH failed');
+        var defProvEl = settingsMount && settingsMount.querySelector('[data-cfg-path="defaultProvider"]');
+        if (defProvEl) defProvEl.value = sel;
+        await refreshState();
+        setSettingsStatus('Default provider: ' + sel, 'ok');
+      } catch (e) {
+        setState(e.message || 'save failed', 'bad');
+        refreshState().catch(function () {});
+      } finally {
+        if (providerQuick) providerQuick.disabled = executionBusy;
+      }
+    });
+  }
+
+  applyExecutionFormState(EXEC_DEFAULTS);
+  loadExecutionPrefs();
+  refreshState().catch(function () {
+    setState('error', 'bad');
+    if (providerReadiness) {
+      providerReadiness.textContent =
+        'Offline or server unreachable — provider status unavailable.';
+      providerReadiness.className = 'provider-readiness-row provider-readiness-bad';
+    }
+  });
   refreshInfo().catch(function () {});
+  loadSessions();
 })();
 `;

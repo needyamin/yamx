@@ -9,7 +9,13 @@ import { Config, type YamConfig } from '../config/index.js';
 import { ContextEngine } from '../context.js';
 import { SessionStore, type ChatSession } from '../session-store.js';
 import type { Provider } from '../providers/base.js';
-import { createProvider } from '../providers/factory.js';
+import {
+  createProvider,
+  normalizeProviderName,
+  hasCloudApiKey,
+  providerUsesCloudApiKey,
+  type ProviderName,
+} from '../providers/factory.js';
 import {
   changeWorkspaceDirectory,
   ensureInsideProject,
@@ -37,6 +43,17 @@ import {
 const require = createRequire(import.meta.url);
 
 const SESSIONS_API = '/api/sessions';
+
+function credentialSetupHint(provider: ProviderName): string {
+  switch (provider) {
+    case 'kimi':
+      return 'Set KIMI_API_KEY or MOONSHOT_API_KEY, or paste a key under Settings, Providers.';
+    case 'grok':
+      return 'Set XAI_API_KEY, or paste a key under Settings, Providers.';
+    default:
+      return `Set ${provider.toUpperCase()}_API_KEY, or paste a key under Settings, Providers.`;
+  }
+}
 
 function yamxConfigFilePath(): string {
   return pathJoin(homedir(), '.yamx', 'config.json');
@@ -306,18 +323,59 @@ class WebAgentRuntime {
     this.providerOverride = options.providerOverride;
   }
 
-  async state(): Promise<{ provider: string; model: string; sessionId?: string }> {
+  async state(): Promise<{
+    provider: string;
+    model: string;
+    sessionId?: string;
+    providerUsesApiKey: boolean;
+    providerApiKeyConfigured: boolean;
+    agentCanRun: boolean;
+    providerHint: string | null;
+    sessionWarm?: boolean;
+  }> {
     if (this.agentEnv) {
+      const name = normalizeProviderName(this.agentEnv.provider.name);
+      const usesKey = providerUsesCloudApiKey(name);
       return {
-        provider: this.agentEnv.provider.name,
+        provider: name,
         model: this.agentEnv.provider.modelId,
         sessionId: this.agentEnv.session.id,
+        providerUsesApiKey: usesKey,
+        providerApiKeyConfigured: true,
+        agentCanRun: true,
+        providerHint: null,
+        sessionWarm: true,
       };
     }
+
     const cfg = await this.loadConfig();
+    const pid = normalizeProviderName(this.providerName ?? cfg.defaultProvider ?? 'openrouter');
+    const usesKey = providerUsesCloudApiKey(pid);
+
+    const block = cfg.providers?.[pid as keyof YamConfig['providers']] as { model?: string } | undefined;
+    const cfgBlockModel =
+      typeof block?.model === 'string' ? String(block.model).trim() : '';
+    const dm = typeof cfg.defaultModel === 'string' ? cfg.defaultModel.trim() : '';
+    const modelCli = this.modelName && String(this.modelName).trim();
+
+    const model = modelCli || dm || cfgBlockModel || '';
+
+    const credentialed = hasCloudApiKey(cfg, pid);
+    const canRun = credentialed;
+    let hint: string | null = null;
+    if (usesKey && !credentialed) {
+      hint = credentialSetupHint(pid);
+    }
+
     return {
-      provider: this.providerName || cfg.defaultProvider || 'openrouter',
-      model: this.modelName || cfg.defaultModel || '',
+      provider: pid,
+      model,
+      sessionId: undefined,
+      providerUsesApiKey: usesKey,
+      providerApiKeyConfigured: credentialed,
+      agentCanRun: canRun,
+      providerHint: hint,
+      sessionWarm: false,
     };
   }
 
@@ -494,6 +552,11 @@ async function handleRequest(
         provider: agentState.provider,
         model: agentState.model,
         sessionId: agentState.sessionId,
+        providerUsesApiKey: agentState.providerUsesApiKey,
+        providerApiKeyConfigured: agentState.providerApiKeyConfigured,
+        agentCanRun: agentState.agentCanRun,
+        providerHint: agentState.providerHint,
+        sessionWarm: agentState.sessionWarm ?? false,
       });
     }
 
@@ -637,7 +700,7 @@ async function handleRequest(
         {
           name: 'State & project',
           endpoints: [
-            { method: 'GET', path: '/api/state', note: 'cwd, provider, model, activeSessionId' },
+            { method: 'GET', path: '/api/state', note: 'cwd, provider, model, sessionId + API key · agent-ready flags · hints' },
             { method: 'GET', path: '/api/info', note: 'version, node, configPath, projectRoot' },
           ],
         },
@@ -672,7 +735,12 @@ async function handleRequest(
               body: '{ suite?, profile?, force? }',
               note: 'run suite: vm/fullstack/devops/network/security/all',
             },
-            { method: 'POST', path: '/api/command', body: '{ command }', note: 'shell or chat' },
+            {
+              method: 'POST',
+              path: '/api/command',
+              body: '{ command, shell?, cwd?, timeoutMs?, maxChars? }',
+              note: 'shell or chat with optional execution overrides',
+            },
             { method: 'POST', path: '/api/chat', body: '{ message }', note: 'agent only' },
           ],
         },
@@ -687,6 +755,8 @@ async function handleRequest(
         command: String(body.command || ''),
         shell: typeof body.shell === 'string' ? body.shell : undefined,
         cwd: typeof body.cwd === 'string' ? body.cwd : undefined,
+        timeoutMs: typeof body.timeoutMs === 'number' ? body.timeoutMs : undefined,
+        maxChars: typeof body.maxChars === 'number' ? body.maxChars : undefined,
       });
       return sendJson(res, 200, result);
     }

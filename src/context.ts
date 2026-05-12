@@ -210,7 +210,18 @@ export class ContextEngine {
   }
 
   async buildSystemPrompt(): Promise<string> {
+    const summaryPath = path.join(this.cwd, '.yamx', 'project-summary.md');
+    const summaryExists = await fs.pathExists(summaryPath);
+    let projectSummary = '';
+
     const ctx = await this.scan();
+    if (summaryExists) {
+      projectSummary = `\n## Saved Project Summary\n${await fs.readFile(summaryPath, 'utf-8')}\n(Note: File tree omitted because a saved summary exists to save tokens.)\n`;
+      ctx.fileTree = '';
+    } else {
+      ctx.fileTree = `\n## Layout\n${ctx.fileTree}\n`;
+    }
+
     const os = process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux';
     const packageScripts = Object.entries(ctx.packageScripts || {})
       .map(([name, script]) => `- ${name}: ${script}`)
@@ -530,9 +541,7 @@ ${packageScripts}
 - Languages: ${ctx.languages.join(', ') || '?'} - Package manager: ${ctx.packageManager || '?'}
 - Notable dependencies: ${notableDeps.length ? notableDeps.join(', ') : '?'}
 - ~${ctx.totalFiles} files - OS: ${os} - cwd: ${this.cwd}
-
-## Layout
-${ctx.fileTree}
+${projectSummary || ctx.fileTree}
 
 ## Loaded Memory
 ${memory || 'No YamX memory files found yet. Use /init to create project memory and /remember <note> to save durable notes.'}

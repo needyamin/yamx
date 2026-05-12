@@ -37,14 +37,24 @@ export const codebaseAnalysis: Tool = {
           description: 'Analysis depth. quick is small, standard is balanced, deep samples more files.',
         },
         max_files: { type: 'number', description: 'Maximum source files to sample (default depends on depth, max 180)' },
+        save_to_memory: { type: 'boolean', description: 'If true, saves the analysis to .yamx/project-summary.md to compress future context token usage. Use this if the user asks to scan/analyze specifically to save memory or tokens.' },
       },
     },
   },
-  async execute(args: { goal?: string; depth?: 'quick' | 'standard' | 'deep'; max_files?: number }) {
-    return buildCodebaseAnalysis({
+  async execute(args: { goal?: string; depth?: 'quick' | 'standard' | 'deep'; max_files?: number; save_to_memory?: boolean }) {
+    const summary = await buildCodebaseAnalysis({
       goal: args.goal,
       depth: args.depth,
       maxFiles: args.max_files,
     });
+    if (args.save_to_memory) {
+      const fs = await import('fs-extra');
+      const path = await import('path');
+      const memoryPath = path.join(process.cwd(), '.yamx', 'project-summary.md');
+      await fs.default.ensureDir(path.dirname(memoryPath));
+      await fs.default.writeFile(memoryPath, summary);
+      return `Analysis saved to ${memoryPath}. The agent will now automatically use this memory to save context tokens. Summary contents:\n\n${summary}`;
+    }
+    return summary;
   },
 };

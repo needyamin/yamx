@@ -39,6 +39,15 @@ Note: `docs/docs.html` uses Bootstrap CDN assets. Open directly or serve `docs/`
 - Session-based: persistent history and memory under `~/.yamx` and project `.yamx`
 - Safety-first: risky/destructive actions require explicit allowance
 
+## Elite Coder Intelligence (v1.0.29+)
+
+YamX incorporates an Advanced Code Reasoning Engine and a sophisticated Model Council designed to act as a principal engineer:
+
+- **Smart Dependency Graph Detection**: Before multi-file edits, the `find_references` tool analyzes import/export chains to ensure all consumers of a modified symbol are updated.
+- **Elite Debugging Protocol**: It implements binary search isolation and enforces the "Cascading Error Rule" (fixing only the very first error in a compiler stack trace).
+- **Architecture-Aware Context**: Automatically detects and adapts to patterns like MVC, microservices, Next.js, NestJS, Vite, and Prisma.
+- **Multi-File Refactoring**: Enforces a strict dependency order (types -> implementations -> consumers -> tests) to prevent intermediate broken states.
+
 ## Install
 
 Global:

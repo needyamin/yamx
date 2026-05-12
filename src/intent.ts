@@ -5,12 +5,32 @@ export type UserIntentKind =
   | 'direct-command'
   | 'task';
 
+/** Sub-classification for code-related tasks — gives the agent better routing hints. */
+export type CodeTaskType =
+  | 'implement'   // new feature, add endpoint, create component
+  | 'debug'       // fix bug, investigate error, troubleshoot
+  | 'refactor'    // restructure, rename, extract, clean up
+  | 'review'      // code review, security audit, quality check
+  | 'optimize'    // performance, bundle size, query speed
+  | 'test'        // write tests, fix tests, add coverage
+  | 'deploy'      // CI/CD, release, build pipeline
+  | 'configure'   // setup, env, tooling, linting config
+  | 'document'    // README, JSDoc, API docs
+  | 'general';    // unclassifiable code task
+
+/** Rough complexity estimate for council/planning decisions. */
+export type TaskComplexity = 'trivial' | 'moderate' | 'complex';
+
 export interface UserIntent {
   kind: UserIntentKind;
   text: string;
   reason: string;
   /** Detected entities in the user text for downstream enrichment. */
   entities?: IntentEntities;
+  /** Sub-type for code tasks — helps route to the right engineering protocol. */
+  codeTaskType?: CodeTaskType;
+  /** Rough complexity estimate. */
+  complexity?: TaskComplexity;
 }
 
 export interface IntentEntities {
@@ -24,6 +44,12 @@ export interface IntentEntities {
   packageManagers?: string[];
   /** Short hint when npm lifecycle or exit codes appear in pasted output */
   lifecycleHint?: string;
+  /** Detected programming languages mentioned in the request */
+  languages?: string[];
+  /** Detected framework references */
+  frameworks?: string[];
+  /** True when the request likely involves multiple files */
+  multiFile?: boolean;
 }
 
 export function extractCurrentUserRequest(input: string): string {
@@ -55,12 +81,18 @@ export function classifyUserIntent(input: string): UserIntent {
   if (isClarificationOnly(lower, text)) {
     // But upgrade to task if there's strong actionable signal in recent words
     if (hasActionableSignal(lower)) {
-      return { kind: 'task', text, reason: 'clarification with actionable signal', entities: extractEntities(text) };
+      const entities = extractEntities(text);
+      const codeTaskType = classifyCodeTaskType(lower);
+      const complexity = estimateComplexity(text, entities);
+      return { kind: 'task', text, reason: 'clarification with actionable signal', entities, codeTaskType, complexity };
     }
     return { kind: 'clarification', text, reason: 'ambiguous short follow-up without actionable object' };
   }
 
-  return { kind: 'task', text, reason: 'actionable request', entities: extractEntities(text) };
+  const entities = extractEntities(text);
+  const codeTaskType = classifyCodeTaskType(lower);
+  const complexity = estimateComplexity(text, entities);
+  return { kind: 'task', text, reason: 'actionable request', entities, codeTaskType, complexity };
 }
 
 export function isConversationOnlyInput(input: string): boolean {
@@ -91,6 +123,14 @@ export function buildCurrentIntentMessage(intent: UserIntent): string {
     `instruction=${instruction}`,
   ];
 
+  // Code task sub-classification for smarter routing
+  if (intent.codeTaskType && intent.codeTaskType !== 'general') {
+    parts.push(`code_task_type=${intent.codeTaskType}`);
+  }
+  if (intent.complexity) {
+    parts.push(`estimated_complexity=${intent.complexity}`);
+  }
+
   // Attach entity hints so the agent can skip redundant detection
   if (intent.entities) {
     const e = intent.entities;
@@ -100,6 +140,9 @@ export function buildCurrentIntentMessage(intent: UserIntent): string {
     if (e.referencesContext) parts.push('references_previous_context=true');
     if (e.packageManagers?.length) parts.push(`detected_package_managers=${e.packageManagers.join(', ')}`);
     if (e.lifecycleHint) parts.push(`cli_lifecycle_hint=${oneLine(e.lifecycleHint)}`);
+    if (e.languages?.length) parts.push(`detected_languages=${e.languages.join(', ')}`);
+    if (e.frameworks?.length) parts.push(`detected_frameworks=${e.frameworks.join(', ')}`);
+    if (e.multiFile) parts.push('multi_file_task=true');
   }
 
   parts.push('</yamx_current_intent>');
@@ -222,7 +265,80 @@ function extractEntities(text: string): IntentEntities {
   else if (/\bECONNREFUSED\b/i.test(text)) entities.lifecycleHint = 'connection refused';
   else if (/\bENOENT\b/i.test(text)) entities.lifecycleHint = 'missing file/path (ENOENT)';
 
+  // Language detection
+  const langMatches = text.match(/\b(typescript|javascript|python|rust|go|java|kotlin|swift|ruby|php|c\+\+|csharp|c#|dart|scala|elixir|haskell|lua|zig|sql|graphql|html|css|scss|sass)\b/gi);
+  if (langMatches?.length) {
+    entities.languages = [...new Set(langMatches.map(l => l.toLowerCase()))].slice(0, 5);
+  }
+
+  // Framework detection
+  const fwMatches = text.match(/\b(react|next\.?js|vue|nuxt|angular|svelte|express|fastify|nestjs|django|flask|fastapi|rails|laravel|spring|gin|fiber|actix|rocket|phoenix|remix|astro|solid|qwik|hono)\b/gi);
+  if (fwMatches?.length) {
+    entities.frameworks = [...new Set(fwMatches.map(f => f.toLowerCase()))].slice(0, 5);
+  }
+
+  // Multi-file detection
+  const fileCount = (entities.filePaths?.length || 0);
+  const multiFileSignals = /\b(all files|every file|across|throughout|project-wide|codebase|refactor|rename|move|migrate|restructure|reorganize)\b/i.test(text);
+  if (fileCount >= 2 || multiFileSignals) {
+    entities.multiFile = true;
+  }
+
   return Object.keys(entities).length > 0 ? entities : {};
+}
+
+/* ── Code task sub-classification ──────────────────────────────────── */
+
+function classifyCodeTaskType(lower: string): CodeTaskType {
+  // Debug/fix
+  if (/\b(fix|bug|error|broken|crash|fail|debug|troubleshoot|investigate|diagnose|not work|doesn'?t work|doesn'?t run|can'?t|cannot|wrong|issue|problem|exception|stacktrace|stack trace|segfault|panic|core dump)\b/.test(lower)) return 'debug';
+  // Refactor/restructure
+  if (/\b(refactor|restructure|reorganize|rename|extract|split|merge|decouple|abstract|generalize|clean ?up|simplify|consolidate|modularize|decompose|move .* to|migrate)\b/.test(lower)) return 'refactor';
+  // Review/audit
+  if (/\b(review|audit|inspect|check|assess|evaluate|analyze|analyse|security scan|code quality|best practice|code smell|lint|static analysis)\b/.test(lower)) return 'review';
+  // Optimize/performance
+  if (/\b(optimi[sz]e|performance|speed|fast|slow|memory leak|bundle size|lazy load|cache|memoize|benchmark|profile|bottleneck|latency|throughput|reduce size)\b/.test(lower)) return 'optimize';
+  // Test
+  if (/\b(test|spec|coverage|assertion|mock|stub|fixture|e2e|integration test|unit test|snapshot|playwright|cypress|jest|vitest|pytest|cargo test)\b/.test(lower)) return 'test';
+  // Deploy/CI/CD
+  if (/\b(deploy|release|publish|ci\/cd|pipeline|github action|workflow|docker|containerize|kubernetes|helm|terraform|build pipeline|staging|production)\b/.test(lower)) return 'deploy';
+  // Configure/setup
+  if (/\b(config|configure|setup|set up|initialize|init|env|environment|eslint|prettier|tsconfig|webpack|vite|babel|tailwind|postcss|docker-compose)\b/.test(lower)) return 'configure';
+  // Document
+  if (/\b(document|readme|jsdoc|tsdoc|docstring|api doc|swagger|openapi|comment|annotate|changelog)\b/.test(lower)) return 'document';
+  // Implement/create
+  if (/\b(implement|create|add|build|make|write|generate|scaffold|new|feature|endpoint|component|module|function|class|service|handler|middleware|hook|util|helper|route|page|view|model|schema|migration|seed)\b/.test(lower)) return 'implement';
+  return 'general';
+}
+
+/* ── Complexity estimation ────────────────────────────────────────── */
+
+function estimateComplexity(text: string, entities: IntentEntities): TaskComplexity {
+  let score = 0;
+
+  // Length-based
+  if (text.length > 500) score += 2;
+  else if (text.length > 200) score += 1;
+
+  // Multi-file signals
+  if (entities.multiFile) score += 2;
+  const fileCount = entities.filePaths?.length || 0;
+  if (fileCount >= 3) score += 2;
+  else if (fileCount >= 2) score += 1;
+
+  // Error complexity (pasted stack traces, multiple errors)
+  if (entities.errorPatterns && entities.errorPatterns.length >= 2) score += 1;
+
+  // Complex keywords
+  const lower = text.toLowerCase();
+  if (/\b(architecture|microservice|monorepo|migration|schema|database|redesign|rewrite|overhaul|framework|infrastructure)\b/.test(lower)) score += 2;
+  if (/\b(refactor|restructure|reorganize|integrate|upgrade|convert|port|multi-?step|end-?to-?end)\b/.test(lower)) score += 1;
+  if (/\b(api|endpoint|route|middleware|auth|authentication|authorization|oauth|jwt|session|cookie|cors|csrf|rate limit)\b/.test(lower)) score += 1;
+  if (/\b(race condition|deadlock|thread|concurrent|parallel|async|promise|observable|stream|worker|queue)\b/.test(lower)) score += 2;
+
+  if (score >= 4) return 'complex';
+  if (score >= 2) return 'moderate';
+  return 'trivial';
 }
 
 function oneLine(value: string): string {

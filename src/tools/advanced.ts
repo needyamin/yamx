@@ -487,3 +487,107 @@ function boundedNumber(value: unknown, fallback: number, min: number, max: numbe
   if (!Number.isFinite(parsed)) return Math.min(max, Math.max(min, fallback));
   return Math.min(max, Math.max(min, Math.floor(parsed)));
 }
+
+export const findReferences: Tool = {
+  definition: {
+    name: 'find_references',
+    description: `Advanced Code Reasoning Engine: Search for symbol references, imports, and usages across the codebase. 
+Use this BEFORE making multi-file edits, changing function signatures, or moving files. 
+It analyzes import chains, identifies type propagation risks, and detects consumers of a specific module/symbol.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        symbol: { type: 'string', description: 'The exact class, function, variable, or type name to find.' },
+        path: { type: 'string', description: 'Directory to search in (default: ".")' },
+        include: { type: 'string', description: 'Glob pattern for files to include (e.g., "**/*.{ts,tsx,js,jsx}")' },
+        is_import_path: { type: 'boolean', description: 'Set to true if searching for an import path (e.g. "./utils") rather than a symbol name.' },
+      },
+      required: ['symbol'],
+    },
+  },
+  async execute(args) {
+    const target = ensureInsideProject(args.path || '.');
+    if (!target.ok) return target.error;
+    const searchDir = target.path;
+    const includePattern = args.include || '**/*.{ts,tsx,js,jsx,py,go,rs,java,cs,php,rb}';
+    
+    const files = await fg(includePattern, {
+      cwd: searchDir,
+      ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**', '*.lock', '*.map', '*.min.js'],
+      onlyFiles: true,
+    });
+
+    const symbol = args.symbol.trim();
+    if (!symbol) return 'Error: symbol cannot be empty.';
+
+    // Safely escape the symbol/path for regex
+    const escaped = symbol.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+    
+    // For import paths, match strings. For symbols, match word boundaries.
+    const regexPattern = args.is_import_path 
+      ? `['"\`]${escaped}['"\`]` 
+      : `\\\\b${escaped}\\\\b`;
+      
+    const regex = new RegExp(regexPattern, 'g');
+    const importRegex = new RegExp(`^\\\\s*import.*\\\\b${escaped}\\\\b.*from|^\\\\s*(from|import).*['"\`].*${escaped}.*['"\`]`, 'im');
+    const exportRegex = new RegExp(`^\\\\s*export.*\\\\b${escaped}\\\\b`, 'im');
+
+    let totalMatches = 0;
+    const filesWithMatches: Array<{ file: string, type: 'import' | 'export' | 'usage', count: number }> = [];
+
+    for (const file of files) {
+      try {
+        const content = await fs.readFile(path.join(searchDir, file), 'utf-8');
+        regex.lastIndex = 0;
+        const matches = content.match(regex);
+        if (matches && matches.length > 0) {
+          totalMatches += matches.length;
+          
+          let matchType: 'import' | 'export' | 'usage' = 'usage';
+          if (exportRegex.test(content)) matchType = 'export';
+          else if (importRegex.test(content)) matchType = 'import';
+
+          filesWithMatches.push({ file, type: matchType, count: matches.length });
+        }
+      } catch {
+        // Skip unreadable files
+      }
+    }
+
+    if (filesWithMatches.length === 0) {
+      return `No references found for '${symbol}' in the scanned files.`;
+    }
+
+    // Sort by type: exports first, then imports, then usages
+    filesWithMatches.sort((a, b) => {
+      const rank = { export: 0, import: 1, usage: 2 };
+      return rank[a.type] - rank[b.type] || b.count - a.count;
+    });
+
+    const lines = [
+      `Advanced Code Reasoning: ${totalMatches} reference(s) found for '${symbol}' across ${filesWithMatches.length} file(s).`,
+      ``,
+      `### Dependency Graph Hints:`,
+      filesWithMatches.some(f => f.type === 'export') 
+        ? `- Source Definition likely in: ${filesWithMatches.filter(f => f.type === 'export').map(f => f.file).join(', ')}` 
+        : `- Source Definition not directly detected via export keyword.`,
+      filesWithMatches.some(f => f.type === 'import') 
+        ? `- Direct Consumers: ${filesWithMatches.filter(f => f.type === 'import').length} file(s) import this.` 
+        : '',
+      ``,
+      `### Multi-File Edit Strategy:`,
+      `1. Modify the source definition(s) first.`,
+      `2. Update the direct consumers (imports/usages).`,
+      `3. Run typecheck and tests to verify propagation.`,
+      ``,
+      `### Affected Files:`
+    ];
+
+    for (const fw of filesWithMatches) {
+      const typeLabel = fw.type === 'export' ? '[Definition/Export]' : fw.type === 'import' ? '[Import/Consumer]' : '[Usage]';
+      lines.push(`  ${typeLabel} ${fw.file} (${fw.count} matches)`);
+    }
+
+    return lines.filter(Boolean).join('\n');
+  },
+};

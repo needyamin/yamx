@@ -1220,6 +1220,29 @@ async function projectCommandKnowledge(cwd: string): Promise<CommandKnowledge[]>
     if (deps.has('@playwright/test')) add('npx playwright test', ['playwright', 'e2e', 'browser', 'test'], 'project Playwright tests');
     if (deps.has('ts-node')) add('npx ts-node --esm src/index.ts', ['typescript', 'dev', 'run'], 'run project TypeScript entry with ts-node');
     if (deps.has('commander')) add('node dist/index.js --help', ['cli', 'help', 'dist'], 'run built CLI help');
+
+    // Elite Coder Framework Intelligence
+    if (deps.has('next')) {
+      add('npx next dev', ['nextjs', 'dev', 'start', 'react'], 'start Next.js dev server');
+      add('npx next build', ['nextjs', 'build', 'react'], 'build Next.js app for production');
+      add('npx next lint', ['nextjs', 'lint', 'react'], 'lint Next.js project');
+    }
+    if (deps.has('@nestjs/core')) {
+      add('npx nest start --watch', ['nestjs', 'dev', 'start', 'node'], 'start NestJS dev server');
+      add('npx nest build', ['nestjs', 'build', 'node'], 'build NestJS app');
+    }
+    if (deps.has('vite')) {
+      add('npx vite dev', ['vite', 'dev', 'start', 'react', 'vue'], 'start Vite dev server');
+      add('npx vite build', ['vite', 'build', 'react', 'vue'], 'build Vite app for production');
+    }
+    if (deps.has('prisma')) {
+      add('npx prisma db push', ['prisma', 'db', 'schema'], 'push Prisma schema state to database');
+      add('npx prisma generate', ['prisma', 'db', 'client'], 'generate Prisma client');
+      add('npx prisma migrate dev', ['prisma', 'db', 'migrate'], 'create and apply Prisma dev migration');
+    }
+    if (deps.has('tailwindcss')) {
+      add('npx tailwindcss -i ./src/index.css -o ./dist/output.css --watch', ['tailwind', 'css', 'build'], 'watch Tailwind CSS');
+    }
   }
 
   if (files.includes('Dockerfile')) add('docker build -t local-app .', ['docker', 'build', 'image'], 'project Dockerfile build', 'devops');
@@ -1236,8 +1259,17 @@ async function projectCommandKnowledge(cwd: string): Promise<CommandKnowledge[]>
   if (files.includes('Cargo.toml')) add('cargo test', ['rust', 'test'], 'project Rust tests');
   if (files.includes('pyproject.toml')) add('python -m pytest', ['python', 'test'], 'project Python tests');
   if (files.includes('requirements.txt')) add('pip install -r requirements.txt', ['python', 'install', 'requirements'], 'install project Python requirements');
+  if (files.includes('manage.py')) {
+    add('python manage.py runserver', ['django', 'python', 'dev', 'server'], 'start Django dev server');
+    add('python manage.py makemigrations', ['django', 'python', 'db', 'migrate'], 'create Django migrations');
+    add('python manage.py migrate', ['django', 'python', 'db', 'migrate'], 'apply Django migrations');
+  }
   if (files.includes('composer.json')) add('composer install', ['php', 'install', 'dependencies'], 'install project PHP dependencies');
-  if (files.includes('artisan')) add('php artisan test', ['php', 'laravel', 'test'], 'run Laravel tests');
+  if (files.includes('artisan')) {
+    add('php artisan test', ['php', 'laravel', 'test'], 'run Laravel tests');
+    add('php artisan serve', ['php', 'laravel', 'dev', 'server'], 'start Laravel dev server');
+    add('php artisan migrate', ['php', 'laravel', 'db', 'migrate'], 'apply Laravel migrations');
+  }
   if (localBins.includes('.bin')) add('npx --no-install', ['local', 'bin'], 'run project-local npm binary');
 
   return dedupeKnowledge(out);
@@ -1266,7 +1298,7 @@ async function nearbyProjectFiles(cwd: string): Promise<string[]> {
   const names = [
     'package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb',
     'tsconfig.json', 'config/tsconfig.json',
-    'pyproject.toml', 'requirements.txt', 'poetry.lock', 'uv.lock',
+    'pyproject.toml', 'requirements.txt', 'poetry.lock', 'uv.lock', 'manage.py',
     'Cargo.toml', 'go.mod', 'composer.json', 'artisan',
     'Dockerfile', 'docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml',
     'main.tf', 'variables.tf', 'outputs.tf', 'terraform.tfvars',

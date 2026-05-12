@@ -309,7 +309,7 @@ In-session commands:
 
 - Use `/help` for the authoritative slash-command list in your running version.
 
-## Built-in tools (31)
+## Built-in tools (32)
 
 Files:
 
@@ -333,7 +333,7 @@ Web:
 
 Intelligence and logs:
 
-- `project_intel`, `codebase_analysis`, `log_inspect`
+- `project_intel`, `codebase_analysis`, `log_inspect`, `find_references`
 
 ## Develop and contribute
 

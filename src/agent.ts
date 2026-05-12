@@ -393,9 +393,9 @@ export class Agent {
                   'You are the hidden YamX model council. Discuss the user request before the main coding agent acts.',
                   'Use four concise expert perspectives:',
                   'Analyst: clarify intent and required outcome.',
-                  'Planner: identify the smallest practical execution path.',
-                  'Critic: identify risks, missing evidence, safety concerns, and likely failure modes.',
-                  'Synthesizer: give final private guidance the main agent should follow.',
+                  'Planner: identify the smallest practical execution path. For code changes, specify: which files to read first, edit order (types→impls→tests), and the cheapest verification command.',
+                  'Critic: identify risks, missing evidence, safety concerns, likely failure modes, and potential regressions. For multi-file changes, flag import/type propagation risks.',
+                  'Synthesizer: give final private guidance the main agent should follow. Include: specific tool calls to start with, files to read, and the verification strategy.',
                   'Keep the whole council response under 900 tokens.',
                   'Do not ask the user questions unless the task is genuinely blocked.',
                   'Do not claim work is done. Do not include public-facing filler.',
@@ -409,7 +409,8 @@ export class Agent {
                   '',
                   'Current user request:',
                   userInput,
-                ].join('\n'),
+                  intentKind !== 'task' ? '' : `\nIntent classification: kind=${intentKind}`,
+                ].filter(Boolean).join('\n'),
               },
             ],
             maxTokens: Math.min(1400, this.options.maxTokens || 1400),
@@ -1092,6 +1093,9 @@ export class Agent {
     if (/build.*fail|compilation error|linker error|tsc|type error/i.test(result)) return 'build-failure';
     if (/timeout|timed out|deadline exceeded/i.test(result)) return 'timeout';
     if (/out of memory|heap|OOM|allocation failed|ENOMEM/i.test(result)) return 'memory';
+    if (/deadlock|race condition|thread.*panic|mutex|lock/i.test(result)) return 'concurrency';
+    if (/401|403|unauthorized|forbidden|invalid.*token|expired.*token|authentication.*fail/i.test(result)) return 'auth-failure';
+    if (/migration|schema|constraint|foreign key|duplicate.*key|unique.*violation/i.test(result)) return 'database';
     return 'general';
   }
 
@@ -1101,12 +1105,15 @@ export class Agent {
       case 'filesystem': return 'Domain hint: verify the path exists, check file permissions, confirm cwd is correct, look for typos in path.';
       case 'port-conflict': return 'Domain hint: find the process using the port (lsof/netstat/ss), kill it or use a different port.';
       case 'missing-dependency': return 'Domain hint: check if the package is installed (npm ls / pip list), verify import paths match installed names, run install if missing.';
-      case 'code-error': return 'Domain hint: read the exact file:line referenced, fix the syntax/type issue, then rerun. Check recent edits for introduced bugs.';
+      case 'code-error': return 'Domain hint: read the exact file:line referenced, fix the syntax/type issue, then rerun. Check recent edits for introduced bugs. If multiple errors, fix ONLY the first one and rebuild.';
       case 'missing-tool': return 'Domain hint: verify the CLI tool is installed and on PATH (where/which/command -v), install it if missing with the appropriate package manager.';
       case 'test-failure': return 'Domain hint: read the failing test assertion, compare expected vs actual, inspect the tested function, fix the root cause not the test.';
-      case 'build-failure': return 'Domain hint: read compiler/build errors from top to bottom, fix the first error (later ones often cascade), then rebuild.';
+      case 'build-failure': return 'Domain hint: read compiler/build errors from top to bottom, fix ONLY the FIRST error (later ones cascade), then rebuild.';
       case 'timeout': return 'Domain hint: check if the target is reachable, increase timeout if appropriate, verify the operation is not hanging on interactive input.';
       case 'memory': return 'Domain hint: check for infinite loops, unbounded data structures, or large file reads. Consider streaming or pagination.';
+      case 'concurrency': return 'Domain hint: check for shared mutable state, missing locks/mutexes, promise/async ordering issues, unhandled rejection. Add proper synchronization.';
+      case 'auth-failure': return 'Domain hint: check token/credential validity, verify env vars are set, check token expiration, confirm scope/permissions. Never log full credentials.';
+      case 'database': return 'Domain hint: check migration status, verify schema matches code expectations, check constraints and indexes, verify connection string.';
       default: return 'Domain hint: focus on the first error line and trace from there.';
     }
   }
@@ -1116,11 +1123,26 @@ export class Agent {
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
+
+    // Parse stack trace for the most actionable frame
+    const stackFrame = lines.find((line) =>
+      /^\s+at\s+.+\(?.+:\d+:\d+\)?/.test(line) ||
+      /^\s*File "[^"]+", line \d+/.test(line) ||
+      /^\s+\d+\s*\|/.test(line) ||
+      /^\s*-->\s+src\//.test(line)
+    );
     const firstSignal = lines.find((line) =>
       /(error|exception|fatal|failed|failure|traceback|panic|enoent|eacces|eperm|econnrefused|eaddrinuse|syntaxerror|typeerror|referenceerror|not found|not recognized|timed out)/i.test(line)
     );
-    const chosen = firstSignal || lines[0] || 'unknown error';
-    return chosen.replace(/\s+/g, ' ').slice(0, 260);
+
+    // Count total errors for cascade detection
+    const errorCount = lines.filter((line) =>
+      /\b(error|Error|ERROR)\b/.test(line) && !/\d+ errors?/.test(line)
+    ).length;
+    const cascadeNote = errorCount > 3 ? ` [${errorCount} errors detected — fix the first one, later ones likely cascade]` : '';
+
+    const chosen = firstSignal || stackFrame || lines[0] || 'unknown error';
+    return (chosen.replace(/\s+/g, ' ').slice(0, 260) + cascadeNote).slice(0, 320);
   }
 
   private estimateFailureSeverity(domain: string, result: string): 'low' | 'medium' | 'high' {
@@ -1131,9 +1153,13 @@ export class Agent {
 
   private escalationHint(domain: string, result: string): string {
     if (ENGINEERING_MODE !== 'elite') return 'Escalation: if two fixes fail, broaden diagnostics with focused log/context reads.';
-    if (domain === 'network') return 'Escalation: if first probe fails, step through interface -> route -> DNS -> TCP -> TLS -> HTTP in order.';
-    if (domain === 'build-failure' || domain === 'code-error') return 'Escalation: if first fix fails, inspect the exact file:line and nearest related config before any dependency reinstall.';
+    if (domain === 'network') return 'Escalation: if first probe fails, step through interface → route → DNS → TCP → TLS → HTTP in order.';
+    if (domain === 'build-failure' || domain === 'code-error') return 'Escalation: if first fix fails, inspect the exact file:line and nearest related config before any dependency reinstall. For cascading errors, fix ONLY the first error and rebuild.';
     if (domain === 'missing-tool' || domain === 'missing-dependency') return 'Escalation: verify PATH/package manager lockfile state before install/reinstall.';
+    if (domain === 'test-failure') return 'Escalation: read the full test file and the implementation being tested. Check if the test expectation is correct or if the implementation changed.';
+    if (domain === 'concurrency') return 'Escalation: add logging around the race, reproduce with controlled timing, verify lock ordering and async boundaries.';
+    if (domain === 'database') return 'Escalation: check migration status, verify ORM model matches schema, check for pending migrations, verify connection pool config.';
+    if (domain === 'auth-failure') return 'Escalation: check token expiration, verify env vars, test with a fresh token, verify API scope/permissions.';
     if (/exit\s+2|exit\s+127|command not found|not recognized/i.test(result)) return 'Escalation: confirm shell selection and executable path, then retry with explicit binary.';
     return 'Escalation: after one failed fix, switch from narrow retry to targeted file/config/log inspection.';
   }

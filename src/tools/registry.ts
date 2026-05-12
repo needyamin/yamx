@@ -8,7 +8,7 @@ import { readFile, writeFile, editFile, listFiles, searchFiles, deleteFile, read
 import { runCommand, runCommandBackground, shellDiagnostics, taskList, taskTail, taskStop } from './shell.js';
 import { gitStatus, gitDiff, gitCommit, gitLog, gitBranch, gitStash } from './git.js';
 import { fetchUrlTool } from './web.js';
-import { multiEdit, copyFile, moveFile, fileInfo, grepSearch, treeTool, patchFile } from './advanced.js';
+import { multiEdit, copyFile, moveFile, fileInfo, grepSearch, treeTool, patchFile, findReferences } from './advanced.js';
 import { codebaseAnalysis, projectIntel } from './intel.js';
 import { logInspect } from './logs.js';
 
@@ -36,6 +36,7 @@ export const allTools: Record<string, Tool> = {
   grep_search: grepSearch,
   directory_tree: treeTool,
   patch_file: patchFile,
+  find_references: findReferences,
 
   run_command: runCommand,
   run_command_background: runCommandBackground,
@@ -76,6 +77,6 @@ export function getToolsByCategory(): Record<string, string[]> {
     Shell: ['run_command', 'run_command_background', 'shell_diagnostics', 'task_list', 'task_tail', 'task_stop'],
     Git: ['git_status', 'git_diff', 'git_commit', 'git_log', 'git_branch', 'git_stash'],
     Web: ['fetch_url'],
-    Intelligence: ['project_intel', 'codebase_analysis', 'log_inspect'],
+    Intelligence: ['project_intel', 'codebase_analysis', 'log_inspect', 'find_references'],
   };
 }

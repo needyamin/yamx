@@ -821,7 +821,7 @@ test('tool registry exposes codebase analysis intelligence tool', async () => {
   const { getTool, getToolCount, getToolsByCategory } = await import('../dist/tools/registry.js');
   assert.ok(getTool('codebase_analysis'));
   assert.ok(getTool('log_inspect'));
-  assert.equal(getToolCount(), 31);
+  assert.equal(getToolCount(), 32);
   assert.ok(getToolsByCategory().Intelligence.includes('codebase_analysis'));
   assert.ok(getToolsByCategory().Intelligence.includes('log_inspect'));
 });

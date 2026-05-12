@@ -3,6 +3,7 @@ export type UserIntentKind =
   | 'conversation'
   | 'clarification'
   | 'direct-command'
+  | 'project-scan'
   | 'task';
 
 /** Sub-classification for code-related tasks — gives the agent better routing hints. */
@@ -77,6 +78,11 @@ export function classifyUserIntent(input: string): UserIntent {
     return { kind: 'conversation', text, reason: 'greeting, acknowledgement, or small talk' };
   }
 
+  // Explicit project scan intent
+  if (isProjectScan(lower)) {
+    return { kind: 'project-scan', text, reason: 'explicit request to scan or analyze project/directory for memory savings' };
+  }
+
   // Ambiguous follow-ups without clear object
   if (isClarificationOnly(lower, text)) {
     // But upgrade to task if there's strong actionable signal in recent words
@@ -109,6 +115,8 @@ export function buildCurrentIntentMessage(intent: UserIntent): string {
   const instruction =
     intent.kind === 'conversation'
       ? 'Reply naturally and briefly. Do not use tools, continue previous work, print old command output, or mention old task details.'
+      : intent.kind === 'project-scan'
+        ? 'You must ONLY run the codebase_analysis tool (or similar structural scan) and save the result to memory, then stop.'
       : intent.kind === 'clarification'
         ? 'Ask one short clarification question. Do not guess from previous context unless the user clearly referenced it.'
         : intent.kind === 'empty'
@@ -168,6 +176,12 @@ function isConversationOnly(lower: string, _raw: string): boolean {
   if (/^(ha(ha)+|lol|lmao|rofl|😂+|🤣+)[.!?]*$/i.test(lower)) return true;
 
   return false;
+}
+
+/* ── Project scan detection ─────────────────────────────────────────── */
+
+function isProjectScan(lower: string): boolean {
+  return /^(scan|analyze|analysis|summarize|read|map)\s+(my|this|the|current\s+)?(project|directory|repo|repository|codebase|app|folder)\b/i.test(lower);
 }
 
 /* ── Clarification detection ────────────────────────────────────────── */

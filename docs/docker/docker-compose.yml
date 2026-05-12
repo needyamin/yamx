@@ -10,26 +10,15 @@ services:
     ports:
       - "11434:11434"
     restart: unless-stopped
-    # -----------------------------------------------------
-    # OPTIONAL: Uncomment below to enable GPU support
-    # (Requires NVIDIA Container Toolkit installed on host)
-    # -----------------------------------------------------
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
 
-  # This init container runs once to automatically download the Gemma 4 (MoE) model
+  # This init container runs once to automatically download the Gemma 4 (E4B) model
   ollama-init:
     image: ollama/ollama
     container_name: yamx_ollama_init
     depends_on:
       - ollama
     command: >
-      sh -c "sleep 5 && echo 'Downloading Gemma 4 (26B-A4B-IT) model for YamX...' && ollama pull gemma4:26b && echo 'Gemma model downloaded successfully!'"
+      sh -c "sleep 5 && echo 'Downloading Gemma 4 (E4B) model for YamX...' && ollama pull gemma4:e4b && echo 'Gemma model downloaded successfully!'"
     environment:
       - OLLAMA_HOST=ollama:11434
 
@@ -48,7 +37,7 @@ services:
       - YAMX_PROVIDER=openai
       - YAMX_OPENAI_API_KEY=ollama
       - YAMX_OPENAI_BASE_URL=http://ollama:11434/v1
-      - YAMX_MODEL=gemma4:26b
+      - YAMX_MODEL=gemma4:e4b
       
       # FULL POWER MODE CONFIGURATION
       - YAMX_INTELLIGENCE_LEVEL=top
@@ -62,7 +51,6 @@ services:
       - yamx_data:/root/.yamx
       
       # Mount your host filesystem to /workspace so YamX can code and scan your files
-      # (Change this path if you want YamX to see something other than the parent folder)
       - ../../:/workspace
     working_dir: /workspace
 

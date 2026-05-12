@@ -1,9 +1,9 @@
-# YamX Full Power Web Setup (Local AI)
+# YamX Full Power Web Setup (Low CPU / Local AI)
 
-This directory contains everything you need to run the YamX Web interface in **Full Power Mode**, fully offline, powered by a local Ollama instance running Google's **Gemma 4 (26B-A4B-IT)** model.
+This directory contains everything you need to run the YamX Web interface in **Full Power Mode**, fully offline, powered by a local Ollama instance running Google's **Gemma 4 E4B** model.
 
 ## Features Included
-1. **Fully Local AI**: Automatically pulls and configures the `gemma4:26b` model via Ollama. This is a Mixture-of-Experts (MoE) model with 26 Billion parameters total (4B active per token), providing high quality at high speed. No API keys or internet connection required after the initial model download.
+1. **Edge-Optimized AI**: Automatically pulls and configures the `gemma4:e4b` model via Ollama. This "Effective 4B" model is specifically engineered for high efficiency on edge devices and lower CPU hardware while maintaining excellent reasoning capabilities.
 2. **YamX Web UI**: Runs the local Web-based command runner and chat interface (`yamx web`).
 3. **Full Power Mode**: Pre-configured with `YAMX_INTELLIGENCE_LEVEL=top`, `YAMX_AUTO_APPROVE=true`, and `--allow-dangerous` flags so the agent has maximum capabilities and doesn't constantly ask for permission.
 4. **Volume Mounts**: The current workspace (your `cli-agent` repo) is mapped into the container at `/workspace`, meaning YamX can read, edit, and interact with the host's files directly!
@@ -19,7 +19,7 @@ docker-compose up -d --build
 **What happens next?**
 1. Docker builds the YamX image using the local codebase.
 2. The Ollama container starts up.
-3. An `ollama-init` container runs automatically to execute `ollama pull gemma4:26b` (this will take a few minutes depending on your internet connection).
+3. An `ollama-init` container runs automatically to execute `ollama pull gemma4:e4b` (this will take a few minutes depending on your internet connection).
 4. The YamX Web container starts up and connects to Ollama automatically.
 
 ## Accessing the Web UI
@@ -31,17 +31,3 @@ http://localhost:8765
 ```
 
 YamX is now running in full power mode!
-
-## (Optional) Enabling GPU Support
-
-Running local LLMs on a CPU can be slow. If you have an NVIDIA GPU and the NVIDIA Container Toolkit installed, you can drastically speed up the Gemma model by uncommenting the `deploy` block under the `ollama` service in `docker-compose.yml`.
-
-```yaml
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-```

@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  # The Ollama local AI provider
+  ollama:
+    image: ollama/ollama
+    container_name: yamx_ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    # -----------------------------------------------------
+    # OPTIONAL: Uncomment below to enable GPU support
+    # (Requires NVIDIA Container Toolkit installed on host)
+    # -----------------------------------------------------
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # This init container runs once to automatically download the Gemma model
+  ollama-init:
+    image: ollama/ollama
+    container_name: yamx_ollama_init
+    depends_on:
+      - ollama
+    command: >
+      sh -c "sleep 5 && echo 'Downloading Gemma model for YamX...' && ollama pull gemma && echo 'Gemma model downloaded successfully!'"
+    environment:
+      - OLLAMA_HOST=ollama:11434
+
+  # The YamX Web interface in Full Power Mode
+  yamx-web:
+    build:
+      context: ../../
+      dockerfile: docs/docker/Dockerfile
+    container_name: yamx_web
+    depends_on:
+      - ollama-init
+    ports:
+      - "8765:8765"
+    environment:
+      # Automatically configure YamX to use the local Ollama container
+      - YAMX_PROVIDER=openai
+      - YAMX_OPENAI_API_KEY=ollama
+      - YAMX_OPENAI_BASE_URL=http://ollama:11434/v1
+      - YAMX_MODEL=gemma
+      
+      # FULL POWER MODE CONFIGURATION
+      - YAMX_INTELLIGENCE_LEVEL=top
+      - YAMX_AUTO_APPROVE=true
+    
+    # Run the web server binding to all interfaces (0.0.0.0) so you can access it, 
+    # and enable --allow-dangerous for full-power mode execution in the web UI.
+    command: ["web", "--host", "0.0.0.0", "--port", "8765", "--allow-dangerous"]
+    volumes:
+      # Persist YamX memory, history, and config across restarts
+      - yamx_data:/root/.yamx
+      
+      # Mount your host filesystem to /workspace so YamX can code and scan your files
+      # (Change this path if you want YamX to see something other than the parent folder)
+      - ../../:/workspace
+    working_dir: /workspace
+
+volumes:
+  ollama_data:
+  yamx_data:

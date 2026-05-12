@@ -1,0 +1,30 @@
+=========================================
+YAMX WEB - FULL POWER MODE - INSTRUCTIONS
+=========================================
+
+This folder contains the Docker Compose setup to run YamX Web locally using the Google Gemma 4 AI model via Ollama. 
+
+REQUIREMENTS:
+- Docker and Docker Compose installed on your system.
+
+HOW TO START:
+1. Open your terminal.
+2. Navigate to this directory (c:\laragon\www\cli-agent\docs\docker).
+3. Run the following command:
+   docker-compose up -d --build
+
+WHAT HAPPENS DURING STARTUP?
+- Docker builds the YamX web container using your local code.
+- Docker starts the Ollama AI engine.
+- A temporary container will automatically download the "gemma4:26b" (Gemma 4 MoE model: 26B total, 4B active) model. Note: This could take several minutes depending on your internet connection!
+
+HOW TO ACCESS THE WEB INTERFACE:
+1. Once the containers are running and the model finishes downloading, open your browser.
+2. Go to: http://localhost:8765
+
+YOUR FILES:
+Your host directory (c:\laragon\www\cli-agent) is mapped directly into the YamX container at /workspace. YamX can read, edit, and interact with your code in real time!
+
+TO STOP THE SERVER:
+1. Open your terminal in this directory.
+2. Run: docker-compose down

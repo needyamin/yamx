@@ -167,6 +167,7 @@ async function collectAvailableBinaries(cwd: string): Promise<Set<string>> {
 }
 
 const SEED_COMMANDS: CommandKnowledge[] = [
+  { command: 'scan my project', domain: 'software', tags: ['scan', 'project', 'memory', 'agent'], description: 'Analyze project structure and save to local memory to compress context token usage.' },
   { command: 'git status --short', domain: 'software', tags: ['git', 'status', 'repo', 'check'], description: 'Compact repository status.' },
   { command: 'git diff --stat', domain: 'software', tags: ['git', 'diff', 'changes', 'review'], description: 'Summarize changed files.' },
   { command: 'git diff', domain: 'software', tags: ['git', 'diff', 'review'], description: 'Inspect unstaged changes.' },

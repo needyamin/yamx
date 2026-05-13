@@ -28,3 +28,7 @@ Your host directory (c:\laragon\www\cli-agent) is mapped directly into the YamX 
 TO STOP THE SERVER:
 1. Open your terminal in this directory.
 2. Run: docker-compose down
+
+IF CHAT FAILS INSIDE DOCKER (wrong model, localhost, empty API errors):
+- YamX now reads OPENAI_BASE_URL / DEFAULT_PROVIDER / DEFAULT_MODEL from compose after config.json.
+- If an old volume still causes issues: docker compose down -v && docker compose up -d --build

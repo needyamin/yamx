@@ -195,6 +195,13 @@ export class Agent {
     return JSON.parse(JSON.stringify(this.history)) as Message[];
   }
 
+  /** Replace the first system message after refreshing project context (e.g. offline project scan). */
+  refreshSystemPrompt(content: string): void {
+    if (this.history.length === 0) return;
+    if (this.history[0].role !== 'system') return;
+    this.history[0] = { role: 'system', content };
+  }
+
   private estimateHistoryChars(): number {
     return this.history.reduce((n, m) => n + JSON.stringify(m).length, 0);
   }

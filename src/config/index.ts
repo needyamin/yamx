@@ -11,7 +11,7 @@ export interface YamConfig {
   defaultProvider: string;
   defaultModel: string;
   providers: {
-    openai?: { apiKey: string; model?: string };
+    openai?: { apiKey: string; model?: string; baseUrl?: string };
     anthropic?: { apiKey: string; model?: string };
     gemini?: { apiKey: string; model?: string };
     kimi?: { apiKey: string; model?: string };
@@ -113,12 +113,38 @@ export class Config {
       this.config.defaultModel = process.env.DEFAULT_MODEL;
     }
 
+    /** Docker / scripts: same as DEFAULT_* but explicit YamX prefix (wins if set). */
+    if (process.env.YAMX_PROVIDER?.trim()) {
+      this.config.defaultProvider = process.env.YAMX_PROVIDER.trim();
+    }
+    if (process.env.YAMX_MODEL?.trim()) {
+      this.config.defaultModel = process.env.YAMX_MODEL.trim();
+    }
+
     // Override with env vars
     if (process.env.OPENAI_API_KEY) {
       this.config.providers.openai = {
         ...this.config.providers.openai,
         apiKey: process.env.OPENAI_API_KEY,
       };
+    }
+    if (process.env.OPENAI_BASE_URL?.trim()) {
+      this.config.providers.openai = {
+        ...this.config.providers.openai,
+        baseUrl: process.env.OPENAI_BASE_URL.trim(),
+      } as YamConfig['providers']['openai'];
+    }
+    if (process.env.YAMX_OPENAI_API_KEY?.trim()) {
+      this.config.providers.openai = {
+        ...this.config.providers.openai,
+        apiKey: process.env.YAMX_OPENAI_API_KEY.trim(),
+      };
+    }
+    if (process.env.YAMX_OPENAI_BASE_URL?.trim()) {
+      this.config.providers.openai = {
+        ...this.config.providers.openai,
+        baseUrl: process.env.YAMX_OPENAI_BASE_URL.trim(),
+      } as YamConfig['providers']['openai'];
     }
     if (process.env.ANTHROPIC_API_KEY) {
       this.config.providers.anthropic = {

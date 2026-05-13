@@ -56,7 +56,16 @@ export function createProvider(name: string, model: string | undefined, cfg: any
     case 'openai': {
       const key = resolveCloudApiKey(cfg, 'openai');
       if (!key) throw new Error('OpenAI API key not found. Set OPENAI_API_KEY or run: yamx --onboard');
-      return new OpenAIProvider(key, model || cfg.providers?.openai?.model || 'gpt-5.2');
+      const openaiBlock = cfg.providers?.openai as { model?: string; baseUrl?: string } | undefined;
+      const baseURL =
+        (openaiBlock?.baseUrl && String(openaiBlock.baseUrl).trim()) ||
+        process.env.OPENAI_BASE_URL?.trim() ||
+        process.env.YAMX_OPENAI_BASE_URL?.trim();
+      return new OpenAIProvider(
+        key,
+        model || openaiBlock?.model || 'gpt-5.2',
+        baseURL || undefined
+      );
     }
     case 'anthropic': {
       const key = resolveCloudApiKey(cfg, 'anthropic');

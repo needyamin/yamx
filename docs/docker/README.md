@@ -31,3 +31,20 @@ http://localhost:8765
 ```
 
 YamX is now running in full power mode!
+
+## Troubleshooting (Docker)
+
+**API errors or wrong model inside the container**  
+The `yamx_data` volume keeps `/root/.yamx/config.json`. Older images did not apply compose `environment` to that file, so YamX could still use **localhost** or a **host-only model** (for example `deepseek-chat`) instead of the bundled Ollama service.
+
+Current YamX merges **`DEFAULT_PROVIDER`**, **`DEFAULT_MODEL`**, **`OPENAI_API_KEY`**, **`OPENAI_BASE_URL`**, and the **`YAMX_*`** equivalents **after** loading config, so the compose file wins.
+
+If problems persist, reset the named volume and rebuild:
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+**Ollama not ready**  
+`yamx-web` waits for the `ollama` service healthcheck and for `ollama-init` to finish pulling `gemma4:e4b`. First start can take several minutes on slow networks or CPUs.

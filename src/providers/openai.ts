@@ -5,7 +5,7 @@
 import { OpenAIChatProvider } from './openai-chat.js';
 
 export class OpenAIProvider extends OpenAIChatProvider {
-  constructor(apiKey: string, model: string = 'gpt-5.2') {
-    super({ name: 'openai', apiKey, model });
+  constructor(apiKey: string, model: string = 'gpt-5.2', baseURL?: string) {
+    super({ name: 'openai', apiKey, model, baseURL: baseURL?.trim() || undefined });
   }
 }

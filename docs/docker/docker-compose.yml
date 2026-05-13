@@ -8,15 +8,22 @@ services:
     ports:
       - "11434:11434"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 15s
+      retries: 24
+      start_period: 20s
 
   # This init container runs once to automatically download the Gemma 4 (E4B) model
   ollama-init:
     image: ollama/ollama
     container_name: yamx_ollama_init
     depends_on:
-      - ollama
+      ollama:
+        condition: service_healthy
     command: >
-      sh -c "sleep 5 && echo 'Downloading Gemma 4 (E4B) model for YamX...' && ollama pull gemma4:e4b && echo 'Gemma model downloaded successfully!'"
+      sh -c "echo 'Downloading Gemma 4 (E4B) model for YamX...' && ollama pull gemma4:e4b && echo 'Gemma model downloaded successfully!'"
     environment:
       - OLLAMA_HOST=ollama:11434
 
@@ -27,27 +34,36 @@ services:
       dockerfile: docs/docker/Dockerfile
     container_name: yamx_web
     depends_on:
-      - ollama-init
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
     ports:
       - "8765:8765"
     environment:
-      # Automatically configure YamX to use the local Ollama container
+      # YamX Config.load() merges these after ~/.yamx/config.json so Docker wins over stale volumes.
+      # OpenAI-compatible client → Ollama (service DNS name, not localhost).
+      - DEFAULT_PROVIDER=openai
+      - DEFAULT_MODEL=gemma4:e4b
+      - OPENAI_API_KEY=ollama
+      - OPENAI_BASE_URL=http://ollama:11434/v1
+      # Back-compat if you pinned an older compose file:
       - YAMX_PROVIDER=openai
+      - YAMX_MODEL=gemma4:e4b
       - YAMX_OPENAI_API_KEY=ollama
       - YAMX_OPENAI_BASE_URL=http://ollama:11434/v1
-      - YAMX_MODEL=gemma4:e4b
-      
+
       # FULL POWER MODE CONFIGURATION
       - YAMX_INTELLIGENCE_LEVEL=top
       - YAMX_AUTO_APPROVE=true
-    
-    # Run the web server binding to all interfaces (0.0.0.0) so you can access it, 
+
+    # Run the web server binding to all interfaces (0.0.0.0) so you can access it,
     # and enable --allow-dangerous for full-power mode execution in the web UI.
     command: ["web", "--host", "0.0.0.0", "--port", "8765", "--allow-dangerous"]
     volumes:
       # Persist YamX memory, history, and config across restarts
       - yamx_data:/root/.yamx
-      
+
       # Mount your host filesystem to /workspace so YamX can code and scan your files
       - ../../:/workspace
     working_dir: /workspace

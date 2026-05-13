@@ -29,6 +29,7 @@ import { isDirectShellFailure, isDirectShellUserCancelled } from './direct-shell
 import { runCommand } from './tools/shell.js';
 import { handleCommand } from './commands/index.js';
 import { buildAgentInputWithProjectIntel, shouldAttachProjectIntel } from './project-intel.js';
+import { detectOfflineProjectScanIntent, runOfflineProjectScanAndSave } from './offline-project-scan.js';
 import { REPL_HISTORY_PATH, printReplHistory } from './repl-history.js';
 import { DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS } from './assistant-output-cap.js';
 import { ttyResetBeforeReplPrompt } from './tty-repl-cue.js';
@@ -40,6 +41,7 @@ import {
 import { maybePromptCliUpdate } from './cli-update-check.js';
 import { startYamxWebServer } from './web/server.js';
 import { ensureCommandIntelligenceDatabase, suggestCommandFix, suggestCommands, type CommandSuggestion } from './command-intelligence.js';
+import { PROJECT_ROOT } from './tools/utils.js';
 
 dotenv.config({ quiet: true });
 
@@ -536,7 +538,7 @@ program.action(async (options) => {
     await maybePromptCliUpdate(VERSION);
   }
 
-  const contextEngine = new ContextEngine();
+  const contextEngine = new ContextEngine(PROJECT_ROOT);
   ui.startThinking('Scanning project...');
   const systemPrompt = await contextEngine.buildSystemPrompt();
   ui.stopSpinner();
@@ -742,6 +744,27 @@ program.action(async (options) => {
       activeWork = true;
       try {
         await executeDirectCommand(directCommand, agent, options.autoApprove || cfg.settings?.autoApprove || false, true);
+      } finally {
+        endReplActiveWork();
+      }
+      continue;
+    }
+
+    const offlineScan = detectOfflineProjectScanIntent(input);
+    if (offlineScan) {
+      activeWork = true;
+      try {
+        ui.startThinking('Offline project scan…');
+        const result = await runOfflineProjectScanAndSave(PROJECT_ROOT, offlineScan);
+        ui.stopSpinner();
+        for (const line of result.shortLines) {
+          ui.info(line);
+        }
+        agent.refreshSystemPrompt(await contextEngine.buildSystemPrompt());
+        await saveToDisk();
+      } catch (error: any) {
+        ui.stopSpinner();
+        ui.error(`Offline scan failed: ${error?.message || error}`);
       } finally {
         endReplActiveWork();
       }

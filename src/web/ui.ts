@@ -1812,6 +1812,12 @@ pre.code {
   border-color: rgba(255, 77, 125, 0.5);
   text-shadow: 0 0 8px rgba(255, 77, 125, 0.45);
 }
+.kind-chip.offline {
+  color: #d4f57a;
+  background: rgba(180, 230, 90, 0.12);
+  border-color: rgba(200, 240, 120, 0.45);
+  text-shadow: 0 0 8px rgba(200, 240, 120, 0.45);
+}
 
 /* Legacy single-block layout (if ever used) */
 .cmdline {
@@ -1837,9 +1843,13 @@ pre.out {
   line-height: 1.5;
   text-shadow: 0 0 1px rgba(92, 255, 154, 0.35);
 }
-.entry.turn:has(.kind-chip:not(.shell):not(.err)) pre.out {
+.entry.turn:has(.kind-chip:not(.shell):not(.err):not(.offline)) pre.out {
   color: var(--reply-chat);
   text-shadow: 0 0 1px rgba(122, 252, 255, 0.35);
+}
+.entry.turn:has(.kind-chip.offline) pre.out {
+  color: var(--reply-shell);
+  text-shadow: 0 0 1px rgba(92, 255, 154, 0.35);
 }
 .entry.turn:has(.kind-chip.err) pre.out {
   color: var(--bad);
@@ -2436,6 +2446,7 @@ export const WEB_JS = `
   function pendingLabelFor(cmd) {
     var t = String(cmd || '').trim();
     if (/^(npm|npx|pnpm|yarn|git|node|cd|dir|ls|pwd|curl|wget|python|py|go\\s|cargo\\s|dotnet\\s|docker\\s)/i.test(t)) return 'Running command...';
+    if (/\b(scan|analyze|analyse)\s+(my\s+)?(the\s+)?(project|codebase|repo)\b/i.test(t)) return 'Scanning project locally…';
     if (/^[a-zA-Z0-9_.\\/~+-]+$/.test(t) && t.length < 72 && !/\\s/.test(t)) return 'Running command...';
     if (t.length > 96 || /[?]/.test(t) || /^(why|how|what|explain|write|create|fix|help|show|list|describe)\\b/i.test(t)) return 'YamX is responding...';
     return 'Working...';
@@ -2473,9 +2484,13 @@ export const WEB_JS = `
   function metaLineText(result) {
     if (result.kind === 'error') return '';
     var failed = result.blocked || result.code !== 0 || result.timedOut;
-    return result.kind === 'chat'
-      ? ['provider=' + (result.provider || ''), 'model=' + (result.model || ''), 'cwd=' + (result.cwd || ''), (result.durationMs != null ? result.durationMs + 'ms' : '')].filter(Boolean).join(' | ')
-      : ['shell=' + (result.shell || ''), 'cwd=' + (result.cwd || ''), (result.durationMs != null ? result.durationMs + 'ms' : ''), result.blocked ? 'blocked' : 'exit=' + result.code].filter(Boolean).join(' | ');
+    if (result.kind === 'chat') {
+      return ['provider=' + (result.provider || ''), 'model=' + (result.model || ''), 'cwd=' + (result.cwd || ''), (result.durationMs != null ? result.durationMs + 'ms' : '')].filter(Boolean).join(' | ');
+    }
+    if (result.kind === 'offline_scan') {
+      return ['offline scan', 'cwd=' + (result.cwd || ''), (result.durationMs != null ? result.durationMs + 'ms' : ''), result.sessionId ? 'session=' + result.sessionId : ''].filter(Boolean).join(' | ');
+    }
+    return ['shell=' + (result.shell || ''), 'cwd=' + (result.cwd || ''), (result.durationMs != null ? result.durationMs + 'ms' : ''), result.blocked ? 'blocked' : 'exit=' + result.code].filter(Boolean).join(' | ');
   }
 
   function startTurn(command) {
@@ -2535,8 +2550,9 @@ export const WEB_JS = `
       var head = document.createElement('div');
       head.className = 'result-head';
       var chip = document.createElement('span');
-      chip.className = 'kind-chip' + (result.kind === 'chat' ? '' : result.kind === 'error' ? ' err' : ' shell');
-      chip.textContent = result.kind === 'chat' ? 'YamX' : result.kind === 'error' ? 'Error' : 'Shell';
+      var chipKind = result.kind === 'chat' ? '' : result.kind === 'error' ? ' err' : result.kind === 'offline_scan' ? ' offline' : ' shell';
+      chip.className = 'kind-chip' + chipKind;
+      chip.textContent = result.kind === 'chat' ? 'YamX' : result.kind === 'error' ? 'Error' : result.kind === 'offline_scan' ? 'Offline' : 'Shell';
       head.appendChild(chip);
       var metaStr = metaLineText(result);
       if (metaStr) {

@@ -26,7 +26,7 @@ export const codebaseAnalysis: Tool = {
   definition: {
     name: 'codebase_analysis',
     description:
-      'Return a deterministic architecture and codebase analysis packet: entry points, language mix, directory focus, scripts, dependencies, risks, and an agentic next-step plan. Use for broad requests to understand, summarize, review, improve, or plan work in an unfamiliar codebase.',
+      'Return a deterministic architecture and codebase analysis packet: entry points, language mix, directory focus, scripts, dependencies, risks, and an agentic next-step plan. Use for broad requests to understand, summarize, review, improve, or plan work in an unfamiliar codebase. Note: users can also run the same style of scan offline in the CLI with phrases like "scan my project" or /scan (no API tokens).',
     parameters: {
       type: 'object',
       properties: {

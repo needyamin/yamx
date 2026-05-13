@@ -9,8 +9,10 @@ import { BuiltinSubagent, SubagentRunner } from '../subagents.js';
 import { printReplHistory } from '../repl-history.js';
 import { getToolsByCategory } from '../tools/registry.js';
 import { logInspect } from '../tools/logs.js';
-import { changeWorkspaceDirectory, getWorkspaceRelativeCwd } from '../tools/utils.js';
+import { changeWorkspaceDirectory, getWorkspaceRelativeCwd, PROJECT_ROOT } from '../tools/utils.js';
 import { UI } from '../ui.js';
+import { ContextEngine } from '../context.js';
+import { parseScanDepthFromArgs, runOfflineProjectScanAndSave } from '../offline-project-scan.js';
 
 export type PersistCtx = { store: SessionStore; session: ChatSession; agent: Agent };
 
@@ -77,6 +79,25 @@ export async function handleCommand(
     case '/pwd':
       ui.info(`cwd: ${getWorkspaceRelativeCwd()}`);
       break;
+    case '/scan': {
+      const rest = input.replace(/^\s*\/scan\b/i, '').trim();
+      const depth = parseScanDepthFromArgs(rest);
+      ui.startThinking('Offline project scan…');
+      try {
+        const result = await runOfflineProjectScanAndSave(PROJECT_ROOT, {
+          depth,
+          goalNote: rest ? `/scan ${rest}` : '/scan',
+        });
+        ui.stopSpinner();
+        for (const line of result.shortLines) ui.info(line);
+        agent.refreshSystemPrompt(await new ContextEngine(PROJECT_ROOT).buildSystemPrompt());
+        await save();
+      } catch (e: any) {
+        ui.stopSpinner();
+        ui.error(`Offline scan failed: ${e?.message || e}`);
+      }
+      break;
+    }
     case '/cd': {
       const target = input.slice('/cd'.length).trim();
       const rel = changeWorkspaceDirectory(target);

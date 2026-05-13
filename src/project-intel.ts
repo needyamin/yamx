@@ -318,6 +318,11 @@ async function listSourceFiles(cwd: string, maxFiles: number): Promise<string[]>
     .slice(0, maxFiles);
 }
 
+/** Top source paths for offline symbol outline (same ranking as codebase analysis). */
+export async function listProjectSourcePaths(cwd = process.cwd(), maxFiles = 90): Promise<string[]> {
+  return listSourceFiles(cwd, Math.max(20, Math.min(maxFiles, 180)));
+}
+
 function scoreFile(file: string): number {
   let score = 0;
   if (/(index|main|app|server|cli|config|route|controller|service|agent|context|registry|tool|docker|compose|deploy|workflow|terraform|k8s|kubernetes|helm|ansible|playbook|network|nginx|caddy|haproxy|traefik|dns|proxy|gateway|firewall|security|audit|gitleaks|semgrep|trivy|snyk|bandit|policy|secret)/i.test(file)) score += 4;

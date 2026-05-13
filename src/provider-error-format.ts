@@ -2,6 +2,8 @@
  * Normalize provider/stream errors into a readable shape (OpenRouter/OpenAI-like JSON payloads).
  */
 
+import { isAxiosError, type AxiosError } from 'axios';
+
 export type ApiFailureView = {
   headline: string;
   detailLines: string[];
@@ -10,13 +12,57 @@ export type ApiFailureView = {
   technical?: string;
 };
 
+/** Axios often leaves `message` empty while the useful text lives on `response.data`. */
+function formatAxiosError(err: AxiosError): string {
+  const bits: string[] = [];
+  if (err.message?.trim()) bits.push(err.message.trim());
+  const code = err.code;
+  if (code && !bits.some((b) => b.includes(code))) bits.push(`code=${code}`);
+  const st = err.response?.status;
+  const statusText = err.response?.statusText;
+  if (st != null) bits.push(statusText ? `HTTP ${st} ${statusText}` : `HTTP ${st}`);
+  const data = err.response?.data;
+  if (data != null) {
+    if (typeof data === 'string') {
+      const t = data.trim();
+      if (t) bits.push(t.length > 600 ? `${t.slice(0, 597)}...` : t);
+    } else if (typeof data === 'object') {
+      const o = data as Record<string, unknown>;
+      const inner = o.error ?? o.message;
+      if (typeof inner === 'string' && inner.trim()) bits.push(inner.trim());
+      else {
+        try {
+          const j = JSON.stringify(data);
+          if (j && j !== '{}') bits.push(j.length > 500 ? `${j.slice(0, 497)}...` : j);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+  if (!err.response && err.request) {
+    bits.push('(no HTTP response — host down, wrong URL/port, firewall, or TLS/proxy)');
+  }
+  return bits.join(' — ') || 'HTTP request failed (no details from client).';
+}
+
 function messageFromUnknown(err: unknown): string {
   if (err == null) return 'Unknown error';
   if (typeof err === 'string') return err;
+  if (isAxiosError(err)) {
+    return formatAxiosError(err);
+  }
   if (err instanceof Error) {
-    const base = err.message || '(no message)';
+    const errno = err as NodeJS.ErrnoException;
+    const base =
+      err.message?.trim()
+      || (errno.code ? `${errno.code}${errno.syscall ? ` (${errno.syscall})` : ''}` : '')
+      || '(no message)';
     const cause = (err as Error & { cause?: unknown }).cause;
-    if (cause) return `${base} | ${messageFromUnknown(cause)}`;
+    if (cause) {
+      const inner = messageFromUnknown(cause);
+      if (inner && inner !== '(no message)') return `${base} | ${inner}`;
+    }
     return base;
   }
   try {
@@ -77,6 +123,8 @@ export function summarizeApiFailure(err: unknown): ApiFailureView {
     parsed && typeof parsed.message === 'string'
       ? (parsed.message as string)
       : null;
+  const svcErr =
+    parsed && typeof parsed.error === 'string' ? (parsed.error as string) : null;
   const svcType =
     parsed && typeof parsed.type === 'string' ? String(parsed.type) : null;
   const svcCode =
@@ -89,13 +137,14 @@ export function summarizeApiFailure(err: unknown): ApiFailureView {
   if (svcCode !== null) technicalParts.push(String(svcCode));
   const technical = technicalParts.length ? technicalParts.join(' · ') : undefined;
 
-  const combined = `${flat} ${svcMsg || ''}`;
+  const combined = `${flat} ${svcMsg || ''} ${svcErr || ''}`;
   const isContextOverflow =
     /max_num_tokens|max[_\s-]?tokens|maximum context|context length|too many tokens/i.test(combined) ||
     /prompt length.*should not exceed|exceed.*token/i.test(combined);
 
   let headline =
     svcMsg ||
+    svcErr ||
     flat.slice(0, 240) ||
     'Something went wrong while talking to the model provider.';
   headline = headline.replace(/\s+/g, ' ').trim();
@@ -132,6 +181,14 @@ export function summarizeApiFailure(err: unknown): ApiFailureView {
   }
   if (/402|billing|quota|credit/i.test(lower) && hints.length === 0) {
     hints.push('Check provider billing / quota.');
+  }
+  if (
+    !isContextOverflow
+    && /(ECONNREFUSED|ENOTFOUND|ECONNRESET|no http response|11434|ollama)/i.test(combined)
+  ) {
+    hints.push(
+      'Ollama: ensure the app or `ollama serve` is running; run `ollama list` and set providers.ollama.model to an installed tag (e.g. deepseek-r1:8b, not an OpenAI-style id unless you created that tag).'
+    );
   }
 
   if (hints.length === 0 && !isContextOverflow) {

@@ -39,6 +39,7 @@ import {
   normalizeEngineeringSuite,
   runEngineeringChallenge,
 } from './engineering-diagnostics.js';
+import { detectOfflineProjectScanIntent, runOfflineProjectScanAndSave } from '../offline-project-scan.js';
 
 const require = createRequire(import.meta.url);
 
@@ -120,7 +121,7 @@ export interface WebCommandOptions {
 export interface WebCommandResult {
   ok: boolean;
   blocked: boolean;
-  kind?: 'command' | 'chat';
+  kind?: 'command' | 'chat' | 'offline_scan' | 'error';
   command: string;
   executedCommand?: string;
   output: string;
@@ -395,6 +396,44 @@ class WebAgentRuntime {
     const command = String(message || '').trim();
     if (!command) return failure(command, 'Error: message is required.', started, this.allowDangerous);
 
+    const scanIntent = detectOfflineProjectScanIntent(command);
+    if (scanIntent) {
+      try {
+        const result = await runOfflineProjectScanAndSave(PROJECT_ROOT, scanIntent);
+        if (this.agentEnv) {
+          const sp = await new ContextEngine(PROJECT_ROOT).buildSystemPrompt();
+          this.agentEnv.agent.refreshSystemPrompt(sp);
+          this.agentEnv.session.messages = this.agentEnv.agent.getHistory();
+          await this.agentEnv.store.saveSession(this.agentEnv.session);
+        }
+        return {
+          ok: true,
+          blocked: false,
+          kind: 'offline_scan',
+          command,
+          output: result.shortLines.join('\n'),
+          code: 0,
+          timedOut: false,
+          durationMs: Date.now() - started,
+          cwd: getWorkspaceRelativeCwd(),
+          allowDangerous: this.allowDangerous,
+          provider: this.agentEnv?.provider.name,
+          model: this.agentEnv?.provider.modelId,
+          sessionId: this.agentEnv?.session.id,
+        };
+      } catch (error: any) {
+        return {
+          ...failure(
+            command,
+            `Offline scan failed: ${error?.message || error}`,
+            started,
+            this.allowDangerous
+          ),
+          kind: 'error',
+        };
+      }
+    }
+
     try {
       const env = await this.getAgentEnv();
       const captured = await captureConsoleOutput(async () => {
@@ -453,7 +492,7 @@ class WebAgentRuntime {
       this.modelName || cfg.defaultModel,
       cfg
     );
-    const contextEngine = new ContextEngine();
+    const contextEngine = new ContextEngine(PROJECT_ROOT);
     const systemPrompt = await contextEngine.buildSystemPrompt();
     const store = new SessionStore();
     await store.init();
@@ -462,7 +501,7 @@ class WebAgentRuntime {
     const activeId = await store.getActiveSessionId();
     if (activeId) session = await store.loadSession(activeId);
     if (!session) {
-      session = await store.createSession(process.cwd(), { role: 'system', content: systemPrompt });
+      session = await store.createSession(PROJECT_ROOT, { role: 'system', content: systemPrompt });
     }
 
     const saveToDisk = async () => {
@@ -505,7 +544,7 @@ class WebAgentRuntime {
     activate?: boolean;
   }): Promise<ChatSession> {
     const cfg = await this.loadConfig();
-    const contextEngine = new ContextEngine();
+    const contextEngine = new ContextEngine(PROJECT_ROOT);
     const systemPrompt = await contextEngine.buildSystemPrompt();
     const store = new SessionStore();
     await store.init();

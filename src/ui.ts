@@ -287,6 +287,7 @@ export class UI {
       ]],
       ['Memory', [
         ['/init', 'Create YamX memory files'],
+        ['/scan [quick|deep]', 'Offline scan → .yamx/project-summary.md (no cloud tokens)'],
         ['/memory', 'Show memory file status'],
         ['/remember', 'Save a durable note'],
       ]],

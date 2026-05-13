@@ -11,12 +11,19 @@ HOW TO START:
 1. Open your terminal.
 2. Navigate to this directory (c:\laragon\www\cli-agent\docs\docker).
 3. Run the following command:
-   docker-compose up -d --build
+   docker compose up -d --build
+
+OPTIONAL .env:
+- Copy .env.example to .env in this folder to set OLLAMA_MODEL if gemma4:e4b will not download.
 
 WHAT HAPPENS DURING STARTUP?
 - Docker builds the YamX web container using your local code.
-- Docker starts the Ollama AI engine.
-- A temporary container will automatically download the "gemma4:e4b" (Edge-optimized Gemma 4 model) model. This model is specifically designed to run fast on lower CPU/RAM machines. Note: This could take several minutes depending on your internet connection!
+- Docker starts Ollama (latest image) and waits until it is healthy.
+- ollama-init runs ollama-pull.sh: pulls OLLAMA_MODEL (default gemma4:e4b) via OLLAMA_HOST=http://ollama:11434 with retries.
+
+IF ollama-init FAILS (exit 1):
+- docker compose logs ollama-init
+- Try OLLAMA_MODEL=qwen2.5-coder:3b in .env then docker compose down -v && docker compose up -d --build
 
 HOW TO ACCESS THE WEB INTERFACE:
 1. Once the containers are running and the model finishes downloading, open your browser.
@@ -27,7 +34,7 @@ Your host directory (c:\laragon\www\cli-agent) is mapped directly into the YamX 
 
 TO STOP THE SERVER:
 1. Open your terminal in this directory.
-2. Run: docker-compose down
+2. Run: docker compose down
 
 IF CHAT FAILS INSIDE DOCKER (wrong model, localhost, empty API errors):
 - YamX now reads OPENAI_BASE_URL / DEFAULT_PROVIDER / DEFAULT_MODEL from compose after config.json.

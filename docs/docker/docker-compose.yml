@@ -1,7 +1,9 @@
+# Optional: create .env from .env.example to override OLLAMA_MODEL (see README).
 services:
   # The Ollama local AI provider
   ollama:
-    image: ollama/ollama
+    image: ollama/ollama:latest
+    pull_policy: always
     container_name: yamx_ollama
     volumes:
       - ollama_data:/root/.ollama
@@ -13,19 +15,22 @@ services:
       interval: 5s
       timeout: 15s
       retries: 24
-      start_period: 20s
+      start_period: 25s
 
-  # This init container runs once to automatically download the Gemma 4 (E4B) model
+  # One-shot: pull model into the ollama service (must use http:// in OLLAMA_HOST for CLI).
   ollama-init:
-    image: ollama/ollama
+    image: ollama/ollama:latest
+    pull_policy: always
     container_name: yamx_ollama_init
     depends_on:
       ollama:
         condition: service_healthy
-    command: >
-      sh -c "echo 'Downloading Gemma 4 (E4B) model for YamX...' && ollama pull gemma4:e4b && echo 'Gemma model downloaded successfully!'"
+    volumes:
+      - ./ollama-pull.sh:/ollama-pull.sh:ro
     environment:
-      - OLLAMA_HOST=ollama:11434
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-gemma4:e4b}
+    command: ["sh", "/ollama-pull.sh"]
 
   # The YamX Web interface in Full Power Mode
   yamx-web:
@@ -41,30 +46,22 @@ services:
     ports:
       - "8765:8765"
     environment:
-      # YamX Config.load() merges these after ~/.yamx/config.json so Docker wins over stale volumes.
-      # OpenAI-compatible client → Ollama (service DNS name, not localhost).
+      # Same model tag as ollama-init (override with OLLAMA_MODEL in .env).
       - DEFAULT_PROVIDER=openai
-      - DEFAULT_MODEL=gemma4:e4b
+      - DEFAULT_MODEL=${OLLAMA_MODEL:-gemma4:e4b}
       - OPENAI_API_KEY=ollama
       - OPENAI_BASE_URL=http://ollama:11434/v1
-      # Back-compat if you pinned an older compose file:
       - YAMX_PROVIDER=openai
-      - YAMX_MODEL=gemma4:e4b
+      - YAMX_MODEL=${OLLAMA_MODEL:-gemma4:e4b}
       - YAMX_OPENAI_API_KEY=ollama
       - YAMX_OPENAI_BASE_URL=http://ollama:11434/v1
 
-      # FULL POWER MODE CONFIGURATION
       - YAMX_INTELLIGENCE_LEVEL=top
       - YAMX_AUTO_APPROVE=true
 
-    # Run the web server binding to all interfaces (0.0.0.0) so you can access it,
-    # and enable --allow-dangerous for full-power mode execution in the web UI.
     command: ["web", "--host", "0.0.0.0", "--port", "8765", "--allow-dangerous"]
     volumes:
-      # Persist YamX memory, history, and config across restarts
       - yamx_data:/root/.yamx
-
-      # Mount your host filesystem to /workspace so YamX can code and scan your files
       - ../../:/workspace
     working_dir: /workspace
 

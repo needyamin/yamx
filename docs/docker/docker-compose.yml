@@ -32,6 +32,10 @@ services:
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:3b}
+      # Optional tuning (set in .env next to this file): more retries / longer sleep for flaky networks.
+      - OLLAMA_INIT_START_DELAY=${OLLAMA_INIT_START_DELAY:-5}
+      - OLLAMA_INIT_PULL_RETRIES=${OLLAMA_INIT_PULL_RETRIES:-8}
+      - OLLAMA_INIT_PULL_RETRY_SECONDS=${OLLAMA_INIT_PULL_RETRY_SECONDS:-30}
     command: ["/ollama-pull.sh"]
 
   # The YamX Web interface in Full Power Mode

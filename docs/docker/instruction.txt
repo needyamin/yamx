@@ -22,9 +22,11 @@ WHAT HAPPENS DURING STARTUP?
 - ollama-init runs ollama-pull.sh: pulls OLLAMA_MODEL (default qwen2.5-coder:3b) via OLLAMA_HOST=http://ollama:11434 with retries.
 
 IF ollama-init FAILS (exit 1):
-- docker compose logs ollama-init
+- docker compose logs ollama-init   (read the ollama pull error: disk full, timeout, TLS, etc.)
 - If you see "unknown command sh for ollama": the ollama image uses ENTRYPOINT ollama — this repo sets entrypoint /bin/sh for ollama-init; update docker-compose.yml from the repo.
-- Try OLLAMA_MODEL=qwen2.5-coder:3b or llama3.2:3b in .env then docker compose down -v && docker compose up -d --build
+- Disk: ensure free space for the model volume (docker system df).
+- Network: in .env set OLLAMA_INIT_PULL_RETRIES=12 and OLLAMA_INIT_PULL_RETRY_SECONDS=45, then docker compose up -d again.
+- Try OLLAMA_MODEL=llama3.2:3b in .env then docker compose down -v && docker compose up -d --build
 
 HOW TO ACCESS THE WEB INTERFACE:
 1. Once the containers are running and the model finishes downloading, open your browser.

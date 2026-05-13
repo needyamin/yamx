@@ -39,7 +39,7 @@ YamX is now running in full power mode!
 | Service | Role |
 |--------|------|
 | **`ollama`** | Runs the Ollama daemon. Models live in the **`ollama_data`** volume (`/root/.ollama` in that container). Port **`11434`** is published to the host as **`localhost:11434`**. |
-| **`ollama-init`** | One-shot job: uses the Ollama **CLI** with **`OLLAMA_HOST=http://ollama:11434`** so pulls go to the **`ollama`** container (Docker DNS name **`ollama`**, not `localhost`). |
+| **`ollama-init`** | One-shot job: uses the Ollama **CLI** with **`OLLAMA_HOST=http://127.0.0.1:11434`** and **`network_mode: service:ollama`** so the pull runs in the **same network namespace** as the **`ollama`** container (reliable loopback to the daemon; blobs still go to the **`ollama_data`** volume on **`ollama`**). |
 | **`yamx-web`** | YamX **`web`** UI. Talks to Ollama using the **OpenAI-compatible** HTTP API. |
 
 ### URLs (from your machine vs inside Compose)
@@ -98,7 +98,8 @@ docker compose up -d --build
 **`ollama-init` exits with code 1**  
 1. Inspect logs: **`docker compose logs ollama-init`** (or the name from **`docker compose ps`**). The script prints **`ollama pull`** output; look for **connection reset**, **TLS**, **no space left**, **manifest unknown**, or **timeout**.  
 2. If logs show **`unknown command "sh" for "ollama"`**: the `ollama/ollama` image uses **`ENTRYPOINT`** so that plain `command: [sh, …]` becomes `ollama sh …`. This stack sets **`entrypoint: ["/bin/sh"]`** on **`ollama-init`** so `/ollama-pull.sh` runs under the shell (update `docker-compose.yml` if you copied an older file).  
-3. **`OLLAMA_HOST`** must be a URL (**`http://ollama:11434`**); the pull script sets this.  
-4. **Disk**: ensure several GB free on the Docker data root (blobs land in the **`ollama_data`** volume). On a full disk, pulls often run a long time then fail.  
-5. **Flaky network / slow registry**: increase retries in **`.env`**: **`OLLAMA_INIT_PULL_RETRIES=12`** and **`OLLAMA_INIT_PULL_RETRY_SECONDS=45`**, then **`docker compose up -d`** again (no need to **`down -v`** unless you want a clean volume).  
-6. **Gemma 4** needs a recent Ollama build. If pull fails, set **`OLLAMA_MODEL`** in `.env` (see `.env.example`, e.g. **`llama3.2:3b`**), then **`docker compose down -v && docker compose up -d --build`**.
+3. If **`ollama pull` always exits 0** but init still failed on an **older** copy of this repo: an earlier script retried until **`grep`** matched **`ollama list`**; table formatting changed in newer Ollama builds so **`grep` never matched**. Update **`ollama-pull.sh`** and **`docker-compose.yml`** from this repo (success is now based on **`ollama pull`** exit code, with an optional **`ollama show`** check only for logging).  
+4. **`OLLAMA_HOST`** for **`ollama-init`** is **`http://127.0.0.1:11434`** (shared network with **`ollama`** via **`network_mode: service:ollama`**). **`yamx-web`** still uses **`http://ollama:11434/v1`** on the Compose network.  
+5. **Disk**: ensure several GB free on the Docker data root (blobs land in the **`ollama_data`** volume). On a full disk, pulls often run a long time then fail.  
+6. **Flaky network / slow registry**: increase retries in **`.env`**: **`OLLAMA_INIT_PULL_RETRIES=12`** and **`OLLAMA_INIT_PULL_RETRY_SECONDS=45`**, then **`docker compose up -d`** again (no need to **`down -v`** unless you want a clean volume).  
+7. **Gemma 4** needs a recent Ollama build. If pull fails, set **`OLLAMA_MODEL`** in `.env` (see `.env.example`, e.g. **`llama3.2:3b`**), then **`docker compose down -v && docker compose up -d --build`**.

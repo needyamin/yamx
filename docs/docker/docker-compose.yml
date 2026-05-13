@@ -18,11 +18,13 @@ services:
       start_period: 25s
 
   # One-shot: pull model into the ollama service (must use http:// in OLLAMA_HOST for CLI).
+  # Share ollama's network stack so we hit 127.0.0.1:11434 (avoids DNS / cross-container pull quirks).
   # The ollama image ENTRYPOINT is `ollama`; override so we run a shell script (not `ollama sh …`).
   ollama-init:
     image: ollama/ollama:latest
     pull_policy: always
     container_name: yamx_ollama_init
+    network_mode: service:ollama
     entrypoint: ["/bin/sh"]
     depends_on:
       ollama:
@@ -30,7 +32,7 @@ services:
     volumes:
       - ./ollama-pull.sh:/ollama-pull.sh:ro
     environment:
-      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_HOST=http://127.0.0.1:11434
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:3b}
       # Optional tuning (set in .env next to this file): more retries / longer sleep for flaky networks.
       - OLLAMA_INIT_START_DELAY=${OLLAMA_INIT_START_DELAY:-5}

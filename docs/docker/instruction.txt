@@ -19,7 +19,7 @@ OPTIONAL .env:
 WHAT HAPPENS DURING STARTUP?
 - Docker builds the YamX web container using your local code.
 - Docker starts Ollama (latest image) and waits until it is healthy.
-- ollama-init runs ollama-pull.sh: pulls OLLAMA_MODEL (default qwen2.5-coder:3b) via OLLAMA_HOST=http://ollama:11434 with retries.
+- ollama-init runs ollama-pull.sh in the same network namespace as ollama (network_mode: service:ollama), pulls via OLLAMA_HOST=http://127.0.0.1:11434 — blobs still store in ollama_data on the ollama container.
 
 IF ollama-init FAILS (exit 1):
 - docker compose logs ollama-init   (read the ollama pull error: disk full, timeout, TLS, etc.)

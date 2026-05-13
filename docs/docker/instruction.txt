@@ -23,6 +23,7 @@ WHAT HAPPENS DURING STARTUP?
 
 IF ollama-init FAILS (exit 1):
 - docker compose logs ollama-init
+- If you see "unknown command sh for ollama": the ollama image uses ENTRYPOINT ollama — this repo sets entrypoint /bin/sh for ollama-init; update docker-compose.yml from the repo.
 - Try OLLAMA_MODEL=qwen2.5-coder:3b in .env then docker compose down -v && docker compose up -d --build
 
 HOW TO ACCESS THE WEB INTERFACE:

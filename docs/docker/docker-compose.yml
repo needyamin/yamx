@@ -18,10 +18,12 @@ services:
       start_period: 25s
 
   # One-shot: pull model into the ollama service (must use http:// in OLLAMA_HOST for CLI).
+  # The ollama image ENTRYPOINT is `ollama`; override so we run a shell script (not `ollama sh …`).
   ollama-init:
     image: ollama/ollama:latest
     pull_policy: always
     container_name: yamx_ollama_init
+    entrypoint: ["/bin/sh"]
     depends_on:
       ollama:
         condition: service_healthy
@@ -30,7 +32,7 @@ services:
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - OLLAMA_MODEL=${OLLAMA_MODEL:-gemma4:e4b}
-    command: ["sh", "/ollama-pull.sh"]
+    command: ["/ollama-pull.sh"]
 
   # The YamX Web interface in Full Power Mode
   yamx-web:

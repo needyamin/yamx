@@ -50,7 +50,8 @@ docker compose up -d --build
 `yamx-web` waits for the `ollama` service healthcheck and for `ollama-init` to finish pulling the model. First start can take several minutes on slow networks or CPUs.
 
 **`ollama-init` exits with code 1**  
-1. Inspect logs: `docker compose logs ollama-init` (or the container name shown by `docker compose ps`).  
-2. **`OLLAMA_HOST` must include `http://`** (the init script sets `http://ollama:11434`). A bare `ollama:11434` value can break the CLI.  
-3. **Gemma 4** needs a **recent** Ollama release and several GB of disk. If pull fails, set in `.env`: `OLLAMA_MODEL=qwen2.5-coder:3b` (or `llama3.2:3b`), then `docker compose down -v && docker compose up -d --build` so the init step and YamX use the same tag.  
-4. Ensure enough free disk space for the model blob.
+1. Inspect logs: `docker compose logs ollama-init` (or the name from `docker compose ps`).  
+2. If logs show **`unknown command "sh" for "ollama"`**: the `ollama/ollama` image uses **`ENTRYPOINT`** so that plain `command: [sh, …]` becomes `ollama sh …`. This stack sets **`entrypoint: ["/bin/sh"]`** on **`ollama-init`** so `/ollama-pull.sh` runs under the shell (update `docker-compose.yml` if you copied an older file).  
+3. **`OLLAMA_HOST`** must be a URL (**`http://ollama:11434`**); the pull script sets this.  
+4. **Gemma 4** needs a recent Ollama build and several GB of disk. If pull fails, set **`OLLAMA_MODEL`** in `.env` (see `.env.example`), then `docker compose down -v && docker compose up -d --build`.  
+5. Ensure enough free disk space for the model blob.

@@ -141,6 +141,10 @@ export function summarizeApiFailure(err: unknown): ApiFailureView {
   const isContextOverflow =
     /max_num_tokens|max[_\s-]?tokens|maximum context|context length|too many tokens/i.test(combined) ||
     /prompt length.*should not exceed|exceed.*token/i.test(combined);
+  const isOllamaSystemRam =
+    /requires more system memory|more system memory.*gib|not enough memory|insufficient memory|system memory.*available/i.test(
+      combined
+    );
 
   let headline =
     svcMsg ||
@@ -152,6 +156,9 @@ export function summarizeApiFailure(err: unknown): ApiFailureView {
   if (isContextOverflow) {
     headline =
       'This chat + system prompt is larger than your model accepts (context / max tokens limit).';
+  } else if (isOllamaSystemRam) {
+    headline =
+      'This Ollama model needs more free RAM than the host (or Docker VM) currently has for inference.';
   }
 
   const detailLines: string[] = [];
@@ -170,6 +177,15 @@ export function summarizeApiFailure(err: unknown): ApiFailureView {
     hints.push(
       'If the project prompt is huge, use a shorter session or a model with a larger window.'
     );
+  }
+  if (isOllamaSystemRam) {
+    hints.push(
+      'Pick a smaller Ollama tag: `ollama pull qwen2.5-coder:3b` or `llama3.2:3b`, then set that as default model (web Settings or ~/.yamx/config.json defaultModel / providers.ollama.model).'
+    );
+    hints.push(
+      'Docker: set `OLLAMA_MODEL=qwen2.5-coder:3b` (or `gemma4:e2b`) in `docs/docker/.env`, then `docker compose down -v && docker compose up -d --build`.'
+    );
+    hints.push('Gemma `e4b` often needs ~10 GiB free RAM for inference; `e2b` is smaller if you want Gemma on ~8 GiB.');
   }
 
   const lower = combined.toLowerCase();
@@ -191,7 +207,7 @@ export function summarizeApiFailure(err: unknown): ApiFailureView {
     );
   }
 
-  if (hints.length === 0 && !isContextOverflow) {
+  if (hints.length === 0 && !isContextOverflow && !isOllamaSystemRam) {
     hints.push('Retry once; if it persists, run: yamx --diagnose');
   }
 

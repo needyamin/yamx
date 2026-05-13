@@ -2,7 +2,7 @@
 YAMX WEB - FULL POWER MODE - INSTRUCTIONS
 =========================================
 
-This folder contains the Docker Compose setup to run YamX Web locally using the Google Gemma 4 E4B AI model via Ollama. 
+This folder contains the Docker Compose setup to run YamX Web locally using **Ollama**. The default model tag is **qwen2.5-coder:3b** (works on many ~8 GiB setups). For **Google Gemma 4 E4B** (`gemma4:e4b`), set OLLAMA_MODEL in .env — that tag often needs **~10 GiB** free RAM for inference; if Ollama returns "requires more system memory", use a smaller tag or give Docker more RAM.
 
 REQUIREMENTS:
 - Docker and Docker Compose installed on your system.
@@ -14,17 +14,17 @@ HOW TO START:
    docker compose up -d --build
 
 OPTIONAL .env:
-- Copy .env.example to .env in this folder to set OLLAMA_MODEL if gemma4:e4b will not download.
+- Copy .env.example to .env in this folder to override OLLAMA_MODEL (e.g. gemma4:e4b when you have enough RAM, or llama3.2:3b on tight hosts).
 
 WHAT HAPPENS DURING STARTUP?
 - Docker builds the YamX web container using your local code.
 - Docker starts Ollama (latest image) and waits until it is healthy.
-- ollama-init runs ollama-pull.sh: pulls OLLAMA_MODEL (default gemma4:e4b) via OLLAMA_HOST=http://ollama:11434 with retries.
+- ollama-init runs ollama-pull.sh: pulls OLLAMA_MODEL (default qwen2.5-coder:3b) via OLLAMA_HOST=http://ollama:11434 with retries.
 
 IF ollama-init FAILS (exit 1):
 - docker compose logs ollama-init
 - If you see "unknown command sh for ollama": the ollama image uses ENTRYPOINT ollama — this repo sets entrypoint /bin/sh for ollama-init; update docker-compose.yml from the repo.
-- Try OLLAMA_MODEL=qwen2.5-coder:3b in .env then docker compose down -v && docker compose up -d --build
+- Try OLLAMA_MODEL=qwen2.5-coder:3b or llama3.2:3b in .env then docker compose down -v && docker compose up -d --build
 
 HOW TO ACCESS THE WEB INTERFACE:
 1. Once the containers are running and the model finishes downloading, open your browser.
@@ -40,3 +40,15 @@ TO STOP THE SERVER:
 IF CHAT FAILS INSIDE DOCKER (wrong model, localhost, empty API errors):
 - YamX now reads OPENAI_BASE_URL / DEFAULT_PROVIDER / DEFAULT_MODEL from compose after config.json.
 - If an old volume still causes issues: docker compose down -v && docker compose up -d --build
+
+IF CHAT RETURNS "model requires more system memory" (HTTP 500):
+- The model tag needs more free RAM than available. Use default qwen2.5-coder:3b, or gemma4:e2b instead of e4b, or increase Docker Desktop memory; set OLLAMA_MODEL in .env and rebuild with docker compose down -v && docker compose up -d --build
+
+--- OLLAMA / API QUICK REFERENCE (Docker) ---
+- YamX Web (host):     http://localhost:8765
+- Ollama API (host):   http://localhost:11434  (same daemon, port publish)
+- YamX -> Ollama (in container): OPENAI_BASE_URL=http://ollama:11434/v1  (service name "ollama", path /v1)
+- API key in compose:   OPENAI_API_KEY=ollama  (placeholder; not a cloud secret)
+- Model tag:            OLLAMA_MODEL in .env (default qwen2.5-coder:3b) — must match a model pulled into ollama_data
+- Volumes:              ollama_data = models ; yamx_data = /root/.yamx ; workspace = your repo at /workspace
+- Full table:           see README.md section "Ollama and YamX API (Docker reference)"

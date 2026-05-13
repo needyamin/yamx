@@ -3,7 +3,7 @@
 set -eu
 
 export OLLAMA_HOST="${OLLAMA_HOST:-http://ollama:11434}"
-MODEL="${OLLAMA_MODEL:-gemma4:e4b}"
+MODEL="${OLLAMA_MODEL:-qwen2.5-coder:3b}"
 
 echo "[ollama-init] OLLAMA_HOST=${OLLAMA_HOST}"
 echo "[ollama-init] model=${MODEL}"

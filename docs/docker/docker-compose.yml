@@ -31,7 +31,7 @@ services:
       - ./ollama-pull.sh:/ollama-pull.sh:ro
     environment:
       - OLLAMA_HOST=http://ollama:11434
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-gemma4:e4b}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:3b}
     command: ["/ollama-pull.sh"]
 
   # The YamX Web interface in Full Power Mode
@@ -50,11 +50,11 @@ services:
     environment:
       # Same model tag as ollama-init (override with OLLAMA_MODEL in .env).
       - DEFAULT_PROVIDER=openai
-      - DEFAULT_MODEL=${OLLAMA_MODEL:-gemma4:e4b}
+      - DEFAULT_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:3b}
       - OPENAI_API_KEY=ollama
       - OPENAI_BASE_URL=http://ollama:11434/v1
       - YAMX_PROVIDER=openai
-      - YAMX_MODEL=${OLLAMA_MODEL:-gemma4:e4b}
+      - YAMX_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:3b}
       - YAMX_OPENAI_API_KEY=ollama
       - YAMX_OPENAI_BASE_URL=http://ollama:11434/v1
 

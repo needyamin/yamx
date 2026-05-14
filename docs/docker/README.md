@@ -1,7 +1,7 @@
 # YamX Full Power Web Setup (Low CPU / Local AI)
 
 This directory runs YamX Web in Full Power Mode with a local Ollama server.
-Default model is `gemma4:e2b`, which is a practical choice for lower-memory systems.
+Default model is `qwen2.5-coder:0.5b`, which is a practical choice for very low-memory systems.
 
 ## What this stack does
 1. Starts Ollama in Docker.
@@ -10,7 +10,7 @@ Default model is `gemma4:e2b`, which is a practical choice for lower-memory syst
 4. Persists model files in a Docker volume so they survive reboot.
 
 ## Current defaults
-- `OLLAMA_MODEL=gemma4:e2b`
+- `OLLAMA_MODEL=qwen2.5-coder:0.5b`
 - `pull_policy: missing` for Ollama images (avoid unnecessary image re-pulls)
 - `restart: unless-stopped` for `ollama` and `yamx-web`
 
@@ -37,7 +37,7 @@ http://localhost:8765
 Edit `.env` in this folder:
 
 ```env
-OLLAMA_MODEL=gemma4:e2b
+OLLAMA_MODEL=qwen2.5-coder:0.5b
 ```
 
 Examples:
@@ -52,11 +52,11 @@ Examples:
 
 ## Environment used by yamx-web
 - `DEFAULT_PROVIDER=openai`
-- `DEFAULT_MODEL=${OLLAMA_MODEL:-gemma4:e2b}`
+- `DEFAULT_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:0.5b}`
 - `OPENAI_API_KEY=ollama`
 - `OPENAI_BASE_URL=http://ollama:11434/v1`
 - `YAMX_PROVIDER=openai`
-- `YAMX_MODEL=${OLLAMA_MODEL:-gemma4:e2b}`
+- `YAMX_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:0.5b}`
 - `YAMX_OPENAI_API_KEY=ollama`
 - `YAMX_OPENAI_BASE_URL=http://ollama:11434/v1`
 - `YAMX_INTELLIGENCE_LEVEL=top`
@@ -89,7 +89,7 @@ docker compose down -v
 
 ### "model requires more system memory"
 - Your selected model is too heavy for available RAM.
-- Keep `gemma4:e2b` or choose a smaller tag.
+- Keep `qwen2.5-coder:0.5b` or choose a smaller tag.
 
 ### `ollama-init` fails
 1. Check logs: `docker compose logs ollama-init`

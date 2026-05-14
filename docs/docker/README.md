@@ -1,16 +1,16 @@
 # YamX Full Power Web Setup (Low CPU / Local AI)
 
-This directory contains everything you need to run the YamX Web interface in **Full Power Mode**, fully offline, powered by a local **Ollama** instance. The default model tag is **`qwen2.5-coder:3b`** so typical **~8 GiB** machines can run without Ollama's "requires more system memory" failure. You can opt into **Google Gemma 4** (for example **`gemma4:e4b`**) in **`.env`** when the host has enough free RAM (often **~10 GiB** or more for E4B inference).
+This directory contains everything you need to run the YamX Web interface in **Full Power Mode**, fully offline, powered by a local **Ollama** instance. The default model tag is **`qwen2.5:1.5b`** so **RAM and CPU stay modest** on laptops and smaller Docker allocations. For heavier quality (and higher load), set **`OLLAMA_MODEL`** in **`.env`** (for example **`qwen2.5-coder:3b`** for code, **`qwen2.5:3b`** for general chat). **Gemma 4 E4B** (`gemma4:e4b`) can consume most of a **16 GiB** class machine for inference — use only when you deliberately want that cost.
 
 ## Features Included
-1. **Local AI via Ollama**: **`ollama-init`** pulls **`OLLAMA_MODEL`** (default **`qwen2.5-coder:3b`**, overridable via **`.env`**). For edge-style efficiency with Gemma, set **`OLLAMA_MODEL=gemma4:e4b`** or **`gemma4:e2b`** when your machine can spare the RAM.
+1. **Local AI via Ollama**: **`ollama-init`** pulls **`OLLAMA_MODEL`** (default **`qwen2.5:1.5b`**, overridable via **`.env`**). Larger tags (Gemma, 7B+, etc.) need more RAM and CPU; keep the default unless you know the host can handle it.
 2. **YamX Web UI**: Runs the local Web-based command runner and chat interface (`yamx web`).
 3. **Full Power Mode**: Pre-configured with `YAMX_INTELLIGENCE_LEVEL=top`, `YAMX_AUTO_APPROVE=true`, and `--allow-dangerous` flags so the agent has maximum capabilities and doesn't constantly ask for permission.
 4. **Volume Mounts**: The current workspace (your `cli-agent` repo) is mapped into the container at `/workspace`, meaning YamX can read, edit, and interact with the host's files directly!
 
 ## How to Start
 
-Optional: copy `.env.example` to `.env` in this folder and set **`OLLAMA_MODEL`** (for example **`gemma4:e4b`** when you have enough RAM, or **`llama3.2:3b`** on very tight hosts).
+Optional: copy `.env.example` to `.env` in this folder and set **`OLLAMA_MODEL`** if you want a different tag (for example **`qwen2.5-coder:3b`** for code, or **`gemma4:e2b`** only when you have spare RAM — avoid **`gemma4:e4b`** on tight machines).
 
 ```bash
 docker compose up -d --build
@@ -19,7 +19,7 @@ docker compose up -d --build
 **What happens next?**
 1. Docker builds the YamX image using the local codebase.
 2. The Ollama container starts (**`ollama/ollama:latest`**, `pull_policy: always`).
-3. **`ollama-init`** runs **`ollama-pull.sh`** against **`OLLAMA_HOST=http://127.0.0.1:11434`** (shared network with **`ollama`**) and **`ollama pull`** for **`OLLAMA_MODEL`** (default **`qwen2.5-coder:3b`**, overridable via `.env`), with retries.
+3. **`ollama-init`** runs **`ollama-pull.sh`** against **`OLLAMA_HOST=http://127.0.0.1:11434`** (shared network with **`ollama`**) and **`ollama pull`** for **`OLLAMA_MODEL`** (default **`qwen2.5:1.5b`**, overridable via `.env`), with retries.
 4. The YamX Web container starts and uses the same model in **`DEFAULT_MODEL`** / **`YAMX_MODEL`**.
 
 ## Accessing the Web UI
@@ -77,7 +77,7 @@ These are set in **`docker-compose.yml`** and merged **after** `/root/.yamx/conf
 | Variable | Typical value | Meaning |
 |----------|----------------|--------|
 | **`DEFAULT_PROVIDER`** / **`YAMX_PROVIDER`** | `openai` | Use the OpenAI-compatible client (pointed at Ollama, not api.openai.com). |
-| **`DEFAULT_MODEL`** / **`YAMX_MODEL`** | `${OLLAMA_MODEL:-qwen2.5-coder:3b}` | Model tag Ollama must have pulled (same as init). |
+| **`DEFAULT_MODEL`** / **`YAMX_MODEL`** | `${OLLAMA_MODEL:-qwen2.5:1.5b}` | Model tag Ollama must have pulled (same as init). |
 | **`OPENAI_API_KEY`** / **`YAMX_OPENAI_API_KEY`** | `ollama` | Placeholder string; Ollama does not require a real cloud key. |
 | **`OPENAI_BASE_URL`** / **`YAMX_OPENAI_BASE_URL`** | `http://ollama:11434/v1` | Base URL for chat completions against the **`ollama`** service. |
 | **`YAMX_INTELLIGENCE_LEVEL`** | `top` | YamX behavior preset. |
@@ -96,7 +96,7 @@ Override **only the model tag** without editing YAML: create **`.env`** next to 
 ## Troubleshooting (Docker)
 
 **Chat returns HTTP 500 / "model requires more system memory … GiB"**  
-The selected Ollama tag needs more **free RAM** than Docker or the host can give that process. Use a smaller tag (default **`qwen2.5-coder:3b`**, or **`gemma4:e2b`** instead of **`gemma4:e4b`**), set **`OLLAMA_MODEL`** in **`.env`**, then **`docker compose down -v && docker compose up -d --build`**. On Windows, also raise **Docker Desktop → Settings → Resources → Memory** if you need a larger model.
+The selected Ollama tag needs more **free RAM** than Docker or the host can give that process. Use a smaller tag (compose default **`qwen2.5:1.5b`**, or **`qwen2.5:0.5b`**), set **`OLLAMA_MODEL`** in **`.env`**, then **`docker compose down -v && docker compose up -d --build`**. Avoid **`gemma4:e4b`** unless you have plenty of headroom; **`gemma4:e2b`** is lighter than E4B. On Windows, you can also raise **Docker Desktop → Settings → Resources → Memory** if you need a larger model.
 
 **API errors or wrong model inside the container**  
 The `yamx_data` volume keeps `/root/.yamx/config.json`. Older images did not apply compose `environment` to that file, so YamX could still use **localhost** or a **host-only model** (for example `deepseek-chat`) instead of the bundled Ollama service.
@@ -120,4 +120,4 @@ docker compose up -d --build
 4. **`OLLAMA_HOST`** for **`ollama-init`** is **`http://127.0.0.1:11434`** (shared network with **`ollama`** via **`network_mode: service:ollama`**). **`yamx-web`** still uses **`http://ollama:11434/v1`** on the Compose network.  
 5. **Disk**: ensure several GB free on the Docker data root (blobs land in the **`ollama_data`** volume). On a full disk, pulls often run a long time then fail.  
 6. **Flaky network / slow registry**: increase retries in **`.env`**: **`OLLAMA_INIT_PULL_RETRIES=12`** and **`OLLAMA_INIT_PULL_RETRY_SECONDS=45`**, then **`docker compose up -d`** again (no need to **`down -v`** unless you want a clean volume).  
-7. **Gemma 4** needs a recent Ollama build. If pull fails, set **`OLLAMA_MODEL`** in `.env` (see `.env.example`, e.g. **`llama3.2:3b`**), then **`docker compose down -v && docker compose up -d --build`**.
+7. **Gemma 4** needs a recent Ollama build. If pull fails, set **`OLLAMA_MODEL`** in `.env` (see `.env.example`, e.g. **`qwen2.5:1.5b`** or **`llama3.2:3b`**), then **`docker compose down -v && docker compose up -d --build`**.

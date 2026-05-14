@@ -180,12 +180,12 @@ export function summarizeApiFailure(err: unknown): ApiFailureView {
   }
   if (isOllamaSystemRam) {
     hints.push(
-      'Pick a smaller Ollama tag: `ollama pull qwen2.5-coder:3b` or `llama3.2:3b`, then set that as default model (web Settings or ~/.yamx/config.json defaultModel / providers.ollama.model).'
+      'Pick a smaller Ollama tag: `ollama pull qwen2.5:1.5b` or `llama3.2:3b`, then set that as default model (web Settings or ~/.yamx/config.json defaultModel / providers.ollama.model).'
     );
     hints.push(
-      'Docker: set `OLLAMA_MODEL=qwen2.5-coder:3b` (or `gemma4:e2b`) in `docs/docker/.env`, then `docker compose down -v && docker compose up -d --build`.'
+      'Docker: set `OLLAMA_MODEL=qwen2.5:1.5b` (or `gemma4:e2b`) in `docs/docker/.env`, then `docker compose down -v && docker compose up -d --build`.'
     );
-    hints.push('Gemma `e4b` often needs ~10 GiB free RAM for inference; `e2b` is smaller if you want Gemma on ~8 GiB.');
+    hints.push('Gemma `e4b` often needs ~10 GiB free RAM for inference; `e2b` is smaller if you want Gemma. For Docker defaults, use `qwen2.5:1.5b` or `qwen2.5:0.5b` in `docs/docker/.env`.');
   }
 
   const lower = combined.toLowerCase();

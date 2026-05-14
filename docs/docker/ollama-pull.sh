@@ -11,7 +11,7 @@ export OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
 OLLAMA_HOST=$(trim_env "$OLLAMA_HOST")
 export OLLAMA_HOST
 
-MODEL_RAW="${OLLAMA_MODEL:-qwen2.5-coder:3b}"
+MODEL_RAW="${OLLAMA_MODEL:-qwen2.5:1.5b}"
 MODEL=$(trim_env "$MODEL_RAW")
 
 START_DELAY="${OLLAMA_INIT_START_DELAY:-5}"
@@ -72,6 +72,6 @@ echo ""
 echo "[ollama-init] Next steps:"
 echo "  1) docker compose logs ollama-init   # full pull output"
 echo "  2) df -h on the host — need several GB free for model blobs"
-echo "  3) Try a smaller tag in .env: OLLAMA_MODEL=llama3.2:3b"
+echo "  3) Try a smaller tag in .env: OLLAMA_MODEL=qwen2.5:0.5b or llama3.2:3b"
 echo "  4) Increase retries: OLLAMA_INIT_PULL_RETRIES=12 OLLAMA_INIT_PULL_RETRY_SECONDS=45"
 exit 1

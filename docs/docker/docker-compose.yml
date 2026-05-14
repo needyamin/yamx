@@ -33,7 +33,7 @@ services:
       - ./ollama-pull.sh:/ollama-pull.sh:ro
     environment:
       - OLLAMA_HOST=http://127.0.0.1:11434
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:3b}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
       # Optional tuning (set in .env next to this file): more retries / longer sleep for flaky networks.
       - OLLAMA_INIT_START_DELAY=${OLLAMA_INIT_START_DELAY:-5}
       - OLLAMA_INIT_PULL_RETRIES=${OLLAMA_INIT_PULL_RETRIES:-8}
@@ -57,11 +57,11 @@ services:
     environment:
       # Same model tag as ollama-init (override with OLLAMA_MODEL in .env).
       - DEFAULT_PROVIDER=openai
-      - DEFAULT_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:3b}
+      - DEFAULT_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
       - OPENAI_API_KEY=ollama
       - OPENAI_BASE_URL=http://ollama:11434/v1
       - YAMX_PROVIDER=openai
-      - YAMX_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:3b}
+      - YAMX_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
       - YAMX_OPENAI_API_KEY=ollama
       - YAMX_OPENAI_BASE_URL=http://ollama:11434/v1
 

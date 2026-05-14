@@ -11,7 +11,7 @@ export OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
 OLLAMA_HOST=$(trim_env "$OLLAMA_HOST")
 export OLLAMA_HOST
 
-MODEL_RAW="${OLLAMA_MODEL:-qwen2.5:1.5b}"
+MODEL_RAW="${OLLAMA_MODEL:-gemma4:e2b}"
 MODEL=$(trim_env "$MODEL_RAW")
 
 START_DELAY="${OLLAMA_INIT_START_DELAY:-5}"
@@ -31,8 +31,14 @@ ollama --version 2>&1 || true
 
 echo "[ollama-init] remote models (ollama list):"
 if ! ollama list; then
-  echo "[ollama-init] ERROR: ollama list failed — check OLLAMA_HOST (e.g. http://127.0.0.1:11434 with network_mode: service:ollama, or http://ollama:11434 on the Compose network)."
+  echo "[ollama-init] ERROR: ollama list failed. Check OLLAMA_HOST (http://127.0.0.1:11434 with network_mode: service:ollama, or http://ollama:11434 on the Compose network)."
   exit 1
+fi
+
+# If model is already in the persistent ollama_data volume, do not pull again.
+if ollama show "${MODEL}" >/dev/null 2>&1; then
+  echo "[ollama-init] model already present; skipping pull."
+  exit 0
 fi
 
 dump_debug() {
@@ -71,7 +77,7 @@ dump_debug
 echo ""
 echo "[ollama-init] Next steps:"
 echo "  1) docker compose logs ollama-init   # full pull output"
-echo "  2) df -h on the host — need several GB free for model blobs"
+echo "  2) df -h on the host - need several GB free for model blobs"
 echo "  3) Try a smaller tag in .env: OLLAMA_MODEL=qwen2.5:0.5b or llama3.2:3b"
 echo "  4) Increase retries: OLLAMA_INIT_PULL_RETRIES=12 OLLAMA_INIT_PULL_RETRY_SECONDS=45"
 exit 1

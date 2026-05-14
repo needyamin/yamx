@@ -2,61 +2,66 @@
 YAMX WEB - FULL POWER MODE - INSTRUCTIONS
 =========================================
 
-This folder contains the Docker Compose setup to run YamX Web locally using **Ollama**. The default model tag is **qwen2.5:1.5b** (light on RAM and CPU). **gemma4:e4b** and other large tags can use most of a 14–16 GiB machine — set a smaller **OLLAMA_MODEL** in .env if the PC fans spin up or Ollama reports insufficient memory.
+This folder contains the Docker Compose setup to run YamX Web locally using Ollama.
+Default model: gemma4:e2b (better for lower-memory machines than larger tags).
+Avoid gemma4:e4b on tight RAM unless you have plenty of headroom.
 
 REQUIREMENTS:
-- Docker and Docker Compose installed on your system.
+- Docker and Docker Compose installed.
 
 HOW TO START:
-1. Open your terminal.
-2. Navigate to this directory (c:\laragon\www\cli-agent\docs\docker).
-3. Run the following command:
+1. Open terminal.
+2. Go to this directory: C:\laragon\www\cli-agent\docs\docker
+3. Run:
    docker compose up -d --build
 
-AUTO-START (no manual docker compose after every reboot):
-- Containers ollama + yamx-web use restart: unless-stopped — after the first successful "docker compose up -d", Docker usually brings them back when the daemon restarts (e.g. reboot), unless you ran "docker compose down".
-- Docker Desktop (Windows): Settings → General → "Start Docker Desktop when you sign in".
-- Windows Task Scheduler: At log on, run powershell -NoProfile -ExecutionPolicy Bypass -File "FULL_PATH\docs\docker\startup-compose.ps1" with "Start in" = that docs\docker folder (add a 1–2 min delay if Docker starts slowly).
-- Linux: see yamx-docker.service.example + chmod +x startup-compose.sh, systemctl enable.
+AUTO-START AFTER REBOOT:
+- `ollama` and `yamx-web` use `restart: unless-stopped`.
+- After first successful `docker compose up -d`, Docker usually brings them back automatically when the daemon restarts.
+- Windows Docker Desktop: enable "Start Docker Desktop when you sign in".
+- Windows Task Scheduler: run `startup-compose.ps1` at logon/startup.
+- Linux: use `yamx-docker.service.example` + `startup-compose.sh` and enable with systemd.
 
 OPTIONAL .env:
-- Copy .env.example to .env in this folder. Default is **OLLAMA_MODEL=qwen2.5:1.5b**. For heavier models only if your RAM/CPU allow (e.g. qwen2.5-coder:3b for code; avoid gemma4:e4b on tight machines).
+- Copy `.env.example` to `.env` in this folder.
+- Default is `OLLAMA_MODEL=gemma4:e2b`.
+- You can override retries if network is slow:
+  - `OLLAMA_INIT_PULL_RETRIES=12`
+  - `OLLAMA_INIT_PULL_RETRY_SECONDS=45`
 
 WHAT HAPPENS DURING STARTUP?
-- Docker builds the YamX web container using your local code.
-- Docker starts Ollama (latest image) and waits until it is healthy.
-- ollama-init runs ollama-pull.sh in the same network namespace as ollama (network_mode: service:ollama), pulls via OLLAMA_HOST=http://127.0.0.1:11434 — blobs still store in ollama_data on the ollama container.
+- Docker builds the YamX web container.
+- Docker starts Ollama and waits for health check.
+- `ollama-init` runs `ollama-pull.sh` and ensures the model exists.
+- Model blobs are stored in persistent volume `ollama_data`.
+- If the model already exists in `ollama_data`, init skips pull, so boot/startup does not repeatedly re-download.
 
 IF ollama-init FAILS (exit 1):
-- docker compose logs ollama-init   (read the ollama pull error: disk full, timeout, TLS, etc.)
-- If you see "unknown command sh for ollama": the ollama image uses ENTRYPOINT ollama — this repo sets entrypoint /bin/sh for ollama-init; update docker-compose.yml from the repo.
-- Disk: ensure free space for the model volume (docker system df).
-- Network: in .env set OLLAMA_INIT_PULL_RETRIES=12 and OLLAMA_INIT_PULL_RETRY_SECONDS=45, then docker compose up -d again.
-- Try OLLAMA_MODEL=qwen2.5:0.5b or llama3.2:3b in .env then docker compose down -v && docker compose up -d --build
+- Check logs:
+  docker compose logs ollama-init
+- Common reasons: disk full, timeout, TLS/network issues, wrong model tag.
+- Ensure Docker has enough free disk for model files.
+- If RAM is too low, choose a smaller tag in `.env`.
 
-HOW TO ACCESS THE WEB INTERFACE:
-1. Once the containers are running and the model finishes downloading, open your browser.
-2. Go to: http://localhost:8765
+WEB UI:
+- Open: http://localhost:8765
 
 YOUR FILES:
-Your host directory (c:\laragon\www\cli-agent) is mapped directly into the YamX container at /workspace. YamX can read, edit, and interact with your code in real time!
+- Host repo `C:\laragon\www\cli-agent` is mounted into container at `/workspace`.
 
-TO STOP THE SERVER:
-1. Open your terminal in this directory.
-2. Run: docker compose down
+STOP:
+- Run:
+  docker compose down
 
-IF CHAT FAILS INSIDE DOCKER (wrong model, localhost, empty API errors):
-- YamX now reads OPENAI_BASE_URL / DEFAULT_PROVIDER / DEFAULT_MODEL from compose after config.json.
-- If an old volume still causes issues: docker compose down -v && docker compose up -d --build
+RESET VOLUMES (only if needed):
+- Run:
+  docker compose down -v
+  docker compose up -d --build
 
-IF CHAT RETURNS "model requires more system memory" (HTTP 500):
-- The model tag needs more free RAM than available. Set OLLAMA_MODEL=qwen2.5:1.5b (or qwen2.5:0.5b) in .env; avoid gemma4:e4b unless you have lots of headroom. Then docker compose down -v && docker compose up -d --build
-
---- OLLAMA / API QUICK REFERENCE (Docker) ---
-- YamX Web (host):     http://localhost:8765
-- Ollama API (host):   http://localhost:11434  (same daemon, port publish)
-- YamX -> Ollama (in container): OPENAI_BASE_URL=http://ollama:11434/v1  (service name "ollama", path /v1)
-- API key in compose:   OPENAI_API_KEY=ollama  (placeholder; not a cloud secret)
-- Model tag:            OLLAMA_MODEL in .env (default qwen2.5:1.5b) — must match a model pulled into ollama_data
-- Volumes:              ollama_data = models ; yamx_data = /root/.yamx ; workspace = your repo at /workspace
-- Full table:           see README.md section "Ollama and YamX API (Docker reference)"
+QUICK REFERENCE:
+- YamX Web (host): http://localhost:8765
+- Ollama API (host): http://localhost:11434
+- YamX -> Ollama (inside container): http://ollama:11434/v1
+- API key value in compose: `ollama` (placeholder)
+- Model source of truth: `OLLAMA_MODEL` in `.env` (default gemma4:e2b)
+- Volumes: `ollama_data` = models, `yamx_data` = /root/.yamx

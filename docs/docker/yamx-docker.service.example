@@ -16,6 +16,7 @@
 [Unit]
 Description=YamX Web + Ollama (docker compose)
 After=docker.service network-online.target
+Requires=docker.service
 Wants=network-online.target
 
 [Service]
@@ -24,6 +25,8 @@ RemainAfterExit=yes
 WorkingDirectory=/CHANGE/ME/cli-agent/docs/docker
 ExecStart=/CHANGE/ME/cli-agent/docs/docker/startup-compose.sh
 TimeoutStartSec=0
+Restart=on-failure
+RestartSec=20
 
 [Install]
 WantedBy=multi-user.target

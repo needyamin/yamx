@@ -19,7 +19,7 @@ docker compose up -d --build
 **What happens next?**
 1. Docker builds the YamX image using the local codebase.
 2. The Ollama container starts (**`ollama/ollama:latest`**, `pull_policy: always`).
-3. **`ollama-init`** runs **`ollama-pull.sh`**: exports **`OLLAMA_HOST=http://ollama:11434`** and **`ollama pull`** for **`OLLAMA_MODEL`** (default **`qwen2.5-coder:3b`**, overridable via `.env`), with retries.
+3. **`ollama-init`** runs **`ollama-pull.sh`** against **`OLLAMA_HOST=http://127.0.0.1:11434`** (shared network with **`ollama`**) and **`ollama pull`** for **`OLLAMA_MODEL`** (default **`qwen2.5-coder:3b`**, overridable via `.env`), with retries.
 4. The YamX Web container starts and uses the same model in **`DEFAULT_MODEL`** / **`YAMX_MODEL`**.
 
 ## Accessing the Web UI
@@ -31,6 +31,24 @@ http://localhost:8765
 ```
 
 YamX is now running in full power mode!
+
+## Auto-start at boot / login
+
+**Containers:** **`ollama`** and **`yamx-web`** use **`restart: unless-stopped`**, so after you have run **`docker compose up -d`** at least once, Docker will normally bring them back when the Docker daemon restarts (for example after a reboot), as long as you did not run **`docker compose down`** (which removes the project’s containers).
+
+**One-shot `ollama-init`** does not stay running; the model stays in the **`ollama_data`** volume, so you usually do **not** need to re-run init on every boot.
+
+**Docker itself**
+
+- **Windows:** Docker Desktop → **Settings → General →** enable **Start Docker Desktop when you sign in to your computer**.
+- **Linux:** `sudo systemctl enable docker` (package name may vary by distro).
+
+**Compose without opening a terminal each time**
+
+- **Windows (Task Scheduler):** Create a task **At log on** (or **At startup** after a short delay). Action: **Start a program** — Program: **`powershell.exe`**, Add arguments: **`-NoProfile -ExecutionPolicy Bypass -File "C:\FULL\PATH\TO\cli-agent\docs\docker\startup-compose.ps1"`** (adjust the path to this repo). Start in: **`C:\FULL\PATH\TO\cli-agent\docs\docker`**. Ensure Docker Desktop starts before this task (add a **1–2 minute delay** if needed).
+- **Linux (systemd):** See **`yamx-docker.service.example`** in this folder: copy to **`/etc/systemd/system/`**, set **`WorkingDirectory`** and **`ExecStart`** to your checkout, **`chmod +x startup-compose.sh`**, then **`systemctl enable --now yamx-docker.service`**.
+
+The helper scripts **`startup-compose.ps1`** and **`startup-compose.sh`** only run **`docker compose up -d`** from this directory (no **`--build`**). Run **`docker compose up -d --build`** yourself when you change the Dockerfile or application code.
 
 ## Ollama and YamX API (Docker reference)
 

@@ -1,0 +1,29 @@
+# Example systemd unit: auto-start the compose stack after Docker on Linux.
+#
+# 1) Copy and edit paths:
+#    sudo cp yamx-docker.service.example /etc/systemd/system/yamx-docker.service
+#    sudo nano /etc/systemd/system/yamx-docker.service   # set WorkingDirectory
+# 2) chmod +x the helper script in that directory:
+#    chmod +x /ABS/PATH/TO/cli-agent/docs/docker/startup-compose.sh
+# 3) Enable:
+#    sudo systemctl daemon-reload
+#    sudo systemctl enable yamx-docker.service
+#    sudo systemctl start yamx-docker.service
+#
+# First-time setup still needs a build once:
+#    cd that directory && docker compose up -d --build
+
+[Unit]
+Description=YamX Web + Ollama (docker compose)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/CHANGE/ME/cli-agent/docs/docker
+ExecStart=/CHANGE/ME/cli-agent/docs/docker/startup-compose.sh
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

@@ -14,10 +14,8 @@ RUN npm install --include=dev --ignore-scripts
 COPY . .
 RUN npm run build && npm prune --omit=dev
 
-# Link the package globally so 'yamx' command works if needed inside the container.
-# `npm link` runs lifecycle scripts by default (including `prepare`), so skip scripts
-# because devDependencies were already pruned in the previous step.
-RUN npm link --ignore-scripts
+# Provide a global `yamx` command without using `npm link` lifecycle hooks.
+RUN ln -sf /app/dist/index.js /usr/local/bin/yamx && chmod +x /app/dist/index.js
 
 # Start YamX
 ENTRYPOINT ["node", "/app/dist/index.js"]

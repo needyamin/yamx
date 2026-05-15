@@ -103,6 +103,11 @@ docker compose down -v
 - Your selected model is too heavy for available RAM.
 - Keep `qwen2.5-coder:0.5b` or choose a smaller tag.
 
+### CPU reaches 100% on simple chat
+- On CPU-only local inference this is normal during generation.
+- Tiny web messages like `hi` are handled directly by YamX (no model call), with a command-focused hint.
+- For real prompts, CPU can still spike to 100% briefly on weak hardware.
+
 ### `ollama-init` fails
 1. Check logs: `docker compose logs ollama-init`
 2. Verify free disk space.

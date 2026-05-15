@@ -415,6 +415,45 @@ class WebAgentRuntime {
     const command = String(message || '').trim();
     if (!command) return failure(command, 'Error: message is required.', started, this.allowDangerous);
 
+    const intent = classifyUserIntent(command);
+    if (intent.kind === 'conversation') {
+      return {
+        ok: true,
+        blocked: false,
+        kind: 'chat',
+        command,
+        output:
+          'This YamX web panel is command-focused. Send a concrete CLI task like `git status`, `npm test`, `ls`, or ask for a command for Windows/macOS/Linux.',
+        code: 0,
+        timedOut: false,
+        durationMs: Date.now() - started,
+        cwd: getWorkspaceRelativeCwd(),
+        allowDangerous: this.allowDangerous,
+        provider: this.agentEnv?.provider.name,
+        model: this.agentEnv?.provider.modelId,
+        sessionId: this.agentEnv?.session.id,
+      };
+    }
+
+    if (intent.kind === 'clarification') {
+      return {
+        ok: true,
+        blocked: false,
+        kind: 'chat',
+        command,
+        output:
+          'Need a concrete command-line request. Example: `install node on ubuntu`, `git undo last commit`, or `find large files on windows`.',
+        code: 0,
+        timedOut: false,
+        durationMs: Date.now() - started,
+        cwd: getWorkspaceRelativeCwd(),
+        allowDangerous: this.allowDangerous,
+        provider: this.agentEnv?.provider.name,
+        model: this.agentEnv?.provider.modelId,
+        sessionId: this.agentEnv?.session.id,
+      };
+    }
+
     const scanIntent = detectOfflineProjectScanIntent(command);
     if (scanIntent) {
       try {

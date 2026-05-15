@@ -13,6 +13,9 @@ Default model is `qwen2.5-coder:0.5b`, which is a practical choice for very low-
 - `OLLAMA_MODEL=qwen2.5-coder:0.5b`
 - `pull_policy: missing` for Ollama images (avoid unnecessary image re-pulls)
 - `restart: unless-stopped` for `ollama` and `yamx-web`
+- `YAMX_CONTEXT_BUDGET_CHARS=50000` (aggressive summarize threshold)
+- `YAMX_CONTEXT_KEEP_LAST_MESSAGES=6`
+- `YAMX_CONTEXT_ROLLOVER_MODE=summary-next-session` (roll forward with compact summary)
 
 ## Quick start
 From this folder:
@@ -32,6 +35,7 @@ http://localhost:8765
 - `ollama-init` now checks `ollama show <model>` first.
 - If model already exists, init skips `ollama pull`.
 - Result: reboot/startup does not repeatedly re-download the model.
+- YamX context is compacted automatically when it grows, then rolled into a lightweight summarized thread for the next turns.
 
 ## Change model tag
 Edit `.env` in this folder:
@@ -55,12 +59,10 @@ Examples:
 - `DEFAULT_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:0.5b}`
 - `OPENAI_API_KEY=ollama`
 - `OPENAI_BASE_URL=http://ollama:11434/v1`
-- `YAMX_PROVIDER=openai`
-- `YAMX_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:0.5b}`
-- `YAMX_OPENAI_API_KEY=ollama`
-- `YAMX_OPENAI_BASE_URL=http://ollama:11434/v1`
 - `YAMX_INTELLIGENCE_LEVEL=top`
 - `YAMX_AUTO_APPROVE=true`
+- `DEFAULT_PROVIDER` / `DEFAULT_MODEL` are bootstrap defaults (used when no saved config exists yet).
+- Later provider/model changes from YamX web or CLI config persist normally.
 
 ## Volumes
 - `ollama_data`: model files and Ollama state

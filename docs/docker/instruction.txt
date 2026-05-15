@@ -25,6 +25,11 @@ AUTO-START AFTER REBOOT:
 OPTIONAL .env:
 - Copy `.env.example` to `.env` in this folder.
 - Default is `OLLAMA_MODEL=qwen2.5-coder:0.5b`.
+- Provider/model bootstrap defaults are local Ollama; later changes from YamX web or CLI config persist.
+- Context RAM saver defaults:
+  - `YAMX_CONTEXT_BUDGET_CHARS=50000`
+  - `YAMX_CONTEXT_KEEP_LAST_MESSAGES=6`
+  - `YAMX_CONTEXT_ROLLOVER_MODE=summary-next-session`
 - You can override retries if network is slow:
   - `OLLAMA_INIT_PULL_RETRIES=12`
   - `OLLAMA_INIT_PULL_RETRY_SECONDS=45`

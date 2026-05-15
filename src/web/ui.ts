@@ -3010,8 +3010,20 @@ export const WEB_JS = `
       numField('settings.maxTokens', 'Max tokens', 256, 200000, 1);
       numField('settings.temperature', 'Temperature', 0, 2, 0.05);
       numField('settings.contextBudgetChars', 'Context budget (chars)', 10000, 2000000, 1000);
+      numField('settings.contextKeepLastMessages', 'Context keep-last messages', 4, 40, 1);
       numField('settings.maxToolResultChars', 'Max tool result chars', 1000, 500000, 500);
       numField('settings.maxAssistantMarkdownChars', 'Max assistant markdown chars', 500, 100000, 100);
+
+      var roll = document.createElement('select');
+      roll.dataset.cfgPath = 'settings.contextRolloverMode';
+      ['off', 'summary-next-session'].forEach(function (v) {
+        var o = document.createElement('option');
+        o.value = v;
+        o.textContent = v;
+        roll.appendChild(o);
+      });
+      roll.value = s.contextRolloverMode || 'off';
+      addField(st, 'Context rollover mode', roll);
 
       var pm = document.createElement('select');
       pm.dataset.cfgPath = 'settings.permissionMode';

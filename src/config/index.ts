@@ -27,6 +27,10 @@ export interface YamConfig {
     autoCommit: boolean;
     /** Approx. total JSON size of history before auto-summarization (chars) */
     contextBudgetChars: number;
+    /** Keep this many latest messages verbatim when context compacts. */
+    contextKeepLastMessages: number;
+    /** Optional aggressive mode for weak hardware. */
+    contextRolloverMode: 'off' | 'summary-next-session';
     permissionMode: 'default' | 'ask' | 'read-only' | 'auto-safe';
     allowedShellCommands: string[];
     deniedShellPatterns: string[];
@@ -65,6 +69,8 @@ const DEFAULT_CONFIG: YamConfig = {
     temperature: 0.1,
     autoCommit: false,
     contextBudgetChars: 280_000,
+    contextKeepLastMessages: 16,
+    contextRolloverMode: 'off',
     permissionMode: 'default',
     allowedShellCommands: [],
     deniedShellPatterns: [],
@@ -96,8 +102,10 @@ export class Config {
   }
 
   async load(): Promise<YamConfig> {
+    let hasConfigFile = false;
     try {
-      if (await fs.pathExists(this.configPath)) {
+      hasConfigFile = await fs.pathExists(this.configPath);
+      if (hasConfigFile) {
         const data = await fs.readJSON(this.configPath);
         this.config = { ...DEFAULT_CONFIG, ...data, settings: { ...DEFAULT_CONFIG.settings, ...data.settings } };
       }
@@ -105,20 +113,36 @@ export class Config {
       // Use defaults
     }
 
-    // Override defaults with env vars
-    if (process.env.DEFAULT_PROVIDER) {
-      this.config.defaultProvider = process.env.DEFAULT_PROVIDER;
+    // DEFAULT_* are bootstrap defaults (applied only when config file does not exist yet).
+    if (!hasConfigFile && process.env.DEFAULT_PROVIDER?.trim()) {
+      this.config.defaultProvider = process.env.DEFAULT_PROVIDER.trim();
     }
-    if (process.env.DEFAULT_MODEL) {
-      this.config.defaultModel = process.env.DEFAULT_MODEL;
+    if (!hasConfigFile && process.env.DEFAULT_MODEL?.trim()) {
+      this.config.defaultModel = process.env.DEFAULT_MODEL.trim();
     }
 
-    /** Docker / scripts: same as DEFAULT_* but explicit YamX prefix (wins if set). */
+    /**
+     * Explicit runtime overrides. If set, these force provider/model every load.
+     * Keep unset when you want provider changes from web/CLI config to persist.
+     */
     if (process.env.YAMX_PROVIDER?.trim()) {
       this.config.defaultProvider = process.env.YAMX_PROVIDER.trim();
     }
     if (process.env.YAMX_MODEL?.trim()) {
       this.config.defaultModel = process.env.YAMX_MODEL.trim();
+    }
+
+    const envBudget = Number(process.env.YAMX_CONTEXT_BUDGET_CHARS);
+    if (Number.isFinite(envBudget) && envBudget >= 10_000) {
+      this.config.settings.contextBudgetChars = Math.trunc(envBudget);
+    }
+    const envKeepLast = Number(process.env.YAMX_CONTEXT_KEEP_LAST_MESSAGES);
+    if (Number.isFinite(envKeepLast) && envKeepLast >= 0) {
+      this.config.settings.contextKeepLastMessages = Math.min(Math.trunc(envKeepLast), 40);
+    }
+    const envRollover = String(process.env.YAMX_CONTEXT_ROLLOVER_MODE || '').trim().toLowerCase();
+    if (envRollover === 'summary-next-session' || envRollover === 'off') {
+      this.config.settings.contextRolloverMode = envRollover;
     }
 
     // Override with env vars

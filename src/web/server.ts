@@ -519,6 +519,8 @@ class WebAgentRuntime {
       initialHistory: session.messages,
       onPersist: saveToDisk,
       contextBudgetChars: cfg.settings?.contextBudgetChars ?? 280_000,
+      contextKeepLastMessages: cfg.settings?.contextKeepLastMessages ?? 16,
+      contextRolloverMode: cfg.settings?.contextRolloverMode ?? 'off',
       permissionMode: cfg.settings?.permissionMode ?? 'default',
       allowedShellCommands: cfg.settings?.allowedShellCommands ?? [],
       deniedShellPatterns: cfg.settings?.deniedShellPatterns ?? [],

@@ -60,6 +60,13 @@ export interface AgentOptions {
   onPersist?: () => void | Promise<void>;
   /** Total serialized history size (chars) before auto-compression */
   contextBudgetChars?: number;
+  /** Number of newest messages to keep verbatim when compressing history. */
+  contextKeepLastMessages?: number;
+  /**
+   * Optional aggressive mode for weak hardware: after turns grow large,
+   * roll forward into a lightweight summary-only thread.
+   */
+  contextRolloverMode?: 'off' | 'summary-next-session';
   permissionMode?: PermissionMode;
   allowedShellCommands?: string[];
   deniedShellPatterns?: string[];
@@ -173,6 +180,8 @@ export class Agent {
       modelCouncilEnabled: false,
       modelCouncilMode: 'adaptive' as const,
       maxToolResultChars: 24_000,
+      contextKeepLastMessages: 16,
+      contextRolloverMode: 'off' as const,
       verboseCli: false,
       maxAssistantMarkdownChars: DEFAULT_MAX_ASSISTANT_MARKDOWN_CHARS,
       preflightRuntimeProbes: true,
@@ -206,12 +215,27 @@ export class Agent {
     return this.history.reduce((n, m) => n + JSON.stringify(m).length, 0);
   }
 
+  private contextKeepLastMessages(): number {
+    const raw = Math.trunc(Number(this.options.contextKeepLastMessages ?? 16));
+    if (!Number.isFinite(raw)) return 16;
+    // Keep enough recent turns so the current user request never gets compacted away mid-turn.
+    return Math.min(Math.max(raw, 4), 40);
+  }
+
+  private shouldRolloverForNextSession(): boolean {
+    if ((this.options.contextRolloverMode ?? 'off') !== 'summary-next-session') return false;
+    const budget = this.options.contextBudgetChars ?? 280_000;
+    // Trigger before hard limits so next turn stays lightweight.
+    return this.estimateHistoryChars() > Math.floor(budget * 0.45) && this.history.length > 8;
+  }
+
   private async ensureContextBudget(): Promise<void> {
     const budget = this.options.contextBudgetChars ?? 280_000;
+    const keepLast = this.contextKeepLastMessages();
     let guard = 0;
     while (this.estimateHistoryChars() > budget && this.history.length > 4 && guard < 10) {
       guard++;
-      await this.compactMiddle(16, true);
+      await this.compactMiddle(keepLast, true);
     }
   }
 
@@ -220,8 +244,9 @@ export class Agent {
     if (this.history.length <= 2 + keepLast) return;
 
     const systemPrompt = this.history[0];
-    const recentMessages = this.history.slice(-keepLast);
-    const oldMessages = this.history.slice(1, -keepLast);
+    const safeKeepLast = Math.max(0, Math.trunc(keepLast));
+    const recentMessages = safeKeepLast > 0 ? this.history.slice(-safeKeepLast) : [];
+    const oldMessages = this.history.slice(1, this.history.length - safeKeepLast);
 
     if (oldMessages.length === 0) return;
 
@@ -302,6 +327,8 @@ export class Agent {
           this.history.push({ role: 'user', content: preflightBlob });
         }
       }
+      // Re-check budget after adding this turn's user/preflight context.
+      await this.ensureContextBudget();
 
       this.fileChanges = []; // Reset undo buffer per turn
       this.toolCallCounts.clear();
@@ -345,6 +372,11 @@ export class Agent {
       if (this.options.verboseCli) {
         const elapsed = ((Date.now() - this.turnStartTime) / 1000).toFixed(1);
         this.ui.info(`Turn completed in ${elapsed}s · ${iterations} iteration${iterations > 1 ? 's' : ''}`);
+      }
+
+      if (this.shouldRolloverForNextSession()) {
+        await this.compactMiddle(0, true);
+        this.ui.info('Rolled to a lightweight summarized thread for the next turn.');
       }
 
       await Promise.resolve(this.options.onPersist?.());

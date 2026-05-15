@@ -5,6 +5,13 @@ services:
     image: ollama/ollama:latest
     pull_policy: missing
     container_name: yamx_ollama
+    environment:
+      # Low-memory server tuning (good for small VPS / RAM-limited hosts).
+      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-1}
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-1}
+      - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-16}
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-1024}
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-0}
     volumes:
       - ollama_data:/root/.ollama
     ports:
@@ -60,10 +67,10 @@ services:
       - DEFAULT_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:0.5b}
       - OPENAI_API_KEY=ollama
       - OPENAI_BASE_URL=http://ollama:11434/v1
-      - YAMX_PROVIDER=openai
-      - YAMX_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:0.5b}
-      - YAMX_OPENAI_API_KEY=ollama
-      - YAMX_OPENAI_BASE_URL=http://ollama:11434/v1
+      # YamX low-memory context strategy: summarize early and roll to lightweight next-turn context.
+      - YAMX_CONTEXT_BUDGET_CHARS=${YAMX_CONTEXT_BUDGET_CHARS:-50000}
+      - YAMX_CONTEXT_KEEP_LAST_MESSAGES=${YAMX_CONTEXT_KEEP_LAST_MESSAGES:-6}
+      - YAMX_CONTEXT_ROLLOVER_MODE=${YAMX_CONTEXT_ROLLOVER_MODE:-summary-next-session}
 
       - YAMX_INTELLIGENCE_LEVEL=top
       - YAMX_AUTO_APPROVE=true

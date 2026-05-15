@@ -201,6 +201,7 @@ program
           { name: 'Set Default Provider', value: 'provider' },
           { name: 'Set Default Model', value: 'model' },
           { name: 'Set context budget (chars for auto-summarize)', value: 'budget' },
+          { name: 'Set low-memory context rollover mode', value: 'contextmode' },
           { name: 'Set max tool-result history size', value: 'toolresults' },
           { name: 'Toggle Auto-Approve', value: 'autoapprove' },
           { name: 'Toggle Model Council', value: 'council' },
@@ -261,6 +262,35 @@ program
       } else {
         console.log(chalk.yellow('Value too small; unchanged.'));
       }
+    } else if (action === 'contextmode') {
+      const curKeep = config.get().settings.contextKeepLastMessages ?? 16;
+      const curMode = config.get().settings.contextRolloverMode ?? 'off';
+      const answers = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'keep',
+          message: 'Keep how many newest messages when compacting history?',
+          default: String(curKeep),
+          validate: (value: string) => {
+            const n = Number(value);
+            return (Number.isFinite(n) && n >= 4 && n <= 40) || 'Use a number between 4 and 40';
+          },
+        },
+        {
+          type: 'rawlist',
+          name: 'mode',
+          message: 'When history grows, should YamX roll into a lightweight summary thread for next turns?',
+          default: curMode,
+          choices: [
+            { name: 'off (default)', value: 'off' },
+            { name: 'summary-next-session (best for weak hardware)', value: 'summary-next-session' },
+          ],
+        },
+      ]);
+      config.set('settings.contextKeepLastMessages', Number(answers.keep));
+      config.set('settings.contextRolloverMode', answers.mode);
+      await config.save();
+      console.log(chalk.green(`[+] contextKeepLastMessages = ${answers.keep}, contextRolloverMode = ${answers.mode}`));
     } else if (action === 'toolresults') {
       const { n } = await inquirer.prompt([
         {
@@ -617,6 +647,8 @@ program.action(async (options) => {
     initialHistory: initialMessages,
     onPersist: saveToDisk,
     contextBudgetChars: cfg.settings?.contextBudgetChars ?? 280_000,
+    contextKeepLastMessages: cfg.settings?.contextKeepLastMessages ?? 16,
+    contextRolloverMode: cfg.settings?.contextRolloverMode ?? 'off',
     permissionMode: cfg.settings?.permissionMode ?? 'default',
     allowedShellCommands: cfg.settings?.allowedShellCommands ?? [],
     deniedShellPatterns: cfg.settings?.deniedShellPatterns ?? [],
@@ -1396,6 +1428,9 @@ async function configureRuntimeSettings(config: Config, firstRun: boolean): Prom
     streamOut: boolean;
     modelCouncil: boolean;
     councilMode: 'adaptive' | 'always' | 'off';
+    contextBudgetChars: string;
+    contextKeepLastMessages: string;
+    contextRolloverMode: 'off' | 'summary-next-session';
     maxToolResultChars: string;
     checkForUpdates: boolean;
   }>([
@@ -1430,6 +1465,36 @@ async function configureRuntimeSettings(config: Config, firstRun: boolean): Prom
     },
     {
       type: 'input',
+      name: 'contextBudgetChars',
+      message: 'Context budget before auto-summarize (chars):',
+      default: String(current.contextBudgetChars || 280_000),
+      validate: (value: string) => {
+        const n = Number(value);
+        return (Number.isFinite(n) && n >= 10_000 && n <= 2_000_000) || 'Use a number between 10000 and 2000000';
+      },
+    },
+    {
+      type: 'input',
+      name: 'contextKeepLastMessages',
+      message: 'Keep newest messages when compacting:',
+      default: String(current.contextKeepLastMessages || 16),
+      validate: (value: string) => {
+        const n = Number(value);
+        return (Number.isFinite(n) && n >= 4 && n <= 40) || 'Use a number between 4 and 40';
+      },
+    },
+    {
+      type: 'rawlist',
+      name: 'contextRolloverMode',
+      message: 'Low-memory rollover mode:',
+      default: current.contextRolloverMode || 'off',
+      choices: [
+        { name: 'off (default)', value: 'off' },
+        { name: 'summary-next-session (aggressive RAM saver)', value: 'summary-next-session' },
+      ],
+    },
+    {
+      type: 'input',
       name: 'maxToolResultChars',
       message: 'Max tool-result chars kept in model history:',
       default: String(current.maxToolResultChars || 24_000),
@@ -1451,6 +1516,9 @@ async function configureRuntimeSettings(config: Config, firstRun: boolean): Prom
   config.set('settings.streamOutput', answers.streamOut);
   config.set('settings.modelCouncil.enabled', answers.modelCouncil);
   config.set('settings.modelCouncil.mode', answers.councilMode);
+  config.set('settings.contextBudgetChars', Number(answers.contextBudgetChars));
+  config.set('settings.contextKeepLastMessages', Number(answers.contextKeepLastMessages));
+  config.set('settings.contextRolloverMode', answers.contextRolloverMode);
   config.set('settings.maxToolResultChars', Number(answers.maxToolResultChars));
   config.set('settings.checkForUpdates', answers.checkForUpdates);
 }

@@ -371,20 +371,35 @@ program
   .option('--host <host>', 'Host to bind', '127.0.0.1')
   .option('-p, --provider <provider>', 'LLM provider for web chat')
   .option('-m, --model <model>', 'Model for web chat')
+  .option('--auth-user <username>', 'HTTP Basic auth username (or YAMX_WEB_USERNAME)')
+  .option('--auth-pass <password>', 'HTTP Basic auth password (or YAMX_WEB_PASSWORD)')
+  .option('--auth-realm <realm>', 'HTTP Basic auth realm (or YAMX_WEB_AUTH_REALM)', 'YamX Web')
   .option('--allow-dangerous', 'Allow destructive or sensitive commands from the web UI', false)
   .action(async (options) => {
     const port = parseWebPort(options.port);
     const host = String(options.host || '127.0.0.1').trim() || '127.0.0.1';
+    const authUser = typeof options.authUser === 'string' ? options.authUser : process.env.YAMX_WEB_USERNAME;
+    const authPass = typeof options.authPass === 'string' ? options.authPass : process.env.YAMX_WEB_PASSWORD;
+    const authRealm =
+      (typeof options.authRealm === 'string' ? options.authRealm : process.env.YAMX_WEB_AUTH_REALM) || 'YamX Web';
+    const authEnabled = Boolean(String(authUser ?? '').trim() && String(authPass ?? ''));
     const app = await startYamxWebServer({
       port,
       host,
       allowDangerous: options.allowDangerous === true,
       providerName: options.provider,
       modelName: options.model,
+      authUsername: authUser,
+      authPassword: authPass,
+      authRealm,
     });
     console.log(chalk.green(`[+] YamX web UI: ${app.url}`));
     console.log(chalk.dim(`    cwd: ${process.cwd()}`));
     console.log(chalk.dim(`    dangerous commands: ${options.allowDangerous ? 'allowed' : 'blocked'}`));
+    console.log(chalk.dim(`    auth: ${authEnabled ? `enabled (${String(authUser).trim()})` : 'disabled'}`));
+    if (!authEnabled && host !== '127.0.0.1' && host !== 'localhost') {
+      console.log(chalk.yellow('    warning: auth disabled while listening on a non-localhost host.'));
+    }
 
     process.on('SIGINT', async () => {
       await app.close().catch(() => undefined);

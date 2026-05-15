@@ -12,7 +12,10 @@ REQUIREMENTS:
 HOW TO START:
 1. Open terminal.
 2. Go to this directory: C:\laragon\www\cli-agent\docs\docker
-3. Run:
+3. Copy `.env.example` to `.env` and set:
+   - YAMX_WEB_USERNAME
+   - YAMX_WEB_PASSWORD
+4. Run:
    docker compose up -d --build
 
 AUTO-START AFTER REBOOT:
@@ -25,6 +28,7 @@ AUTO-START AFTER REBOOT:
 OPTIONAL .env:
 - Copy `.env.example` to `.env` in this folder.
 - Default is `OLLAMA_MODEL=qwen2.5-coder:0.5b`.
+- `YAMX_WEB_USERNAME` and `YAMX_WEB_PASSWORD` are required (HTTP Basic login).
 - Provider/model bootstrap defaults are local Ollama; later changes from YamX web or CLI config persist.
 - Context RAM saver defaults:
   - `YAMX_CONTEXT_BUDGET_CHARS=50000`
@@ -50,6 +54,7 @@ IF ollama-init FAILS (exit 1):
 
 WEB UI:
 - Open: http://localhost:8765
+- Login is required (HTTP Basic auth prompt in browser).
 
 YOUR FILES:
 - Host repo `C:\laragon\www\cli-agent` is mounted into container at `/workspace`.

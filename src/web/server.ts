@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { homedir } from 'node:os';
 import { join as pathJoin } from 'node:path';
@@ -107,6 +108,15 @@ export interface WebServerOptions {
   providerName?: string;
   modelName?: string;
   providerOverride?: Provider;
+  authUsername?: string;
+  authPassword?: string;
+  authRealm?: string;
+}
+
+interface WebAuthConfig {
+  username: string;
+  password: string;
+  realm: string;
 }
 
 export interface WebCommandOptions {
@@ -155,16 +165,25 @@ export async function startYamxWebServer(options: WebServerOptions = {}): Promis
   const port = normalizePort(options.port, DEFAULT_PORT);
   const allowDangerous = options.allowDangerous === true;
   const runtime = new WebAgentRuntime(options);
-  return startYamxWebServerWithRuntime({ host, port, allowDangerous, runtime }, 0);
+  const auth = normalizeWebAuth({
+    username: options.authUsername ?? process.env.YAMX_WEB_USERNAME,
+    password: options.authPassword ?? process.env.YAMX_WEB_PASSWORD,
+    realm: options.authRealm ?? process.env.YAMX_WEB_AUTH_REALM,
+  });
+  return startYamxWebServerWithRuntime({ host, port, allowDangerous, runtime, auth }, 0);
 }
 
 async function startYamxWebServerWithRuntime(
-  options: { host: string; port: number; allowDangerous: boolean; runtime: WebAgentRuntime },
+  options: { host: string; port: number; allowDangerous: boolean; runtime: WebAgentRuntime; auth: WebAuthConfig | null },
   attempt: number
 ): Promise<RunningWebServer> {
   const server = http.createServer(async (req, res) => {
     try {
-      await handleRequest(req, res, { allowDangerous: options.allowDangerous, runtime: options.runtime });
+      await handleRequest(req, res, {
+        allowDangerous: options.allowDangerous,
+        runtime: options.runtime,
+        auth: options.auth,
+      });
     } catch (error: any) {
       sendJson(res, 500, { error: error?.message || 'Internal server error' });
     }
@@ -574,9 +593,12 @@ class WebAgentRuntime {
 async function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  options: { allowDangerous: boolean; runtime: WebAgentRuntime }
+  options: { allowDangerous: boolean; runtime: WebAgentRuntime; auth: WebAuthConfig | null }
 ): Promise<void> {
   const url = new URL(req.url || '/', 'http://localhost');
+  if (!isAuthorized(req, options.auth)) {
+    return sendAuthRequired(req, res, options.auth?.realm || 'YamX Web');
+  }
   if (req.method === 'GET' && url.pathname === '/') return sendText(res, 200, WEB_HTML, 'text/html; charset=utf-8');
   if (req.method === 'GET' && url.pathname === '/style.css') return sendText(res, 200, WEB_CSS, 'text/css; charset=utf-8');
   if (req.method === 'GET' && url.pathname === '/app.js') return sendText(res, 200, WEB_JS, 'text/javascript; charset=utf-8');
@@ -889,6 +911,54 @@ function normalizePort(value: unknown, fallback: number): number {
   const port = Number(value ?? fallback);
   if (!Number.isInteger(port) || port < 0 || port > 65535) return fallback;
   return port;
+}
+
+function normalizeWebAuth(input: { username?: string; password?: string; realm?: string }): WebAuthConfig | null {
+  const username = String(input.username ?? '').trim();
+  const password = String(input.password ?? '');
+  if (!username || !password) return null;
+  const realmRaw = String(input.realm ?? '').trim();
+  return {
+    username,
+    password,
+    realm: realmRaw || 'YamX Web',
+  };
+}
+
+function isAuthorized(req: http.IncomingMessage, auth: WebAuthConfig | null): boolean {
+  if (!auth) return true;
+  const value = req.headers.authorization;
+  if (typeof value !== 'string' || !value.startsWith('Basic ')) return false;
+  const encoded = value.slice(6).trim();
+  if (!encoded) return false;
+  let decoded = '';
+  try {
+    decoded = Buffer.from(encoded, 'base64').toString('utf8');
+  } catch {
+    return false;
+  }
+  const split = decoded.indexOf(':');
+  if (split < 0) return false;
+  const username = decoded.slice(0, split);
+  const password = decoded.slice(split + 1);
+  return safeEquals(username, auth.username) && safeEquals(password, auth.password);
+}
+
+function safeEquals(left: string, right: string): boolean {
+  const leftHash = createHash('sha256').update(left).digest();
+  const rightHash = createHash('sha256').update(right).digest();
+  return timingSafeEqual(leftHash, rightHash);
+}
+
+function sendAuthRequired(req: http.IncomingMessage, res: http.ServerResponse, realm: string): void {
+  const safeRealm = realm.replace(/\\/g, '').replace(/"/g, '');
+  res.setHeader('www-authenticate', `Basic realm="${safeRealm}", charset="UTF-8"`);
+  const path = new URL(req.url || '/', 'http://localhost').pathname;
+  if (path.startsWith('/api/')) {
+    sendJson(res, 401, { ok: false, error: 'Authentication required.' });
+    return;
+  }
+  sendText(res, 401, 'Authentication required.', 'text/plain; charset=utf-8');
 }
 
 function failure(command: string, output: string, started: number, allowDangerous: boolean): WebCommandResult {

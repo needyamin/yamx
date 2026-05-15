@@ -16,11 +16,14 @@ Default model is `qwen2.5-coder:0.5b`, which is a practical choice for very low-
 - `YAMX_CONTEXT_BUDGET_CHARS=50000` (aggressive summarize threshold)
 - `YAMX_CONTEXT_KEEP_LAST_MESSAGES=6`
 - `YAMX_CONTEXT_ROLLOVER_MODE=summary-next-session` (roll forward with compact summary)
+- `YAMX_WEB_USERNAME` + `YAMX_WEB_PASSWORD` required (HTTP Basic auth)
 
 ## Quick start
 From this folder:
 
 ```bash
+cp .env.example .env
+# edit .env and set YAMX_WEB_USERNAME / YAMX_WEB_PASSWORD first
 docker compose up -d --build
 ```
 
@@ -59,10 +62,17 @@ Examples:
 - `DEFAULT_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:0.5b}`
 - `OPENAI_API_KEY=ollama`
 - `OPENAI_BASE_URL=http://ollama:11434/v1`
+- `YAMX_WEB_USERNAME` / `YAMX_WEB_PASSWORD` (required; login for all routes)
+- `YAMX_WEB_AUTH_REALM` (optional, label shown in the login prompt)
 - `YAMX_INTELLIGENCE_LEVEL=top`
 - `YAMX_AUTO_APPROVE=true`
 - `DEFAULT_PROVIDER` / `DEFAULT_MODEL` are bootstrap defaults (used when no saved config exists yet).
 - Later provider/model changes from YamX web or CLI config persist normally.
+
+## Web authentication behavior
+- YamX web now enforces HTTP Basic auth for UI + API when credentials are configured.
+- Docker compose intentionally blocks startup if `YAMX_WEB_USERNAME` or `YAMX_WEB_PASSWORD` is missing.
+- Put HTTPS in front of this container (Nginx/Caddy/Cloudflare Tunnel) so credentials are encrypted in transit.
 
 ## Volumes
 - `ollama_data`: model files and Ollama state
